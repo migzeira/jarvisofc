@@ -186,9 +186,9 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 function AutoChat({ lines, accent = "violet" }: { lines: ChatLine[]; accent?: Accent }) {
   const [shown,  setShown]  = useState<number[]>([]);
   const [typing, setTyping] = useState(false);
-  const rootRef   = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const started   = useRef(false);
+  const rootRef    = useRef<HTMLDivElement>(null);
+  const scrollRef  = useRef<HTMLDivElement>(null);
+  const started    = useRef(false);
 
   useEffect(() => {
     const el = rootRef.current; if (!el) return;
@@ -211,7 +211,11 @@ function AutoChat({ lines, accent = "violet" }: { lines: ChatLine[]; accent?: Ac
     io.observe(el); return () => io.disconnect();
   }, [lines]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [shown, typing]);
+  // Scroll apenas dentro do container — nunca afeta a página
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [shown, typing]);
 
   const bubbleUser: Record<Accent, string> = {
     emerald: "bg-emerald-600",
@@ -246,7 +250,7 @@ function AutoChat({ lines, accent = "violet" }: { lines: ChatLine[]; accent?: Ac
           </div>
         </div>
         {/* messages */}
-        <div className="px-3 py-3 space-y-2.5 min-h-[180px]">
+        <div ref={scrollRef} className="px-3 py-3 space-y-2.5 h-[240px] overflow-y-auto" style={{ scrollbarWidth: "none" }}>
           {lines.map((line, i) => shown.includes(i) && (
             <div key={i} className={`flex animate-slide-up-fade ${line.from === "user" ? "justify-end" : "justify-start"}`}>
               <div className={`max-w-[84%] px-3 py-2 rounded-2xl text-[12px] leading-relaxed whitespace-pre-line ${
@@ -266,7 +270,6 @@ function AutoChat({ lines, accent = "violet" }: { lines: ChatLine[]; accent?: Ac
               </div>
             </div>
           )}
-          <div ref={bottomRef} />
         </div>
         {/* input strip */}
         <div className="flex items-center gap-2 px-3 pb-3">
@@ -289,7 +292,7 @@ function HeroPhone() {
   const [msgs,   setMsgs]   = useState<Array<ChatLine & { id: number }>>([]);
   const [typing, setTyping] = useState(false);
   const [cycle,  setCycle]  = useState(0);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMsgs([]); setTyping(false);
@@ -311,7 +314,11 @@ function HeroPhone() {
     return () => timers.forEach(clearTimeout);
   }, [cycle]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, typing]);
+  // Scroll apenas dentro do container do phone — nunca afeta a página
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [msgs, typing]);
 
   const now  = new Date();
   const hhmm = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
@@ -342,8 +349,8 @@ function HeroPhone() {
           </div>
         </div>
         {/* msgs */}
-        <div className="h-[252px] overflow-y-auto flex flex-col px-3 py-3 gap-2 scrollbar-none"
-          style={{ background: "linear-gradient(180deg,#0b0b12 0%,#080810 100%)" }}>
+        <div ref={scrollRef} className="h-[252px] overflow-y-auto flex flex-col px-3 py-3 gap-2"
+          style={{ background: "linear-gradient(180deg,#0b0b12 0%,#080810 100%)", scrollbarWidth: "none" }}>
           {msgs.map(m => (
             <div key={m.id} className={`flex animate-slide-up-fade ${m.from === "user" ? "justify-end" : "justify-start"}`}>
               <div className={`max-w-[82%] px-3 py-2 rounded-2xl text-[11px] leading-relaxed whitespace-pre-line ${
@@ -360,7 +367,6 @@ function HeroPhone() {
               </div>
             </div>
           )}
-          <div ref={bottomRef} />
         </div>
         {/* input */}
         <div className="flex items-center gap-2 px-3 py-2.5 bg-[#0b0b12] border-t border-white/[0.06]">
