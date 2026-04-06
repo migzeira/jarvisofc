@@ -650,8 +650,13 @@ function PricingSection() {
                 ))}
               </div>
 
-              <Button size="lg" asChild className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-13 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-200 font-bold text-[16px]">
-                <a href={link} target="_blank" rel="noreferrer">Assinar agora</a>
+              <Button size="lg" asChild className="w-full group relative overflow-hidden bg-gradient-to-r from-violet-600 via-purple-600 to-violet-600 bg-[length:200%_100%] animate-shimmer-slow hover:shadow-violet-500/50 text-white h-14 rounded-xl shadow-xl shadow-violet-500/30 hover:-translate-y-0.5 transition-all duration-300 font-bold text-[16px] border border-violet-400/20">
+                <a href={link} target="_blank" rel="noreferrer">
+                  <span className="relative z-10 flex items-center gap-2">
+                    Começar agora
+                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-200" />
+                  </span>
+                </a>
               </Button>
 
               <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-[12px] text-gray-500">
