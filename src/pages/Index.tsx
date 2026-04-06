@@ -102,16 +102,9 @@ function LogoFull() {
 }
 
 function ChatAvatar() {
-  const [err, setErr] = useState(false);
-  if (err) return (
-    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center flex-shrink-0 border border-white/10">
-      <Bot className="w-4 h-4 text-white" />
-    </div>
-  );
   return (
     <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-white/10">
-      <img src="/logo-icon.png" alt="Minha Maya" className="w-full h-full object-cover"
-        onError={() => setErr(true)} />
+      <img src={logoChats} alt="Minha Maya" className="w-full h-full object-cover" />
     </div>
   );
 }
