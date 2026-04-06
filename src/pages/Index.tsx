@@ -838,7 +838,7 @@ export default function Index() {
               </ul>
               <Button asChild variant="ghost"
                 className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border border-emerald-500/25 rounded-xl px-5 h-10 text-[13px]">
-                <Link to="/signup">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></Link>
+                <a href="#planos">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></a>
               </Button>
             </div>
           </AnimateIn>
@@ -880,7 +880,7 @@ export default function Index() {
               </ul>
               <Button asChild variant="ghost"
                 className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/25 rounded-xl px-5 h-10 text-[13px]">
-                <Link to="/signup">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></Link>
+                <a href="#planos">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></a>
               </Button>
             </div>
           </AnimateIn>
@@ -957,7 +957,7 @@ export default function Index() {
               </ul>
               <Button asChild variant="ghost"
                 className="text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border border-violet-500/25 rounded-xl px-5 h-10 text-[13px]">
-                <Link to="/signup">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></Link>
+                <a href="#planos">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></a>
               </Button>
             </div>
           </AnimateIn>
