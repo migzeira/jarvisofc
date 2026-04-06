@@ -1082,8 +1082,8 @@ export default function Index() {
             ].map((int, i) => (
               <AnimateIn key={int.title} delay={i * 90}>
                 <div className={`rounded-2xl border ${int.border} bg-gradient-to-b ${int.bg} p-6 h-full hover:scale-[1.02] transition-all duration-300`}>
-                  <div className={`w-12 h-12 rounded-xl bg-[#0b0b12] border ${int.border} flex items-center justify-center mb-4`}>
-                    <int.icon className={`w-6 h-6 ${int.color}`} />
+                  <div className={`w-12 h-12 rounded-xl bg-[#0b0b12] border ${int.border} flex items-center justify-center mb-4 overflow-hidden`}>
+                    <img src={int.image} alt={int.title} className="w-7 h-7 object-contain" />
                   </div>
                   <h3 className="font-bold text-white text-[16px] mb-2">{int.title}</h3>
                   <p className="text-[13px] text-gray-500 leading-relaxed mb-4">{int.desc}</p>
