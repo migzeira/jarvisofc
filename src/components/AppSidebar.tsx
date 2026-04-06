@@ -68,7 +68,13 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-4 border-t border-border">
+      <SidebarFooter className="p-4 border-t border-border space-y-1">
+        {isAdmin && (
+          <Button variant="ghost" className="w-full justify-start text-purple-400 hover:text-purple-300 hover:bg-purple-500/10" onClick={() => navigate("/admin")}>
+            <Shield className="h-4 w-4 mr-2 flex-shrink-0" />
+            {!collapsed && <span>Painel Admin</span>}
+          </Button>
+        )}
         <Button variant="ghost" className="w-full justify-start text-muted-foreground hover:text-foreground" onClick={handleLogout}>
           <LogOut className="h-4 w-4 mr-2 flex-shrink-0" />
           {!collapsed && <span>Sair</span>}

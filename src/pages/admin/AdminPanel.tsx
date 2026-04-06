@@ -49,11 +49,11 @@ export default function AdminPanel() {
   const [settingsForm, setSettingsForm] = useState<Record<string, string>>({});
   const [savingSettings, setSavingSettings] = useState(false);
 
-  if (!isAdmin) return <Navigate to="/dashboard" replace />;
-
   useEffect(() => {
-    loadData();
-  }, []);
+    if (isAdmin) loadData();
+  }, [isAdmin]);
+
+  if (!isAdmin) return <Navigate to="/dashboard" replace />;
 
   const loadData = async () => {
     setLoading(true);

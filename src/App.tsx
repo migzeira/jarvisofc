@@ -49,6 +49,7 @@ const App = () => (
               <Route path="plano" element={<MeuPlano />} />
               <Route path="perfil" element={<MeuPerfil />} />
             </Route>
+            <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
