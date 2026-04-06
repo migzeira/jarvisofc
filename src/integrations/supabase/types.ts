@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           agent_name: string
           created_at: string
+          custom_instructions: string | null
           greeting_message: string | null
           id: string
           is_active: boolean
@@ -35,10 +36,12 @@ export type Database = {
           tone: string
           updated_at: string
           user_id: string
+          user_nickname: string | null
         }
         Insert: {
           agent_name?: string
           created_at?: string
+          custom_instructions?: string | null
           greeting_message?: string | null
           id?: string
           is_active?: boolean
@@ -56,10 +59,12 @@ export type Database = {
           tone?: string
           updated_at?: string
           user_id: string
+          user_nickname?: string | null
         }
         Update: {
           agent_name?: string
           created_at?: string
+          custom_instructions?: string | null
           greeting_message?: string | null
           id?: string
           is_active?: boolean
@@ -77,6 +82,7 @@ export type Database = {
           tone?: string
           updated_at?: string
           user_id?: string
+          user_nickname?: string | null
         }
         Relationships: [
           {
