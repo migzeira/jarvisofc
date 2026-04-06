@@ -8,12 +8,44 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Save, MessageSquare } from "lucide-react";
+import { Plus, Trash2, Save, MessageSquare, RotateCcw } from "lucide-react";
+
+const TEMPLATE_FIELDS = [
+  {
+    key: "template_expense",
+    label: "Gasto registrado",
+    defaultVal: '🔴 *Gasto registrado!*\n📝 {{description}}\n💰 R$ {{amount}}',
+    variables: ["{{description}}", "{{amount}}", "{{category}}", "{{user_name}}"],
+  },
+  {
+    key: "template_income",
+    label: "Receita registrada",
+    defaultVal: '🟢 *Receita registrada!*\n📝 {{description}}\n💰 R$ {{amount}}',
+    variables: ["{{description}}", "{{amount}}", "{{category}}", "{{user_name}}"],
+  },
+  {
+    key: "template_expense_multi",
+    label: "Múltiplos gastos",
+    defaultVal: '✅ *{{count}} gastos registrados!*\n\n{{lines}}\n\n💸 *Total: R$ {{total}}*',
+    variables: ["{{count}}", "{{lines}}", "{{total}}", "{{user_name}}"],
+  },
+  {
+    key: "template_note",
+    label: "Nota anotada",
+    defaultVal: '📝 *Anotado, {{user_name}}!*\n"{{content}}"',
+    variables: ["{{content}}", "{{user_name}}"],
+  },
+  {
+    key: "greeting_message",
+    label: "Saudação inicial",
+    defaultVal: 'Olá, {{user_name}}! Sou a {{agent_name}}, sua assistente pessoal. Como posso ajudar?',
+    variables: ["{{agent_name}}", "{{user_name}}"],
+  },
+];
 
 export default function ConfigAgente() {
   const { user } = useAuth();
@@ -38,9 +70,11 @@ export default function ConfigAgente() {
   const handleSave = async () => {
     const { error } = await supabase.from("agent_configs").update({
       agent_name: config.agent_name,
+      user_nickname: config.user_nickname,
       tone: config.tone,
       language: config.language,
       system_prompt: config.system_prompt,
+      custom_instructions: config.custom_instructions,
       module_finance: config.module_finance,
       module_agenda: config.module_agenda,
       module_notes: config.module_notes,
@@ -55,39 +89,6 @@ export default function ConfigAgente() {
     else toast.success("Configurações salvas!");
   };
 
-  const templateFields = [
-    {
-      key: "template_expense",
-      label: "Gasto registrado",
-      defaultVal: '🔴 *Gasto registrado!*\n📝 {{description}}\n💰 R$ {{amount}}',
-      variables: ["{{description}}", "{{amount}}", "{{category}}"],
-    },
-    {
-      key: "template_income",
-      label: "Receita registrada",
-      defaultVal: '🟢 *Receita registrada!*\n📝 {{description}}\n💰 R$ {{amount}}',
-      variables: ["{{description}}", "{{amount}}", "{{category}}"],
-    },
-    {
-      key: "template_expense_multi",
-      label: "Múltiplos gastos",
-      defaultVal: '✅ *{{count}} gastos registrados!*\n\n{{lines}}\n\n💸 *Total: R$ {{total}}*',
-      variables: ["{{count}}", "{{lines}}", "{{total}}"],
-    },
-    {
-      key: "template_note",
-      label: "Nota anotada",
-      defaultVal: '📝 *Anotado!*\n"{{content}}"',
-      variables: ["{{content}}"],
-    },
-    {
-      key: "greeting_message",
-      label: "Saudação inicial",
-      defaultVal: 'Olá! Sou a {{agent_name}}, sua assistente pessoal. Como posso ajudar?',
-      variables: ["{{agent_name}}"],
-    },
-  ];
-
   const insertVariable = (fieldKey: string, variable: string) => {
     const el = document.getElementById(`template-${fieldKey}`) as HTMLTextAreaElement | null;
     if (!el) return;
@@ -100,6 +101,11 @@ export default function ConfigAgente() {
       el.focus();
       el.selectionStart = el.selectionEnd = start + variable.length;
     }, 0);
+  };
+
+  const resetToDefault = (fieldKey: string) => {
+    const field = TEMPLATE_FIELDS.find(f => f.key === fieldKey);
+    if (field) setConfig({ ...config, [fieldKey]: field.defaultVal });
   };
 
   const addQuickReply = async () => {
@@ -125,11 +131,17 @@ export default function ConfigAgente() {
       <Card className="bg-card border-border">
         <CardHeader><CardTitle className="text-base">Identidade</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid sm:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Nome do agente</Label>
               <Input value={config.agent_name} onChange={e => setConfig({...config, agent_name: e.target.value})} />
             </div>
+            <div className="space-y-2">
+              <Label>Como você quer ser chamado?</Label>
+              <Input value={config.user_nickname || ""} onChange={e => setConfig({...config, user_nickname: e.target.value})} placeholder="Ex: João, Chefe, Boss..." />
+            </div>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Tom de voz</Label>
               <Select value={config.tone} onValueChange={v => setConfig({...config, tone: v})}>
@@ -147,9 +159,10 @@ export default function ConfigAgente() {
               <Select value={config.language} onValueChange={v => setConfig({...config, language: v})}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="pt-BR">Português</SelectItem>
+                  <SelectItem value="pt-BR">Português brasileiro</SelectItem>
                   <SelectItem value="en">English</SelectItem>
                   <SelectItem value="es">Español</SelectItem>
+                  <SelectItem value="fr">Français</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -171,7 +184,7 @@ export default function ConfigAgente() {
                 <p className="text-sm font-medium">{m.label}</p>
                 <p className="text-xs text-muted-foreground">{m.desc}</p>
               </div>
-              <Switch checked={config[m.key]} onCheckedChange={v => setConfig({...config, [m.key]: v})} />
+              <Switch checked={!!config[m.key]} onCheckedChange={v => setConfig({...config, [m.key]: v})} />
             </div>
           ))}
         </CardContent>
@@ -179,8 +192,8 @@ export default function ConfigAgente() {
 
       <Card className="bg-card border-border">
         <CardHeader><CardTitle className="text-base">Instruções personalizadas</CardTitle></CardHeader>
-        <CardContent>
-          <Textarea value={config.system_prompt || ""} onChange={e => setConfig({...config, system_prompt: e.target.value})} rows={4} placeholder="Ex: sempre responda em português formal, me chame de 'chefe', etc." />
+        <CardContent className="space-y-4">
+          <Textarea value={config.custom_instructions || ""} onChange={e => setConfig({...config, custom_instructions: e.target.value})} rows={4} placeholder="Ex: sempre responda em português formal, me chame de 'chefe', etc." />
         </CardContent>
       </Card>
 
@@ -234,9 +247,19 @@ export default function ConfigAgente() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {templateFields.map((field) => (
+          {TEMPLATE_FIELDS.map((field) => (
             <div key={field.key} className="space-y-2">
-              <Label className="text-sm font-medium">{field.label}</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">{field.label}</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => resetToDefault(field.key)}
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" /> Padrão
+                </Button>
+              </div>
               <Textarea
                 id={`template-${field.key}`}
                 value={config[field.key] ?? field.defaultVal}
