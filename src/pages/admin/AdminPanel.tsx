@@ -59,8 +59,8 @@ export default function AdminPanel() {
   const loadProfiles = async () => {
     const { data } = await supabase
       .from("profiles")
-      .select("id, display_name, phone_number, whatsapp_lid, created_at, plan, messages_used, messages_limit, account_status")
-      .order("created_at", { ascending: false });
+      .select("id, display_name, phone_number, whatsapp_lid, created_at, plan, messages_used, messages_limit")
+      .order("created_at", { ascending: false }) as any;
     if (data) {
       setProfiles(data);
       setStats(s => ({
