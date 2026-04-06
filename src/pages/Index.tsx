@@ -1074,70 +1074,7 @@ export default function Index() {
       </section>
 
       {/* ══ PLANO ÚNICO ══════════════════════════════════════════════════ */}
-      <section id="planos" className="py-28 px-4">
-        <div className="max-w-lg mx-auto">
-          <AnimateIn>
-            <div className="text-center mb-10">
-              <h2 className="text-[40px] font-extrabold tracking-tight" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                Um plano. Acesso a tudo.
-              </h2>
-              <p className="mt-3 text-[15px] text-gray-400">
-                Sem nível básico, sem funcionalidade bloqueada. Tudo incluso desde o primeiro dia.
-              </p>
-            </div>
-          </AnimateIn>
-
-          <AnimateIn from="scale" delay={80}>
-            <div className="relative rounded-2xl border border-violet-500/40 bg-[#0d0d1a] overflow-hidden shadow-2xl shadow-violet-500/10">
-              <div className="bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-white" />
-                  <span className="text-[13px] font-bold text-white">Minha Maya Completo</span>
-                </div>
-                <span className="text-[11px] bg-white/20 text-white px-2.5 py-1 rounded-full font-medium">
-                  Oferta de lançamento
-                </span>
-              </div>
-
-              <div className="p-8">
-                <div className="mb-2">
-                  <div className="flex items-end gap-2 mb-1">
-                    <span className="text-[54px] font-extrabold text-white leading-none" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                      R$29,90
-                    </span>
-                    <span className="text-gray-400 text-[14px] mb-2">/mês</span>
-                  </div>
-                  <p className="text-[13px] text-gray-500">Menos de R$1 por dia</p>
-                </div>
-                <div className="inline-flex items-center gap-1.5 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[12px] font-medium px-3 py-1.5 rounded-full mb-6">
-                  <Check className="w-3 h-3" /> Acesso imediato após assinar
-                </div>
-
-                <div className="grid grid-cols-1 gap-2 mb-8">
-                  {PLAN_FEATURES.map((f) => (
-                    <div key={f} className="flex items-center gap-3 text-[13px] text-gray-300">
-                      <div className="w-4 h-4 rounded-full bg-violet-500/20 border border-violet-500/30 flex items-center justify-center flex-shrink-0">
-                        <Check className="w-2.5 h-2.5 text-violet-400" />
-                      </div>
-                      {f}
-                    </div>
-                  ))}
-                </div>
-
-                <Button size="lg" asChild className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-13 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-200 font-bold text-[16px]">
-                  <Link to="/signup">Assinar agora</Link>
-                </Button>
-
-                <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-[12px] text-gray-500">
-                  <span className="flex items-center gap-1"><Shield className="w-3.5 h-3.5" />Sem contrato</span>
-                  <span className="flex items-center gap-1"><Lock className="w-3.5 h-3.5" />Dados seguros</span>
-                  <span className="flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" />Cancele quando quiser</span>
-                </div>
-              </div>
-            </div>
-          </AnimateIn>
-        </div>
-      </section>
+      <PricingSection />
 
       {/* ══ FAQ ══════════════════════════════════════════════════════════ */}
       <section id="faq" className="py-20 px-4">
