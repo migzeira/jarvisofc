@@ -612,7 +612,6 @@ function PricingSection() {
                 }`}
               >
                 Anual
-                <span className="ml-1.5 text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full font-bold">-76%</span>
               </button>
             </div>
           </div>
