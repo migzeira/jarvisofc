@@ -1062,7 +1062,7 @@ export default function Index() {
           <div className="grid md:grid-cols-3 gap-5">
             {[
               {
-                icon: CalendarDays, color: "text-blue-400", bg: "from-blue-500/15 to-blue-500/5", border: "border-blue-500/25",
+                image: googleAgendaImg, color: "text-blue-400", bg: "from-blue-500/15 to-blue-500/5", border: "border-blue-500/25",
                 title: "Google Agenda",
                 desc: "Crie eventos mandando uma mensagem no WhatsApp. Aparecem na sua agenda Google em segundos, com lembrete automático.",
                 items: ["Sincronização em tempo real","Lembretes no Google","Acesse em qualquer device"],
