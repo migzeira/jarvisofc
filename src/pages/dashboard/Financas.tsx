@@ -77,7 +77,7 @@ export default function Financas() {
     const [txRes, catRes, recRes] = await Promise.all([
       supabase.from("transactions").select("*").eq("user_id", user!.id).order("transaction_date", { ascending: false }).limit(500),
       supabase.from("categories").select("*").eq("user_id", user!.id).order("name"),
-      supabase.from("recurring_transactions").select("*").eq("user_id", user!.id).order("next_date"),
+      (supabase.from("recurring_transactions" as any).select("*").eq("user_id", user!.id).order("next_date") as any),
     ]);
     setTransactions(txRes.data ?? []);
     setCategories(catRes.data ?? []);
