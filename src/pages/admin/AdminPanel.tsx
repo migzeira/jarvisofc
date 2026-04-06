@@ -122,10 +122,10 @@ export default function AdminPanel() {
 
   const approveUser = async (userId: string) => {
     setApprovingId(userId);
-    const { error } = await supabase
+    const { error } = await (supabase
       .from("profiles")
-      .update({ account_status: "active" })
-      .eq("id", userId);
+      .update({ plan: "starter" } as any)
+      .eq("id", userId) as any);
     if (error) toast.error("Erro ao aprovar");
     else {
       toast.success("Conta aprovada!");
