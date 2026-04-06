@@ -20,6 +20,7 @@ import Integracoes from "./pages/dashboard/Integracoes";
 import ConfigAgente from "./pages/dashboard/ConfigAgente";
 import MeuPlano from "./pages/dashboard/MeuPlano";
 import MeuPerfil from "./pages/dashboard/MeuPerfil";
+import AdminPanel from "./pages/admin/AdminPanel";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -48,6 +49,7 @@ const App = () => (
               <Route path="plano" element={<MeuPlano />} />
               <Route path="perfil" element={<MeuPerfil />} />
             </Route>
+            <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

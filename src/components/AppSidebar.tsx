@@ -1,4 +1,4 @@
-import { Home, Wallet, CalendarDays, StickyNote, MessageSquare, Link2, Settings, BarChart3, User, LogOut, MessageCircle, Menu } from "lucide-react";
+import { Home, Wallet, CalendarDays, StickyNote, MessageSquare, Link2, Settings, BarChart3, User, LogOut, MessageCircle, Menu, Shield } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -31,7 +31,7 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
-  const { signOut } = useAuth();
+  const { signOut, isAdmin } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -68,7 +68,13 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-4 border-t border-border">
+      <SidebarFooter className="p-4 border-t border-border space-y-1">
+        {isAdmin && (
+          <Button variant="ghost" className="w-full justify-start text-purple-400 hover:text-purple-300 hover:bg-purple-500/10" onClick={() => navigate("/admin")}>
+            <Shield className="h-4 w-4 mr-2 flex-shrink-0" />
+            {!collapsed && <span>Painel Admin</span>}
+          </Button>
+        )}
         <Button variant="ghost" className="w-full justify-start text-muted-foreground hover:text-foreground" onClick={handleLogout}>
           <LogOut className="h-4 w-4 mr-2 flex-shrink-0" />
           {!collapsed && <span>Sair</span>}
