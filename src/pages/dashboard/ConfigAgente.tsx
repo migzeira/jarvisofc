@@ -12,7 +12,8 @@ import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Plus, Trash2, Save } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Plus, Trash2, Save, MessageSquare } from "lucide-react";
 
 export default function ConfigAgente() {
   const { user } = useAuth();
