@@ -47,22 +47,12 @@ const TEMPLATE_FIELDS = [
 ];
 
 export default function ConfigAgente() {
-  const { user, session } = useAuth();
+  const { user } = useAuth();
   const [config, setConfig] = useState<any>(null);
   const [quickReplies, setQuickReplies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [newTrigger, setNewTrigger] = useState("");
   const [newReply, setNewReply] = useState("");
-
-  // Integration credentials
-  const [credSettings, setCredSettings] = useState<Record<string, { value: string; configured: boolean }>>({});
-  const [credLoading, setCredLoading] = useState(true);
-  const [credSaving, setCredSaving] = useState(false);
-  const [googleClientId, setGoogleClientId] = useState("");
-  const [googleClientSecret, setGoogleClientSecret] = useState("");
-  const [notionClientId, setNotionClientId] = useState("");
-  const [notionClientSecret, setNotionClientSecret] = useState("");
-  const [dashboardUrl, setDashboardUrl] = useState("");
 
   useEffect(() => { if (user) loadData(); }, [user]);
   useEffect(() => { if (session?.access_token) loadCredentials(); }, [session]);
