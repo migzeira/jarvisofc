@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
-  MessageCircle, Wallet, CalendarDays, Check, ArrowRight,
-  Star, Shield, Sparkles, Mic, Camera, Bell, Lock, RefreshCw,
-  ChevronDown, Tag, BarChart3, FileText, Table2, Zap,
+  MessageCircle, Bot, Check, ArrowRight,
+  Star, Shield, Sparkles, Mic, Camera, Lock, RefreshCw,
+  ChevronDown, BarChart3, FileText, Table2, Zap, CalendarDays,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +91,42 @@ const PLAN_FEATURES = [
   "Dashboard completo no app",
   "Suporte via WhatsApp",
 ];
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LOGO COMPONENTS (fallback quando imagens não estão na pasta public/)
+───────────────────────────────────────────────────────────────────────────── */
+function LogoFull() {
+  const [err, setErr] = useState(false);
+  if (err) return (
+    <div className="flex items-center gap-2.5">
+      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-500/40">
+        <MessageCircle className="h-4 w-4 text-white" />
+      </div>
+      <span className="text-[17px] font-bold tracking-tight" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+        Minha Maya
+      </span>
+    </div>
+  );
+  return (
+    <img src="/logo-full.png" alt="Minha Maya" className="h-8 w-auto object-contain"
+      onError={() => setErr(true)} />
+  );
+}
+
+function ChatAvatar() {
+  const [err, setErr] = useState(false);
+  if (err) return (
+    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center flex-shrink-0 border border-white/10">
+      <Bot className="w-4 h-4 text-white" />
+    </div>
+  );
+  return (
+    <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-white/10">
+      <img src="/logo-icon.png" alt="Minha Maya" className="w-full h-full object-cover"
+        onError={() => setErr(true)} />
+    </div>
+  );
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────
    ATOMS
@@ -233,9 +269,7 @@ function AutoChat({ lines, accent = "violet" }: { lines: ChatLine[]; accent?: Ac
       <div className="rounded-2xl border border-white/10 bg-[#0b0b12] overflow-hidden shadow-2xl shadow-black/60">
         {/* WA header */}
         <div className="flex items-center gap-2.5 px-4 py-3 bg-[#16162a] border-b border-white/[0.06]">
-          <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-white/10">
-            <img src="/logo-icon.png" alt="Minha Maya" className="w-full h-full object-cover" />
-          </div>
+          <ChatAvatar />
           <div>
             <p className="text-[12px] font-semibold text-white leading-none mb-0.5">Minha Maya</p>
             <p className="flex items-center gap-1 text-[10px] text-emerald-400">
@@ -340,9 +374,7 @@ function HeroPhone() {
         </div>
         {/* header */}
         <div className="flex items-center gap-2.5 px-4 py-2.5 bg-[#16162a] border-b border-white/[0.06]">
-          <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-white/10">
-            <img src="/logo-icon.png" alt="Minha Maya" className="w-full h-full object-cover" />
-          </div>
+          <ChatAvatar />
           <div>
             <p className="text-[11px] font-semibold text-white leading-none mb-0.5">Minha Maya</p>
             <p className="flex items-center gap-1 text-[10px] text-emerald-400">
@@ -539,9 +571,9 @@ export default function Index() {
       {/* ══ ANNOUNCEMENT BAR ══════════════════════════════════════════════ */}
       <div className="relative z-50 bg-gradient-to-r from-violet-600/30 to-purple-600/30 border-b border-violet-500/20 py-2 text-center text-[12px]">
         <span className="text-violet-200">✨ Menos de R$1 por dia para ter uma assistente pessoal 24h</span>{" "}
-        <Link to="/signup" className="text-white font-semibold underline underline-offset-2 hover:text-violet-200 transition-colors">
+        <a href="#planos" className="text-white font-semibold underline underline-offset-2 hover:text-violet-200 transition-colors">
           Assinar agora
-        </Link>
+        </a>
       </div>
 
       {/* ══ NAVBAR ════════════════════════════════════════════════════════ */}
@@ -549,9 +581,7 @@ export default function Index() {
         scrolled ? "bg-[#03030a]/90 backdrop-blur-2xl border-b border-white/[0.06] shadow-lg shadow-black/20" : "bg-transparent"
       }`}>
         <div className="max-w-6xl mx-auto px-4 h-15 flex items-center justify-between py-3">
-          <div className="flex items-center gap-2.5">
-            <img src="/logo-full.png" alt="Minha Maya" className="h-8 w-auto object-contain" />
-          </div>
+          <LogoFull />
           <nav className="hidden md:flex items-center gap-7 text-[13px] text-gray-400">
             {[["#como-funciona","Como funciona"],["#planos","Planos"],["#faq","FAQ"]].map(([h,l]) => (
               <a key={h} href={h} className="hover:text-white transition-colors relative group">
@@ -612,26 +642,17 @@ export default function Index() {
               <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
                 <Button size="lg" asChild
                   className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-12 px-8 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-200 font-semibold text-[15px]">
-                  <Link to="/signup">Quero a minha Maya <ArrowRight className="w-4 h-4 ml-2" /></Link>
+                  <a href="#planos">Quero a minha Maya <ArrowRight className="w-4 h-4 ml-2" /></a>
                 </Button>
                 <Button size="lg" variant="ghost" asChild
                   className="text-gray-300 hover:text-white border border-white/10 hover:border-white/20 hover:bg-white/7 h-12 px-6 rounded-xl text-[15px]">
                   <a href="#como-funciona">Ver como funciona</a>
                 </Button>
               </div>
-              <div className="mt-5 flex items-center gap-5 justify-center">
-                <div className="flex -space-x-2">
-                  {["AM","CB","PL","RS","JF"].map((ini, i) => (
-                    <div key={i} className="w-7 h-7 rounded-full border-2 border-[#03030a] bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-[9px] font-bold">
-                      {ini}
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center gap-2 text-[13px]">
-                  <Stars />
-                  <span className="font-semibold">4.9</span>
-                  <span className="text-gray-500">· +1.200 usuários</span>
-                </div>
+              <div className="mt-5 flex items-center gap-2 justify-center">
+                <Stars />
+                <span className="font-semibold text-[13px]">4.9</span>
+                <span className="text-gray-500 text-[13px]">· +1.200 usuários ativos</span>
               </div>
             </AnimateIn>
           </div>
@@ -1165,8 +1186,8 @@ export default function Index() {
               <div className="absolute -top-24 -right-24 w-72 h-72 bg-violet-500/12 rounded-full blur-3xl" />
               <div className="absolute -bottom-24 -left-24 w-72 h-72 bg-purple-500/12 rounded-full blur-3xl" />
               <div className="relative">
-                <div className="w-16 h-16 rounded-full overflow-hidden mx-auto mb-6 border border-white/10 shadow-2xl shadow-violet-500/40">
-                  <img src="/logo-icon.png" alt="Minha Maya" className="w-full h-full object-cover" />
+                <div className="w-16 h-16 mx-auto mb-6 flex items-center justify-center">
+                  <ChatAvatar />
                 </div>
                 <h2 className="text-[40px] font-extrabold tracking-tight mb-4" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                   Sua assistente está<br />pronta pra te ajudar
@@ -1190,8 +1211,8 @@ export default function Index() {
         <div className="max-w-5xl mx-auto">
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div className="md:col-span-2">
-              <div className="flex items-center gap-2.5 mb-4">
-                <img src="/logo-full.png" alt="Minha Maya" className="h-8 w-auto object-contain" />
+              <div className="mb-4">
+                <LogoFull />
               </div>
               <p className="text-[13px] text-gray-500 leading-relaxed max-w-[260px]">
                 Assistente pessoal inteligente no WhatsApp. Finanças, agenda, lembretes e muito mais.
