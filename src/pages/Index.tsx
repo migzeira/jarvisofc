@@ -758,16 +758,6 @@ export default function Index() {
               </div>
             </AnimateIn>
             <AnimateIn delay={320}>
-              <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
-                <Button size="lg" asChild
-                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-12 px-8 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-200 font-semibold text-[15px]">
-                  <a href="#planos">Quero a minha Maya <ArrowRight className="w-4 h-4 ml-2" /></a>
-                </Button>
-                <Button size="lg" variant="ghost" asChild
-                  className="text-gray-300 hover:text-white border border-white/10 hover:border-white/20 hover:bg-white/7 h-12 px-6 rounded-xl text-[15px]">
-                  <a href="#como-funciona">Ver como funciona</a>
-                </Button>
-              </div>
               <div className="mt-5 flex items-center gap-2 justify-center">
                 <Stars />
                 <span className="font-semibold text-[13px]">4.9</span>
