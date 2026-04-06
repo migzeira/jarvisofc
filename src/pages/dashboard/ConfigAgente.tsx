@@ -45,9 +45,61 @@ export default function ConfigAgente() {
       module_agenda: config.module_agenda,
       module_notes: config.module_notes,
       module_chat: config.module_chat,
+      template_expense: config.template_expense,
+      template_income: config.template_income,
+      template_expense_multi: config.template_expense_multi,
+      template_note: config.template_note,
+      greeting_message: config.greeting_message,
     }).eq("user_id", user!.id);
     if (error) toast.error("Erro ao salvar");
     else toast.success("Configurações salvas!");
+  };
+
+  const templateFields = [
+    {
+      key: "template_expense",
+      label: "Gasto registrado",
+      defaultVal: '🔴 *Gasto registrado!*\n📝 {{description}}\n💰 R$ {{amount}}',
+      variables: ["{{description}}", "{{amount}}", "{{category}}"],
+    },
+    {
+      key: "template_income",
+      label: "Receita registrada",
+      defaultVal: '🟢 *Receita registrada!*\n📝 {{description}}\n💰 R$ {{amount}}',
+      variables: ["{{description}}", "{{amount}}", "{{category}}"],
+    },
+    {
+      key: "template_expense_multi",
+      label: "Múltiplos gastos",
+      defaultVal: '✅ *{{count}} gastos registrados!*\n\n{{lines}}\n\n💸 *Total: R$ {{total}}*',
+      variables: ["{{count}}", "{{lines}}", "{{total}}"],
+    },
+    {
+      key: "template_note",
+      label: "Nota anotada",
+      defaultVal: '📝 *Anotado!*\n"{{content}}"',
+      variables: ["{{content}}"],
+    },
+    {
+      key: "greeting_message",
+      label: "Saudação inicial",
+      defaultVal: 'Olá! Sou a {{agent_name}}, sua assistente pessoal. Como posso ajudar?',
+      variables: ["{{agent_name}}"],
+    },
+  ];
+
+  const insertVariable = (fieldKey: string, variable: string) => {
+    const el = document.getElementById(`template-${fieldKey}`) as HTMLTextAreaElement | null;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const current = config[fieldKey] || "";
+    const newVal = current.substring(0, start) + variable + current.substring(end);
+    setConfig({ ...config, [fieldKey]: newVal });
+    setTimeout(() => {
+      el.focus();
+      el.selectionStart = el.selectionEnd = start + variable.length;
+    }, 0);
   };
 
   const addQuickReply = async () => {
