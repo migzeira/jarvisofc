@@ -2,16 +2,46 @@ const EVOLUTION_URL = Deno.env.get("EVOLUTION_API_URL") ?? "";
 const EVOLUTION_KEY = Deno.env.get("EVOLUTION_API_KEY") ?? "";
 const INSTANCE = Deno.env.get("EVOLUTION_INSTANCE_NAME") ?? "mayachat";
 
+/**
+ * Resolve um LID (@lid) para o número de telefone real consultando os contatos
+ * armazenados pelo Evolution API. Retorna null se não conseguir resolver.
+ */
+export async function resolveLidToPhone(lid: string): Promise<string | null> {
+  try {
+    const contacts = await evolutionPost(`/contact/getContacts/${INSTANCE}`, {
+      where: { id: lid },
+    }) as Array<Record<string, unknown>>;
+
+    if (!Array.isArray(contacts)) return null;
+
+    for (const c of contacts) {
+      const jid = String(c.id ?? c.remoteJid ?? "");
+      if (jid.endsWith("@s.whatsapp.net")) {
+        return jid.replace(/@s\.whatsapp\.net$/, "").replace(/:\d+$/, "");
+      }
+    }
+    return null;
+  } catch {
+    return null; // Falha silenciosa — LID não resolvível
+  }
+}
+
 /** Envia mensagem de texto via Evolution API */
 export async function sendText(to: string, text: string): Promise<void> {
-  // Se for LID (@lid) ou JID completo (@s.whatsapp.net), usa direto como remoteJid
-  // Caso contrário, normaliza como número de telefone
   let number: string;
-  if (to.includes("@")) {
-    number = to; // JID completo (LID ou @s.whatsapp.net)
+
+  if (to.endsWith("@lid")) {
+    // LID não é aceito direto pelo sendText do Evolution v1.8 —
+    // tenta resolver para telefone real via contact store
+    const resolved = await resolveLidToPhone(to);
+    number = resolved ? normalizePhone(resolved) : to;
+  } else if (to.includes("@")) {
+    // JID @s.whatsapp.net — usa direto
+    number = to;
   } else {
     number = normalizePhone(to);
   }
+
   await evolutionPost(`/message/sendText/${INSTANCE}`, {
     number,
     textMessage: { text },

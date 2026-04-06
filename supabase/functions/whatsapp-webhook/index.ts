@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { sendText, extractPhone, downloadMediaBase64 } from "../_shared/evolution.ts";
+import { sendText, extractPhone, downloadMediaBase64, resolveLidToPhone } from "../_shared/evolution.ts";
 import { syncGoogleCalendar, syncGoogleSheets, syncNotion } from "../_shared/integrations.ts";
 import {
   extractTransactions,
@@ -804,8 +804,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     }
 
     if (!profile) {
-      // Fallback: tenta por telefone (mensagens @s.whatsapp.net sem LID)
-      const phone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/:\d+$/, "");
+      // Fallback: tenta por telefone (@s.whatsapp.net ou @lid → extrai dígitos)
+      const phone = replyTo
+        .replace(/@s\.whatsapp\.net$/, "")
+        .replace(/@lid$/, "")
+        .replace(/:\d+$/, "");
       const { data } = await supabase
         .from("profiles")
         .select("id, plan, messages_used, messages_limit, phone_number, account_status")
@@ -816,7 +819,10 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     // Fallback adicional: busca em user_phone_numbers (múltiplos números - plano business)
     if (!profile) {
-      const phone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/:\d+$/, "");
+      const phone = replyTo
+        .replace(/@s\.whatsapp\.net$/, "")
+        .replace(/@lid$/, "")
+        .replace(/:\d+$/, "");
       const { data: extraNum } = await supabase
         .from("user_phone_numbers")
         .select("user_id")
@@ -829,6 +835,32 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           .eq("id", extraNum.user_id)
           .maybeSingle();
         profile = data;
+      }
+    }
+
+    // Fallback por resolução de LID → telefone real via Evolution API
+    // Útil quando o usuário tem WhatsApp Multi-Device e ainda não vinculou o LID
+    if (!profile && lid) {
+      const resolvedPhone = await resolveLidToPhone(lid);
+      if (resolvedPhone) {
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status")
+          .or(
+            `phone_number.eq.${resolvedPhone},phone_number.eq.+${resolvedPhone},phone_number.eq.55${resolvedPhone}`
+          )
+          .maybeSingle();
+        if (data) {
+          profile = data;
+          // Salva o LID no perfil automaticamente para lookups futuros (sem precisar de código MAYA)
+          supabase
+            .from("profiles")
+            .update({ whatsapp_lid: lid })
+            .eq("id", data.id)
+            .then(() => {})
+            .catch(() => {});
+          log.push(`lid_auto_linked: ${lid} → ${resolvedPhone}`);
+        }
       }
     }
 
