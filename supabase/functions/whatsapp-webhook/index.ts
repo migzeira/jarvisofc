@@ -364,7 +364,7 @@ async function handleFinanceReport(
     report += `\n📂 *Por categoria:*\n${catLines}`;
   }
 
-  report += `\n\n📱 Ver gráficos completos no app MayaChat`;
+  report += `\n\n📱 Ver gráficos completos no app Minha Maya`;
 
   return report;
 }
@@ -770,12 +770,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         .maybeSingle();
 
       if (!profileByCode) {
-        await sendText(replyTo, "❌ Código inválido. Gere um novo código no app MayaChat.");
+        await sendText(replyTo, "❌ Código inválido. Gere um novo código no app Minha Maya.");
         return log;
       }
 
       if (profileByCode.link_code_expires_at && new Date(profileByCode.link_code_expires_at) < new Date()) {
-        await sendText(replyTo, "⏰ Código expirado. Gere um novo no app MayaChat.");
+        await sendText(replyTo, "⏰ Código expirado. Gere um novo no app Minha Maya.");
         return log;
       }
 
@@ -786,7 +786,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         link_code_expires_at: null,
       }).eq("id", profileByCode.id);
 
-      await sendText(replyTo, "✅ *WhatsApp vinculado com sucesso!*\nAgora pode usar o MayaChat normalmente. Tente: *gastei 50 reais de almoço*");
+      await sendText(replyTo, "✅ *WhatsApp vinculado com sucesso!*\nAgora pode usar a Minha Maya normalmente. Tente: *gastei 50 reais de almoço*");
       log.push("linked!");
       return log;
     }
@@ -835,7 +835,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     if (!profile) {
       await sendText(
         replyTo,
-        "❌ Conta não encontrada.\n\nPara usar o MayaChat:\n1. Acesse *mayachat.com.br* e crie sua conta\n2. Vá em *Meu Perfil* e cadastre seu número\n3. Aguarde a aprovação da sua conta"
+        "❌ Conta não encontrada.\n\nPara usar a Minha Maya:\n1. Acesse *minhamaya.com.br* e crie sua conta\n2. Vá em *Meu Perfil* e cadastre seu número\n3. Aguarde a aprovação da sua conta"
       );
       return log;
     }
@@ -847,7 +847,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     if (profile.account_status !== "active") {
       await sendText(
         sendPhone || replyTo,
-        "⏳ *Sua conta está aguardando aprovação.*\n\nAssim que o administrador aprovar seu acesso, você receberá uma confirmação aqui e poderá usar o MayaChat normalmente.\n\nQualquer dúvida, acesse o app."
+        "⏳ *Sua conta está aguardando aprovação.*\n\nAssim que o administrador aprovar seu acesso, você receberá uma confirmação aqui e poderá usar a Minha Maya normalmente.\n\nQualquer dúvida, acesse o app."
       );
       return log;
     }
@@ -855,7 +855,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     // 3. Verifica limite de mensagens
     if (profile.messages_used >= profile.messages_limit) {
       await sendText(
-        sendPhone,
+        sendPhone || replyTo,
         "⚠️ Você atingiu o limite de mensagens do seu plano.\nAcesse o app para fazer upgrade! 🚀"
       );
       return log;
@@ -950,8 +950,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = `Desculpe, não entendi. Posso ajudar com ${[moduleFinance && "finanças", moduleAgenda && "agenda", moduleNotes && "anotações"].filter(Boolean).join(", ")}.`;
     }
 
-    // 7. Envia resposta (usa phone_number do perfil, não LID)
-    await sendText(sendPhone, responseText);
+    // 7. Envia resposta (usa phone_number do perfil com fallback para replyTo)
+    await sendText(sendPhone || replyTo, responseText);
 
     // 8. Atualiza sessão
     await supabase.from("whatsapp_sessions").upsert(

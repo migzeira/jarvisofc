@@ -13,7 +13,7 @@ export async function chat(
   jsonMode = false
 ): Promise<string> {
   const body: Record<string, unknown> = {
-    model: "claude-haiku-4-5-20251001",
+    model: "claude-3-5-haiku-20241022",
     max_tokens: 500,
     messages,
   };
@@ -170,7 +170,7 @@ export async function extractReceiptFromImage(
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-3-5-haiku-20241022",
       max_tokens: 600,
       system: "Você é um extrator de dados de notas fiscais. Responda APENAS com JSON válido, sem markdown.",
       messages: [{
