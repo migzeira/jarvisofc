@@ -715,7 +715,7 @@ export default function Index() {
             </Button>
             <Button size="sm" asChild
               className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white rounded-lg shadow-lg shadow-violet-500/25 hover:-translate-y-px transition-all duration-200">
-              <Link to="/signup">Assinar agora</Link>
+              <a href="#planos">Assinar agora</a>
             </Button>
           </div>
         </div>
@@ -758,16 +758,6 @@ export default function Index() {
               </div>
             </AnimateIn>
             <AnimateIn delay={320}>
-              <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
-                <Button size="lg" asChild
-                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-12 px-8 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-200 font-semibold text-[15px]">
-                  <a href="#planos">Quero a minha Maya <ArrowRight className="w-4 h-4 ml-2" /></a>
-                </Button>
-                <Button size="lg" variant="ghost" asChild
-                  className="text-gray-300 hover:text-white border border-white/10 hover:border-white/20 hover:bg-white/7 h-12 px-6 rounded-xl text-[15px]">
-                  <a href="#como-funciona">Ver como funciona</a>
-                </Button>
-              </div>
               <div className="mt-5 flex items-center gap-2 justify-center">
                 <Stars />
                 <span className="font-semibold text-[13px]">4.9</span>
@@ -811,7 +801,7 @@ export default function Index() {
                 </p>
                 <Button size="lg" asChild
                   className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-11 px-7 rounded-xl shadow-lg shadow-violet-500/25 hover:-translate-y-px transition-all duration-200 font-semibold">
-                  <Link to="/signup">Quero começar <ArrowRight className="w-4 h-4 ml-2" /></Link>
+                  <a href="#planos">Quero começar <ArrowRight className="w-4 h-4 ml-2" /></a>
                 </Button>
               </div>
             </AnimateIn>
@@ -848,7 +838,7 @@ export default function Index() {
               </ul>
               <Button asChild variant="ghost"
                 className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border border-emerald-500/25 rounded-xl px-5 h-10 text-[13px]">
-                <Link to="/signup">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></Link>
+                <a href="#planos">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></a>
               </Button>
             </div>
           </AnimateIn>
@@ -890,7 +880,7 @@ export default function Index() {
               </ul>
               <Button asChild variant="ghost"
                 className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/25 rounded-xl px-5 h-10 text-[13px]">
-                <Link to="/signup">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></Link>
+                <a href="#planos">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></a>
               </Button>
             </div>
           </AnimateIn>
@@ -967,7 +957,7 @@ export default function Index() {
               </ul>
               <Button asChild variant="ghost"
                 className="text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border border-violet-500/25 rounded-xl px-5 h-10 text-[13px]">
-                <Link to="/signup">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></Link>
+                <a href="#planos">Assinar agora <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></a>
               </Button>
             </div>
           </AnimateIn>
@@ -1296,9 +1286,14 @@ export default function Index() {
             </div>
           </div>
           <div className="pt-8 border-t border-white/[0.06] flex flex-col md:flex-row justify-between items-center gap-4 text-[12px] text-gray-600">
-            <div>
-              © 2026 Minha Maya · Todos os direitos reservados · Um produto da{" "}
-              <a href="https://mayahub.ai" className="text-violet-400 hover:text-violet-300 transition-colors" target="_blank" rel="noreferrer">MayaHub</a>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span>© 2026 Minha Maya · Todos os direitos reservados</span>
+              <span>·</span>
+              <Link to="/termos-de-uso" className="text-gray-500 hover:text-white transition-colors">Termos de Uso</Link>
+              <span>·</span>
+              <Link to="/politica-de-privacidade" className="text-gray-500 hover:text-white transition-colors">Política de Privacidade</Link>
+              <span>· Um produto da{" "}
+              <a href="https://mayahub.ai" className="text-violet-400 hover:text-violet-300 transition-colors" target="_blank" rel="noreferrer">MayaHub</a></span>
             </div>
             <div className="flex items-center gap-1.5"><Lock className="w-3 h-3" /> Dados criptografados e seguros</div>
           </div>
