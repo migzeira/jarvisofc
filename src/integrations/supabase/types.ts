@@ -131,6 +131,7 @@ export type Database = {
       }
       conversations: {
         Row: {
+          contact_name: string | null
           id: string
           last_message_at: string | null
           message_count: number
@@ -138,8 +139,10 @@ export type Database = {
           started_at: string
           summary: string | null
           user_id: string
+          whatsapp_lid: string | null
         }
         Insert: {
+          contact_name?: string | null
           id?: string
           last_message_at?: string | null
           message_count?: number
@@ -147,8 +150,10 @@ export type Database = {
           started_at?: string
           summary?: string | null
           user_id: string
+          whatsapp_lid?: string | null
         }
         Update: {
+          contact_name?: string | null
           id?: string
           last_message_at?: string | null
           message_count?: number
@@ -156,6 +161,7 @@ export type Database = {
           started_at?: string
           summary?: string | null
           user_id?: string
+          whatsapp_lid?: string | null
         }
         Relationships: [
           {
@@ -225,6 +231,7 @@ export type Database = {
           access_token: string | null
           connected_at: string | null
           created_at: string
+          expires_at: string | null
           id: string
           is_connected: boolean
           metadata: Json | null
@@ -236,6 +243,7 @@ export type Database = {
           access_token?: string | null
           connected_at?: string | null
           created_at?: string
+          expires_at?: string | null
           id?: string
           is_connected?: boolean
           metadata?: Json | null
@@ -247,6 +255,7 @@ export type Database = {
           access_token?: string | null
           connected_at?: string | null
           created_at?: string
+          expires_at?: string | null
           id?: string
           is_connected?: boolean
           metadata?: Json | null
