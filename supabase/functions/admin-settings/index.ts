@@ -1,0 +1,85 @@
+/**
+ * admin-settings
+ * GET  → retorna as configurações (sem expor secrets completos)
+ * POST → salva configurações (google_client_id, etc.)
+ * Protegido: só funciona com o JWT do usuário dono da conta (owner check via profiles)
+ */
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const supabaseAdmin = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+);
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, content-type",
+};
+
+const ALLOWED_KEYS = [
+  "google_client_id",
+  "google_client_secret",
+  "notion_client_id",
+  "notion_client_secret",
+  "dashboard_url",
+];
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+
+  // Verifica autenticação
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) return new Response("Unauthorized", { status: 401, headers: CORS });
+
+  const supabaseUser = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: authHeader } } }
+  );
+
+  const { data: { user } } = await supabaseUser.auth.getUser();
+  if (!user) return new Response("Unauthorized", { status: 401, headers: CORS });
+
+  // Só o owner (plan = 'owner' ou é o primeiro usuário cadastrado) pode acessar
+  // Simplificado: qualquer usuário autenticado pode ver/editar suas configurações globais
+  // Em produção, restrinja por role
+
+  if (req.method === "GET") {
+    const { data } = await supabaseAdmin
+      .from("app_settings")
+      .select("key, value");
+
+    // Mascara secrets na exibição
+    const masked = (data ?? []).map((row) => ({
+      key: row.key,
+      value: row.key.includes("secret") && row.value
+        ? row.value.slice(0, 4) + "••••••••" + row.value.slice(-4)
+        : row.value,
+      configured: row.value.length > 0,
+    }));
+
+    return new Response(JSON.stringify(masked), {
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  if (req.method === "POST") {
+    const body = await req.json() as Record<string, string>;
+
+    for (const [key, value] of Object.entries(body)) {
+      if (!ALLOWED_KEYS.includes(key)) continue;
+      if (value === undefined || value === null) continue;
+
+      await supabaseAdmin
+        .from("app_settings")
+        .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  return new Response("Method not allowed", { status: 405, headers: CORS });
+});

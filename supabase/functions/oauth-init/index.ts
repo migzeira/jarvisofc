@@ -1,93 +1,102 @@
-import { corsHeaders } from '@supabase/supabase-js/cors'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
+/**
+ * oauth-init
+ * Gera a URL de autorização OAuth para Google ou Notion.
+ * Chamado pelo frontend com ?provider=google_calendar&user_id=xxx
+ */
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const CALLBACK_URL = `${SUPABASE_URL}/functions/v1/oauth-callback`;
 
-  try {
-    const url = new URL(req.url)
-    const provider = url.searchParams.get('provider')
-    const userId = url.searchParams.get('user_id')
+const supabaseAdmin = createClient(
+  SUPABASE_URL,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+);
 
-    if (!provider || !userId) {
-      return new Response(JSON.stringify({ error: 'Missing provider or user_id' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
+async function getSetting(key: string): Promise<string> {
+  const { data } = await supabaseAdmin
+    .from("app_settings")
+    .select("value")
+    .eq("key", key)
+    .maybeSingle();
+  return data?.value ?? Deno.env.get(key.toUpperCase()) ?? "";
+}
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, content-type",
+};
 
-    // Build OAuth URL based on provider
-    if (provider === 'google_calendar' || provider === 'google_sheets') {
-      const clientId = Deno.env.get('GOOGLE_CLIENT_ID')
-      if (!clientId) {
-        return new Response(JSON.stringify({ error: 'Google OAuth not configured. Add GOOGLE_CLIENT_ID secret.' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
-      const redirectUri = `${supabaseUrl}/functions/v1/oauth-callback`
-      const scopes = [
-        'https://www.googleapis.com/auth/calendar',
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/userinfo.email',
-      ].join(' ')
+  const url = new URL(req.url);
+  const provider = url.searchParams.get("provider");
+  const userId = url.searchParams.get("user_id");
 
-      const state = JSON.stringify({ provider, user_id: userId })
-      const stateEncoded = btoa(state)
-
-      const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
-      authUrl.searchParams.set('client_id', clientId)
-      authUrl.searchParams.set('redirect_uri', redirectUri)
-      authUrl.searchParams.set('response_type', 'code')
-      authUrl.searchParams.set('scope', scopes)
-      authUrl.searchParams.set('access_type', 'offline')
-      authUrl.searchParams.set('prompt', 'consent')
-      authUrl.searchParams.set('state', stateEncoded)
-
-      return new Response(JSON.stringify({ url: authUrl.toString() }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    if (provider === 'notion') {
-      const notionClientId = Deno.env.get('NOTION_CLIENT_ID')
-      if (!notionClientId) {
-        return new Response(JSON.stringify({ error: 'Notion OAuth not configured. Add NOTION_CLIENT_ID secret.' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
-
-      const redirectUri = `${supabaseUrl}/functions/v1/oauth-callback`
-      const state = JSON.stringify({ provider, user_id: userId })
-      const stateEncoded = btoa(state)
-
-      const authUrl = new URL('https://api.notion.com/v1/oauth/authorize')
-      authUrl.searchParams.set('client_id', notionClientId)
-      authUrl.searchParams.set('redirect_uri', redirectUri)
-      authUrl.searchParams.set('response_type', 'code')
-      authUrl.searchParams.set('owner', 'user')
-      authUrl.searchParams.set('state', stateEncoded)
-
-      return new Response(JSON.stringify({ url: authUrl.toString() }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    return new Response(JSON.stringify({ error: `Unknown provider: ${provider}` }), {
+  if (!provider || !userId) {
+    return new Response(JSON.stringify({ error: "provider and user_id required" }), {
       status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
   }
-})
+
+  const state = btoa(JSON.stringify({ provider, userId }));
+  let authUrl: string;
+
+  if (provider === "google_calendar" || provider === "google_sheets") {
+    const googleClientId = await getSetting("google_client_id");
+    if (!googleClientId) {
+      return new Response(JSON.stringify({ error: "Google Client ID não configurado. Vá em Configurações → Integrações → Credenciais." }), {
+        status: 500,
+        headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+
+    const scopes = [
+      "https://www.googleapis.com/auth/calendar",
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/userinfo.email",
+    ].join(" ");
+
+    const params = new URLSearchParams({
+      client_id: googleClientId,
+      redirect_uri: CALLBACK_URL,
+      response_type: "code",
+      scope: scopes,
+      access_type: "offline",
+      prompt: "consent",
+      state,
+    });
+    authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+
+  } else if (provider === "notion") {
+    const notionClientId = await getSetting("notion_client_id");
+    if (!notionClientId) {
+      return new Response(JSON.stringify({ error: "Notion Client ID não configurado. Vá em Configurações → Integrações → Credenciais." }), {
+        status: 500,
+        headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+
+    const params = new URLSearchParams({
+      client_id: notionClientId,
+      redirect_uri: CALLBACK_URL,
+      response_type: "code",
+      owner: "user",
+      state,
+    });
+    authUrl = `https://api.notion.com/v1/oauth/authorize?${params}`;
+
+  } else {
+    return new Response(JSON.stringify({ error: "unknown provider" }), {
+      status: 400,
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  return new Response(JSON.stringify({ url: authUrl }), {
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
+});

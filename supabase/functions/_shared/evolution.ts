@@ -4,8 +4,18 @@ const INSTANCE = Deno.env.get("EVOLUTION_INSTANCE_NAME") ?? "mayachat";
 
 /** Envia mensagem de texto via Evolution API */
 export async function sendText(to: string, text: string): Promise<void> {
-  const number = normalizePhone(to);
-  await evolutionPost(`/message/sendText/${INSTANCE}`, { number, text });
+  // Se for LID (@lid) ou JID completo (@s.whatsapp.net), usa direto como remoteJid
+  // Caso contrário, normaliza como número de telefone
+  let number: string;
+  if (to.includes("@")) {
+    number = to; // JID completo (LID ou @s.whatsapp.net)
+  } else {
+    number = normalizePhone(to);
+  }
+  await evolutionPost(`/message/sendText/${INSTANCE}`, {
+    number,
+    textMessage: { text },
+  });
 }
 
 /** Envia imagem via Evolution API (base64 ou URL) */
@@ -24,7 +34,10 @@ export async function sendImage(
 
 /** Extrai número de telefone limpo do remoteJid do WhatsApp */
 export function extractPhone(remoteJid: string): string {
-  return remoteJid.replace(/@s\.whatsapp\.net$/, "").replace(/@g\.us$/, "");
+  return remoteJid
+    .replace(/@s\.whatsapp\.net$/, "")
+    .replace(/@g\.us$/, "")
+    .replace(/:\d+$/, ""); // remove índice de dispositivo multi-device ex: :22
 }
 
 /** Normaliza número para formato Evolution API */
