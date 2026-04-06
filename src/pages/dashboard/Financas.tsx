@@ -87,7 +87,7 @@ export default function Financas() {
 
   const handleAddRecurring = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { error } = await supabase.from("recurring_transactions").insert({
+    const { error } = await (supabase.from("recurring_transactions" as any).insert({
       user_id: user!.id,
       description: recurringForm.description,
       amount: parseFloat(recurringForm.amount),
@@ -95,7 +95,7 @@ export default function Financas() {
       category: recurringForm.category,
       frequency: recurringForm.frequency,
       next_date: recurringForm.next_date,
-    });
+    }) as any);
     if (error) toast.error("Erro ao criar recorrente: " + error.message);
     else {
       toast.success("Transação recorrente criada!");
