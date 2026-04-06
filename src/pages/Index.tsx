@@ -1235,15 +1235,20 @@ export default function Index() {
                 <div className="w-16 h-16 mx-auto mb-6 flex items-center justify-center">
                   <ChatAvatar />
                 </div>
-                <h2 className="text-[40px] font-extrabold tracking-tight mb-4" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                <h2 className="text-[28px] sm:text-[40px] font-extrabold tracking-tight mb-4" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                   Sua assistente está<br />pronta pra te ajudar
                 </h2>
-                <p className="text-gray-400 mb-9 max-w-md mx-auto leading-relaxed">
+                <p className="text-[14px] sm:text-base text-gray-400 mb-9 max-w-md mx-auto leading-relaxed">
                   Mais de 1.200 pessoas já organizam finanças, agenda e lembretes direto pelo WhatsApp. Começa agora.
                 </p>
                 <Button size="lg" asChild
-                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-13 px-10 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-200 font-bold text-[16px]">
-                  <a href="https://pay.kirvano.com/4a308234-3702-4233-9d2a-4dce73bf0d2b" target="_blank" rel="noreferrer">Assinar agora por R$29,90 <ArrowRight className="w-5 h-5 ml-2" /></a>
+                  className="group relative overflow-hidden bg-gradient-to-r from-violet-600 via-purple-600 to-violet-600 bg-[length:200%_100%] animate-shimmer-slow text-white h-13 px-6 sm:px-10 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-300 font-bold text-[14px] sm:text-[16px] border border-violet-400/20">
+                  <a href="https://pay.kirvano.com/4a308234-3702-4233-9d2a-4dce73bf0d2b" target="_blank" rel="noreferrer">
+                    <span className="relative z-10 flex items-center gap-2">
+                      Começar por R$29,90
+                      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-200" />
+                    </span>
+                  </a>
                 </Button>
                 <p className="mt-4 text-[12px] text-gray-600">Sem contrato. Cancele quando quiser.</p>
               </div>
