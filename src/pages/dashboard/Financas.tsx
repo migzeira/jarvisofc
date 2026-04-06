@@ -7,15 +7,46 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Plus, TrendingDown, TrendingUp, Wallet, ArrowUpDown } from "lucide-react";
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
+import { Plus, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from "recharts";
+import {
+  format, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay,
+  startOfWeek, endOfWeek, subYears, startOfYear, endOfYear, startOfQuarter, subQuarters, endOfQuarter,
+} from "date-fns";
 import { ptBR } from "date-fns/locale";
+
+type Period = "hoje" | "semana" | "mes" | "3meses" | "ano";
+
+const PIE_COLORS = [
+  "#6366f1", "#8b5cf6", "#ec4899", "#f97316", "#14b8a6",
+  "#3b82f6", "#84cc16", "#eab308", "#ef4444", "#06b6d4",
+];
+
+const PERIOD_LABELS: Record<Period, string> = {
+  hoje: "Hoje",
+  semana: "Semana",
+  mes: "Mês",
+  "3meses": "3 Meses",
+  ano: "Ano",
+};
+
+function getPeriodRange(period: Period): { start: Date; end: Date } {
+  const now = new Date();
+  switch (period) {
+    case "hoje": return { start: startOfDay(now), end: endOfDay(now) };
+    case "semana": return { start: startOfWeek(now, { locale: ptBR }), end: endOfWeek(now, { locale: ptBR }) };
+    case "mes": return { start: startOfMonth(now), end: endOfMonth(now) };
+    case "3meses": return { start: startOfMonth(subMonths(now, 2)), end: endOfMonth(now) };
+    case "ano": return { start: startOfYear(now), end: endOfYear(now) };
+  }
+}
 
 export default function Financas() {
   const { user } = useAuth();
@@ -25,17 +56,19 @@ export default function Financas() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [catDialogOpen, setCatDialogOpen] = useState(false);
   const [newCat, setNewCat] = useState("");
-  const [form, setForm] = useState({ description: "", amount: "", type: "expense", category: "outros", transaction_date: format(new Date(), "yyyy-MM-dd") });
+  const [period, setPeriod] = useState<Period>("mes");
   const [filterType, setFilterType] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
+  const [form, setForm] = useState({
+    description: "", amount: "", type: "expense",
+    category: "outros", transaction_date: format(new Date(), "yyyy-MM-dd"),
+  });
 
-  useEffect(() => {
-    if (user) loadData();
-  }, [user]);
+  useEffect(() => { if (user) loadData(); }, [user]);
 
   const loadData = async () => {
     const [txRes, catRes] = await Promise.all([
-      supabase.from("transactions").select("*").eq("user_id", user!.id).order("transaction_date", { ascending: false }).limit(100),
+      supabase.from("transactions").select("*").eq("user_id", user!.id).order("transaction_date", { ascending: false }).limit(500),
       supabase.from("categories").select("*").eq("user_id", user!.id).order("name"),
     ]);
     setTransactions(txRes.data ?? []);
@@ -43,24 +76,27 @@ export default function Financas() {
     setLoading(false);
   };
 
-  const now = new Date();
-  const monthStart = startOfMonth(now);
-  const monthEnd = endOfMonth(now);
-  const monthTx = transactions.filter(t => {
+  const { start: periodStart, end: periodEnd } = getPeriodRange(period);
+
+  const periodTx = transactions.filter(t => {
     const d = new Date(t.transaction_date + "T12:00:00");
-    return d >= monthStart && d <= monthEnd;
+    return d >= periodStart && d <= periodEnd;
   });
 
-  const totalExpenses = monthTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
-  const totalIncome = monthTx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+  const totalExpenses = periodTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+  const totalIncome = periodTx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+  const balance = totalIncome - totalExpenses;
 
-  const catData = Object.entries(
-    monthTx.filter(t => t.type === "expense").reduce((acc: any, t) => {
+  // Pie chart data (expenses by category)
+  const pieData = Object.entries(
+    periodTx.filter(t => t.type === "expense").reduce((acc: Record<string, number>, t) => {
       acc[t.category] = (acc[t.category] || 0) + Number(t.amount);
       return acc;
     }, {})
-  ).map(([name, total]) => ({ name, total }));
+  ).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
+  // Monthly trend (last 6 months)
+  const now = new Date();
   const monthlyData = Array.from({ length: 6 }, (_, i) => {
     const m = subMonths(now, 5 - i);
     const ms = startOfMonth(m);
@@ -76,11 +112,19 @@ export default function Financas() {
     };
   });
 
+  // Filtered + grouped by date for transactions tab
   const filteredTx = transactions.filter(t => {
     if (filterType !== "all" && t.type !== filterType) return false;
     if (filterCategory !== "all" && t.category !== filterCategory) return false;
     return true;
   });
+
+  const groupedByDate = filteredTx.reduce((acc: Record<string, any[]>, t) => {
+    const key = t.transaction_date;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(t);
+    return acc;
+  }, {});
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,6 +162,7 @@ export default function Financas() {
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Finanças</h1>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -140,7 +185,10 @@ export default function Financas() {
                   <Label>Tipo</Label>
                   <Select value={form.type} onValueChange={v => setForm({...form, type: v})}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="expense">Gasto</SelectItem><SelectItem value="income">Receita</SelectItem></SelectContent>
+                    <SelectContent>
+                      <SelectItem value="expense">Gasto</SelectItem>
+                      <SelectItem value="income">Receita</SelectItem>
+                    </SelectContent>
                   </Select>
                 </div>
               </div>
@@ -163,6 +211,21 @@ export default function Financas() {
         </Dialog>
       </div>
 
+      {/* Period filter */}
+      <div className="flex gap-2 flex-wrap">
+        {(Object.keys(PERIOD_LABELS) as Period[]).map(p => (
+          <Button
+            key={p}
+            size="sm"
+            variant={period === p ? "default" : "outline"}
+            onClick={() => setPeriod(p)}
+            className={period === p ? "" : "text-muted-foreground"}
+          >
+            {PERIOD_LABELS[p]}
+          </Button>
+        ))}
+      </div>
+
       <Tabs defaultValue="visao-geral">
         <TabsList>
           <TabsTrigger value="visao-geral">Visão Geral</TabsTrigger>
@@ -170,55 +233,89 @@ export default function Financas() {
           <TabsTrigger value="categorias">Categorias</TabsTrigger>
         </TabsList>
 
+        {/* VISÃO GERAL */}
         <TabsContent value="visao-geral" className="space-y-6">
+          {/* Summary cards */}
           <div className="grid sm:grid-cols-3 gap-4">
             <Card className="bg-card border-border">
-              <CardContent className="pt-5">
-                <p className="text-xs text-muted-foreground uppercase">Gastos do mês</p>
-                <p className="text-2xl font-bold text-destructive mt-1">R$ {totalExpenses.toFixed(2)}</p>
+              <CardContent className="pt-5 flex items-center gap-3">
+                <TrendingDown className="h-8 w-8 text-destructive shrink-0" />
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase">Gastos</p>
+                  <p className="text-2xl font-bold text-destructive">R$ {totalExpenses.toFixed(2)}</p>
+                </div>
               </CardContent>
             </Card>
             <Card className="bg-card border-border">
-              <CardContent className="pt-5">
-                <p className="text-xs text-muted-foreground uppercase">Receitas do mês</p>
-                <p className="text-2xl font-bold text-success mt-1">R$ {totalIncome.toFixed(2)}</p>
+              <CardContent className="pt-5 flex items-center gap-3">
+                <TrendingUp className="h-8 w-8 text-green-400 shrink-0" />
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase">Receitas</p>
+                  <p className="text-2xl font-bold text-green-400">R$ {totalIncome.toFixed(2)}</p>
+                </div>
               </CardContent>
             </Card>
             <Card className="bg-card border-border">
-              <CardContent className="pt-5">
-                <p className="text-xs text-muted-foreground uppercase">Saldo</p>
-                <p className={`text-2xl font-bold mt-1 ${totalIncome - totalExpenses >= 0 ? "text-success" : "text-destructive"}`}>R$ {(totalIncome - totalExpenses).toFixed(2)}</p>
+              <CardContent className="pt-5 flex items-center gap-3">
+                <Wallet className={`h-8 w-8 shrink-0 ${balance >= 0 ? "text-green-400" : "text-destructive"}`} />
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase">Saldo</p>
+                  <p className={`text-2xl font-bold ${balance >= 0 ? "text-green-400" : "text-destructive"}`}>R$ {balance.toFixed(2)}</p>
+                </div>
               </CardContent>
             </Card>
           </div>
+
+          {/* Charts */}
           <div className="grid lg:grid-cols-2 gap-6">
+            {/* Pie chart */}
             <Card className="bg-card border-border">
               <CardHeader><CardTitle className="text-base">Gastos por categoria</CardTitle></CardHeader>
               <CardContent>
-                {catData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={catData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 10% 18%)" />
-                      <XAxis dataKey="name" stroke="hsl(240 5% 65%)" fontSize={11} />
-                      <YAxis stroke="hsl(240 5% 65%)" fontSize={11} />
-                      <Tooltip contentStyle={{ backgroundColor: "hsl(240 12% 7%)", border: "1px solid hsl(240 10% 18%)", borderRadius: "8px", color: "#fff" }} />
-                      <Bar dataKey="total" fill="hsl(217 91% 60%)" radius={[4, 4, 0, 0]} />
-                    </BarChart>
+                {pieData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={90}
+                        dataKey="value"
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        labelLine={false}
+                      >
+                        {pieData.map((_, idx) => (
+                          <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(v: number) => `R$ ${v.toFixed(2)}`}
+                        contentStyle={{ backgroundColor: "hsl(240 12% 7%)", border: "1px solid hsl(240 10% 18%)", borderRadius: "8px", color: "#fff" }}
+                      />
+                    </PieChart>
                   </ResponsiveContainer>
-                ) : <p className="text-muted-foreground text-sm text-center py-10">Nenhum dado este mês.</p>}
+                ) : (
+                  <p className="text-muted-foreground text-sm text-center py-10">Nenhum gasto neste período.</p>
+                )}
               </CardContent>
             </Card>
+
+            {/* Line chart */}
             <Card className="bg-card border-border">
               <CardHeader><CardTitle className="text-base">Últimos 6 meses</CardTitle></CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
+                <ResponsiveContainer width="100%" height={260}>
                   <LineChart data={monthlyData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 10% 18%)" />
                     <XAxis dataKey="month" stroke="hsl(240 5% 65%)" fontSize={11} />
                     <YAxis stroke="hsl(240 5% 65%)" fontSize={11} />
-                    <Tooltip contentStyle={{ backgroundColor: "hsl(240 12% 7%)", border: "1px solid hsl(240 10% 18%)", borderRadius: "8px", color: "#fff" }} />
-                    <Line type="monotone" dataKey="gastos" stroke="hsl(0 84% 60%)" strokeWidth={2} />
-                    <Line type="monotone" dataKey="receitas" stroke="hsl(142 76% 36%)" strokeWidth={2} />
+                    <Tooltip
+                      formatter={(v: number) => `R$ ${v.toFixed(2)}`}
+                      contentStyle={{ backgroundColor: "hsl(240 12% 7%)", border: "1px solid hsl(240 10% 18%)", borderRadius: "8px", color: "#fff" }}
+                    />
+                    <Legend />
+                    <Line type="monotone" dataKey="gastos" stroke="hsl(0 84% 60%)" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="receitas" stroke="hsl(142 76% 36%)" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -226,6 +323,7 @@ export default function Financas() {
           </div>
         </TabsContent>
 
+        {/* TRANSAÇÕES */}
         <TabsContent value="transacoes" className="space-y-4">
           <div className="flex flex-wrap gap-3">
             <Select value={filterType} onValueChange={setFilterType}>
@@ -244,32 +342,8 @@ export default function Financas() {
               </SelectContent>
             </Select>
           </div>
-          {filteredTx.length > 0 ? (
-            <div className="rounded-lg border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-transparent">
-                    <TableHead>Data</TableHead>
-                    <TableHead>Descrição</TableHead>
-                    <TableHead>Categoria</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredTx.map(t => (
-                    <TableRow key={t.id} className="border-border">
-                      <TableCell className="text-sm">{format(new Date(t.transaction_date + "T12:00:00"), "dd/MM/yyyy")}</TableCell>
-                      <TableCell className="text-sm">{t.description}</TableCell>
-                      <TableCell><Badge variant="secondary" className="text-xs">{t.category}</Badge></TableCell>
-                      <TableCell>{t.type === "expense" ? <TrendingDown className="h-4 w-4 text-destructive" /> : <TrendingUp className="h-4 w-4 text-success" />}</TableCell>
-                      <TableCell className={`text-right font-medium ${t.type === "expense" ? "text-destructive" : "text-success"}`}>R$ {Number(t.amount).toFixed(2)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          ) : (
+
+          {filteredTx.length === 0 ? (
             <Card className="bg-card border-border">
               <CardContent className="py-12 text-center">
                 <Wallet className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
@@ -277,9 +351,48 @@ export default function Financas() {
                 <p className="text-sm text-muted-foreground/60 mt-1">Comece conversando com seu agente no WhatsApp!</p>
               </CardContent>
             </Card>
+          ) : (
+            <div className="space-y-4">
+              {Object.entries(groupedByDate).map(([date, txs]) => {
+                const dayExpenses = txs.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+                const dayIncome = txs.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+                return (
+                  <div key={date}>
+                    <div className="flex items-center justify-between py-1 mb-2">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        {format(new Date(date + "T12:00:00"), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+                      </p>
+                      <div className="flex gap-3 text-xs">
+                        {dayExpenses > 0 && <span className="text-destructive">-R$ {dayExpenses.toFixed(2)}</span>}
+                        {dayIncome > 0 && <span className="text-green-400">+R$ {dayIncome.toFixed(2)}</span>}
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      {txs.map(t => (
+                        <div key={t.id} className="flex items-center gap-3 p-3 rounded-lg bg-card border border-border hover:bg-accent/5 transition-colors">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${t.type === "expense" ? "bg-red-500/10" : "bg-green-500/10"}`}>
+                            {t.type === "expense"
+                              ? <TrendingDown className="h-4 w-4 text-destructive" />
+                              : <TrendingUp className="h-4 w-4 text-green-400" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{t.description}</p>
+                            <Badge variant="secondary" className="text-xs mt-0.5">{t.category}</Badge>
+                          </div>
+                          <p className={`text-sm font-semibold shrink-0 ${t.type === "expense" ? "text-destructive" : "text-green-400"}`}>
+                            {t.type === "expense" ? "-" : "+"}R$ {Number(t.amount).toFixed(2)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </TabsContent>
 
+        {/* CATEGORIAS */}
         <TabsContent value="categorias" className="space-y-4">
           <div className="flex justify-end">
             <Dialog open={catDialogOpen} onOpenChange={setCatDialogOpen}>
@@ -297,13 +410,13 @@ export default function Financas() {
             </Dialog>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {categories.map(c => {
+            {categories.map((c, idx) => {
               const total = transactions.filter(t => t.category === c.name && t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
               return (
                 <Card key={c.id} className="bg-card border-border">
                   <CardContent className="pt-5 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <span className="text-xl">{c.icon || "📦"}</span>
+                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: PIE_COLORS[idx % PIE_COLORS.length] }} />
                       <div>
                         <p className="font-medium text-sm">{c.name}</p>
                         {c.is_default && <span className="text-xs text-muted-foreground">Padrão</span>}

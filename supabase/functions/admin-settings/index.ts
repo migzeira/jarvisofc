@@ -18,6 +18,7 @@ const CORS = {
 };
 
 const ALLOWED_KEYS = [
+  "whatsapp_number",
   "google_client_id",
   "google_client_secret",
   "notion_client_id",
