@@ -10,11 +10,68 @@ import {
   extractReceiptFromImage,
   type ChatMessage,
 } from "../_shared/openai.ts";
+import { logError, fromThrown } from "../_shared/logger.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
+
+// ─────────────────────────────────────────────
+// RATE LIMITER — max 20 msgs/min, 200 msgs/hour
+// ─────────────────────────────────────────────
+const RATE_LIMIT_PER_MINUTE = 20;
+const RATE_LIMIT_PER_HOUR   = 200;
+const BLOCK_DURATION_MS     = 60 * 60 * 1000; // 1h block after burst
+
+async function checkRateLimit(phone: string): Promise<{ allowed: boolean; reason?: string }> {
+  const now = new Date();
+  const minuteAgo = new Date(now.getTime() - 60_000).toISOString();
+
+  const { data: row } = await supabase
+    .from("rate_limits")
+    .select("count, window_start, blocked_until")
+    .eq("phone_number", phone)
+    .maybeSingle();
+
+  // Blocked?
+  if (row?.blocked_until && new Date(row.blocked_until) > now) {
+    return { allowed: false, reason: "blocked" };
+  }
+
+  // Reset window if older than 1 minute
+  const windowStart = row?.window_start ?? now.toISOString();
+  const isNewWindow = !row || new Date(windowStart) < new Date(minuteAgo);
+
+  if (isNewWindow) {
+    await supabase.from("rate_limits").upsert({
+      phone_number: phone,
+      count: 1,
+      window_start: now.toISOString(),
+      blocked_until: null,
+    }, { onConflict: "phone_number" });
+    return { allowed: true };
+  }
+
+  const newCount = (row?.count ?? 0) + 1;
+
+  if (newCount > RATE_LIMIT_PER_MINUTE) {
+    const blockedUntil = new Date(now.getTime() + BLOCK_DURATION_MS).toISOString();
+    await supabase.from("rate_limits").upsert({
+      phone_number: phone,
+      count: newCount,
+      window_start: windowStart,
+      blocked_until: blockedUntil,
+    }, { onConflict: "phone_number" });
+    return { allowed: false, reason: "rate_exceeded" };
+  }
+
+  await supabase.from("rate_limits")
+    .update({ count: newCount })
+    .eq("phone_number", phone);
+
+  return { allowed: true };
+}
 
 // ─────────────────────────────────────────────
 // INTENT CLASSIFIER (regex first, sem custo IA)
@@ -468,6 +525,23 @@ serve(async (req) => {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
+  // ── Webhook Signature Verification (Evolution API) ──────────────────────
+  // Configure EVOLUTION_WEBHOOK_TOKEN in Supabase Secrets and in Evolution API
+  // Settings → Webhooks → Headers: { "Authorization": "<token>" }
+  const webhookToken = Deno.env.get("EVOLUTION_WEBHOOK_TOKEN");
+  if (webhookToken) {
+    const incomingAuth = req.headers.get("authorization") ?? req.headers.get("Authorization") ?? "";
+    const normalized = incomingAuth.startsWith("Bearer ") ? incomingAuth.slice(7) : incomingAuth;
+    if (normalized !== webhookToken) {
+      await logError({
+        context: "whatsapp-webhook/auth",
+        message: "Unauthorized webhook request",
+        metadata: { ip: req.headers.get("x-forwarded-for") ?? "unknown" },
+      });
+      return new Response("Unauthorized", { status: 401 });
+    }
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -506,6 +580,22 @@ serve(async (req) => {
   const remoteJid = key?.remoteJid as string;
   if (!remoteJid || remoteJid.endsWith("@g.us")) {
     return new Response("OK");
+  }
+
+  // ── Rate Limiting ────────────────────────────────────────────────────────
+  const phoneForLimit = remoteJid.replace(/@.*$/, "");
+  const rateCheck = await checkRateLimit(phoneForLimit);
+  if (!rateCheck.allowed) {
+    if (rateCheck.reason === "rate_exceeded") {
+      // Send one-time warning (fire-and-forget, don't await to avoid loop)
+      sendText(remoteJid, "⚠️ Muitas mensagens em pouco tempo. Sua conta foi temporariamente limitada por 1 hora.").catch(() => {});
+      await logError({
+        context: "whatsapp-webhook/rate-limit",
+        message: `Rate limit exceeded for ${phoneForLimit}`,
+        phone_number: phoneForLimit,
+      });
+    }
+    return new Response("OK"); // silent drop for "blocked" state
   }
 
   // Determina o identificador: LID (@lid) ou telefone (@s.whatsapp.net)
@@ -833,14 +923,18 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     log.push("success");
     return log;
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    log.push(`ERROR: ${errMsg}`);
-    console.error("processMessage error:", err);
+    const { message, stack } = fromThrown(err);
+    log.push(`ERROR: ${message}`);
+    await logError({
+      context: "whatsapp-webhook/processMessage",
+      message,
+      stack,
+      phone_number: replyTo.replace(/@.*$/, ""),
+      metadata: { lid, messageId },
+    });
     try {
       await sendText(replyTo, "⚠️ Ocorreu um erro. Tente novamente em alguns instantes.");
-    } catch {
-      // ignora erro no fallback
-    }
+    } catch { /* ignora erro no fallback */ }
     return log;
   }
 }

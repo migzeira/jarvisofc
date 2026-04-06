@@ -6,6 +6,7 @@
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { logError, fromThrown } from "../_shared/logger.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -83,15 +84,29 @@ serve(async (req) => {
     { onConflict: "kirvano_order_id" }
   );
 
-  if (eventType === "purchase.approved" || eventType === "subscription.activated") {
-    await handleApproved(email, name, phone, plan);
-  } else if (
-    eventType === "purchase.canceled" ||
-    eventType === "subscription.canceled" ||
-    eventType === "purchase.refunded" ||
-    eventType === "purchase.chargeback"
-  ) {
-    await handleCanceled(email);
+  try {
+    if (eventType === "purchase.approved" || eventType === "subscription.activated") {
+      await handleApproved(email, name, phone, plan);
+    } else if (
+      eventType === "purchase.canceled" ||
+      eventType === "subscription.canceled" ||
+      eventType === "purchase.refunded" ||
+      eventType === "purchase.chargeback"
+    ) {
+      await handleCanceled(email);
+    }
+  } catch (err) {
+    const { message, stack } = fromThrown(err);
+    await logError({
+      context: "kirvano-webhook",
+      message,
+      stack,
+      metadata: { eventType, email, orderId, plan },
+    });
+    return new Response(JSON.stringify({ ok: false, error: message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   return new Response(JSON.stringify({ ok: true }), {
