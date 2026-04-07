@@ -388,14 +388,16 @@ async function handleFinanceRecord(
   if (transactions.length === 1) {
     const t = transactions[0];
     const tpl = t.type === "expense"
-      ? (config?.template_expense as string) ?? "🔴 *Gasto registrado!*\n📝 {{description}}\n💰 R$ {{amount}}"
-      : (config?.template_income as string) ?? "🟢 *Receita registrada!*\n📝 {{description}}\n💰 R$ {{amount}}";
+      ? (config?.template_expense as string) ?? "🔴 *Gasto registrado{{name_tag}}!*\n📝 {{description}}\n💰 R$ {{amount}}"
+      : (config?.template_income as string) ?? "🟢 *Receita registrada{{name_tag}}!*\n📝 {{description}}\n💰 R$ {{amount}}";
+    const nick = (config?.user_nickname as string) || "";
     return applyTemplate(tpl, {
       description: t.description,
       amount: t.amount.toFixed(2).replace(".", ","),
       category: t.category,
       type: t.type,
-      user_name: (config?.user_nickname as string) || "",
+      user_name: nick,
+      name_tag: nick ? `, ${nick}` : "",
     });
   }
 
@@ -408,12 +410,14 @@ async function handleFinanceRecord(
     .reduce((s, t) => s + t.amount, 0);
 
   const tplMulti = (config?.template_expense_multi as string)
-    ?? "✅ *{{count}} gastos registrados!*\n\n{{lines}}\n\n💸 *Total: R$ {{total}}*";
+    ?? "✅ *{{count}} gastos registrados{{name_tag}}!*\n\n{{lines}}\n\n💸 *Total: R$ {{total}}*";
 
+  const nickMulti = (config?.user_nickname as string) || "";
   return applyTemplate(tplMulti, {
     count: String(transactions.length),
     lines: lines.join("\n"),
     total: total.toFixed(2).replace(".", ","),
+    name_tag: nickMulti ? `, ${nickMulti}` : "",
   });
 }
 
@@ -732,7 +736,8 @@ async function handleAgendaCreate(
   phone: string,
   message: string,
   session: Record<string, unknown> | null,
-  language = "pt-BR"
+  language = "pt-BR",
+  userNickname: string | null = null
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const today = new Date().toISOString().split("T")[0];
 
@@ -748,18 +753,18 @@ async function handleAgendaCreate(
     const recurrenceFromCtx = context._recurrence ? { type: context._recurrence as string, weekday: context._recurrence_weekday as number | undefined } : undefined;
     if (isReminderAtTime(message)) {
       const finalData = { ...partial, reminder_minutes: 0 } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname);
     }
     // "não quero lembrete"
     if (isReminderDecline(message)) {
       const finalData = { ...partial, reminder_minutes: null } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname);
     }
     // Já veio com tempo especificado (ex: "30 minutos antes", "2 horas antes")
     const minutesInAnswer = parseMinutes(message);
     if (minutesInAnswer !== null && message.match(/\d|hora|minuto|meia/)) {
       const finalData = { ...partial, reminder_minutes: minutesInAnswer } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname);
     }
     if (isReminderAccept(message)) {
       // Aceitou — perguntar quanto tempo antes
@@ -784,7 +789,7 @@ async function handleAgendaCreate(
     if (minutes !== null) {
       const recurrenceFromCtxMin = context._recurrence ? { type: context._recurrence as string, weekday: context._recurrence_weekday as number | undefined } : undefined;
       const finalData = { ...partial, reminder_minutes: minutes } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtxMin);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtxMin, language, userNickname);
     }
     // Não entendeu — pede de novo
     return {
@@ -832,7 +837,7 @@ async function handleAgendaCreate(
         pendingContext: { partial: dataWithTitle, step: "conflict_resolution" },
       };
     }
-    return await createEventAndConfirm(userId, phone, dataWithTitle, recurrenceFromCtxTitle);
+    return await createEventAndConfirm(userId, phone, dataWithTitle, recurrenceFromCtxTitle, language, userNickname);
   }
 
   // ─── STEP: conflict_resolution ───
@@ -855,7 +860,7 @@ async function handleAgendaCreate(
           pendingContext: { partial: savedPartial, step: "waiting_reminder_answer" },
         };
       }
-      return await createEventAndConfirm(userId, phone, savedPartial);
+      return await createEventAndConfirm(userId, phone, savedPartial, undefined, language, userNickname);
     }
 
     // Opção 2: Mudar horário
@@ -901,7 +906,7 @@ async function handleAgendaCreate(
           pendingContext: { partial: newData, step: "waiting_reminder_answer" },
         };
       }
-      return await createEventAndConfirm(userId, phone, newData);
+      return await createEventAndConfirm(userId, phone, newData, undefined, language, userNickname);
     }
 
     // Resposta ambígua
@@ -987,7 +992,7 @@ async function handleAgendaCreate(
   }
 
   // Tudo preenchido — criar evento
-  return await createEventAndConfirm(userId, phone, extracted, recurrence ?? undefined);
+  return await createEventAndConfirm(userId, phone, extracted, recurrence ?? undefined, language, userNickname);
 }
 
 /** Cria o evento no banco e retorna a confirmação formatada */
@@ -996,7 +1001,8 @@ async function createEventAndConfirm(
   phone: string,
   extracted: ExtractedEvent,
   recurrence?: { type: string; weekday?: number },
-  lang = "pt-BR"
+  lang = "pt-BR",
+  userNickname: string | null = null
 ): Promise<{ response: string }> {
   const color = EVENT_TYPE_COLORS[extracted.event_type] ?? "#3b82f6";
   const emoji = EVENT_TYPE_EMOJIS[extracted.event_type] ?? "📌";
@@ -1126,8 +1132,9 @@ async function createEventAndConfirm(
   }
 
   const dateFormatted = fmtDateLong(extracted.date, lang);
+  const nameGreet = userNickname ? `, ${userNickname}` : "";
 
-  let response = `✅ *Agendado!*\n${emoji} ${extracted.title}\n🗓 ${dateFormatted}`;
+  let response = `✅ *Agendado${nameGreet}!*\n${emoji} ${extracted.title}\n🗓 ${dateFormatted}`;
   if (extracted.time) response += `\n⏰ ${extracted.time}`;
   if (extracted.end_time) response += ` - ${extracted.end_time}`;
   if (extracted.location) response += `\n📍 ${extracted.location}`;
@@ -1966,7 +1973,8 @@ async function handleNotesSave(
         });
         const timeStr = remindAt.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
         const dateStr = remindAt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long", day: "numeric", month: "long" });
-        return { response: `⏰ *Lembrete criado!*\nVou te avisar sobre _"${noteTitle}"_ em ${dateStr} às ${timeStr}. ✅` };
+        const noteNameGreet = userNickname ? `, ${userNickname}` : "";
+        return { response: `⏰ *Lembrete criado${noteNameGreet}!*\nVou te avisar sobre _"${noteTitle}"_ em ${dateStr} às ${timeStr}. ✅` };
       }
     }
 
@@ -2188,7 +2196,8 @@ async function handleReminderSet(
   phone: string,
   message: string,
   session: Record<string, unknown> | null = null,
-  lang = "pt-BR"
+  lang = "pt-BR",
+  userNickname: string | null = null
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const nowIso = new Date().toLocaleString("sv-SE", {
     timeZone: "America/Sao_Paulo",
@@ -2330,8 +2339,9 @@ async function saveReminder(
         : `\n🔔 Aviso ${fmtAdvanceLabel(advanceMin, lang)} antes`)
     : (lang === "en" ? "\n🔔 Alert at reminder time" : lang === "es" ? "\n🔔 Aviso en el horario" : "\n🔔 Aviso na hora");
 
+  const nameGreetReminder = userNickname ? `, ${userNickname}` : "";
   return {
-    response: `⏰ *Lembrete criado!*\n📌 ${parsed.title}\n📅 ${dateStr} às ${timeStr}${advanceNote}${recurrenceLabel[String(parsed.recurrence)] ?? ""}\n\n_Vou te avisar aqui no WhatsApp!_`,
+    response: `⏰ *Lembrete criado${nameGreetReminder}!*\n📌 ${parsed.title}\n📅 ${dateStr} às ${timeStr}${advanceNote}${recurrenceLabel[String(parsed.recurrence)] ?? ""}\n\n_Vou te avisar aqui no WhatsApp!_`,
   };
 }
 
@@ -2777,7 +2787,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "finance_report") {
       responseText = await handleFinanceReport(profile.id, text);
     } else if (intent === "agenda_create") {
-      const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language);
+      const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname);
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
@@ -2801,7 +2811,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       pendingAction = notesResult.pendingAction;
       pendingContext = notesResult.pendingContext;
     } else if (intent === "reminder_set") {
-      const reminderResult = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language);
+      const reminderResult = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname);
       responseText = reminderResult.response;
       pendingAction = reminderResult.pendingAction;
       pendingContext = reminderResult.pendingContext;
