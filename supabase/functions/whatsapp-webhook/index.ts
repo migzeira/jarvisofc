@@ -2130,8 +2130,13 @@ serve(async (req) => {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  // ── Webhook Origin Check (optional) ──────────────────────────────────────
-  // Rate limiting já protege contra abuso (20 msgs/min por número)
+  // ── Validação de origem: Evolution API envia seu apikey no header ────────
+  const incomingKey = req.headers.get("apikey") ?? "";
+  const evolutionKey = Deno.env.get("EVOLUTION_API_KEY") ?? "";
+  if (evolutionKey && incomingKey && incomingKey !== evolutionKey) {
+    console.warn("[webhook] Rejected request with invalid apikey header");
+    return new Response("Unauthorized", { status: 401 });
+  }
 
   let body: Record<string, unknown>;
   try {

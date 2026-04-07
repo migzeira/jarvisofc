@@ -64,23 +64,31 @@ function nextOccurrence(
   return null; // "none" ou tipo desconhecido → sem próxima
 }
 
-serve(async (_req) => {
-  // Auth desabilitada — função é chamada por pg_cron interno
-  // verify_jwt = false no config.toml, URL obscura = segurança suficiente
+serve(async (req) => {
+  // ── Auth via CRON_SECRET ──────────────────────────────────────────────────
+  const authHeader = req.headers.get("authorization") ?? "";
+  const cronSecret = Deno.env.get("CRON_SECRET") ?? "";
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return new Response("Unauthorized", { status: 401 });
+  }
 
   const now = new Date();
   const nowIso = now.toISOString();
 
-  // Busca lembretes pendentes
-  const { data: reminders, error } = await supabase
+  // ── Recupera lembretes presos em "processing" há mais de 5 min (crash recovery) ──
+  const ago5min = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+  await supabase
     .from("reminders")
-    .select("*")
-    .eq("status", "pending")
-    .lte("send_at", nowIso)
-    .limit(50);
+    .update({ status: "pending", processing_at: null } as any)
+    .eq("status", "processing")
+    .lt("processing_at", ago5min);
+
+  // ── Reclama atomicamente os lembretes pendentes (evita duplicidade entre runs) ──
+  const { data: reminders, error } = await supabase
+    .rpc("claim_pending_reminders", { p_limit: 50 }) as any;
 
   if (error) {
-    console.error("Error fetching reminders:", error);
+    console.error("Error claiming reminders:", error);
     return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
 
