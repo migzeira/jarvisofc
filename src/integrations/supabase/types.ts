@@ -542,18 +542,24 @@ export type Database = {
         Row: {
           blocked_until: string | null
           count: number
+          hour_count: number | null
+          hour_window_start: string | null
           phone_number: string
           window_start: string
         }
         Insert: {
           blocked_until?: string | null
           count?: number
+          hour_count?: number | null
+          hour_window_start?: string | null
           phone_number: string
           window_start?: string
         }
         Update: {
           blocked_until?: string | null
           count?: number
+          hour_count?: number | null
+          hour_window_start?: string | null
           phone_number?: string
           window_start?: string
         }
@@ -798,6 +804,7 @@ export type Database = {
     }
     Functions: {
       cleanup_old_error_logs: { Args: never; Returns: undefined }
+      send_pending_reminders: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
