@@ -141,8 +141,13 @@ function classifyIntent(msg: string): Intent {
   )
     return "notes_save";
 
-  // Lembrete simples
-  if (/me lembra|me avisa|me notific|lembrete/.test(m)) return "reminder_set";
+  // Lembrete simples — exige forma imperativa (não pega perguntas sobre a Maya)
+  // Evita falso positivo em "você não vai me lembrar?", "ia me lembrar", etc.
+  if (
+    /^me lembra\b|^me avisa\b|^me notifica\b|^quero um lembrete|^cria(r)? (um )?lembrete|^salva (um )?lembrete|^adiciona (um )?lembrete|^lembrete:/.test(m) ||
+    /\bme lembra (de|que|do|da|às|as|amanha|hoje|semana|todo|toda|dia \d)\b/.test(m) ||
+    /\bme avisa (às|as|quando|amanha|hoje|dia \d)\b/.test(m)
+  ) return "reminder_set";
 
   // Buscar evento específico
   if (/voce lembra (do|da|de) (meu|minha)|lembra (do|da|de) (meu|minha)|tem (meu|minha) .{2,30} marcad|qual (e|é) (meu|minha)|quando (e|é) (meu|minha)|tem algo (marcado|agendado) (dia|no dia|para)/.test(m))
@@ -1314,32 +1319,96 @@ serve(async (req) => {
 // ─────────────────────────────────────────────
 async function handleReminderSet(
   userId: string,
-  phone: string,    // número formatado para envio
-  message: string
-): Promise<string> {
-  // Hora atual em Brasília para dar contexto ao parser
+  phone: string,
+  message: string,
+  session: Record<string, unknown> | null = null
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const nowIso = new Date().toLocaleString("sv-SE", {
     timeZone: "America/Sao_Paulo",
     hour12: false,
   }).replace(" ", "T") + "-03:00";
 
+  // ── Recupera contexto pendente (fluxo de antecedência) ──
+  const ctx = (session?.pending_context as Record<string, unknown>) ?? {};
+  const step = (ctx.step as string) ?? null;
+
+  // Usuário está respondendo com quanto tempo antes quer ser avisado
+  if (step === "reminder_advance") {
+    const parsed = ctx.parsed as Record<string, unknown>;
+    const remindAt = new Date(parsed.remind_at as string);
+
+    // "só na hora" / "na hora" → 0 min de antecedência (avisa exatamente no horário)
+    if (isReminderAtTime(message)) {
+      return await saveReminder(userId, phone, parsed, remindAt, 0);
+    }
+    // "não precisa" → avisa na hora mesmo (sem antecedência adicional)
+    if (isReminderDecline(message)) {
+      return await saveReminder(userId, phone, parsed, remindAt, 0);
+    }
+    // Tenta extrair minutos de antecedência
+    const advanceMin = parseMinutes(message);
+    if (advanceMin !== null && advanceMin > 0) {
+      const advancedTime = new Date(remindAt.getTime() - advanceMin * 60 * 1000);
+      return await saveReminder(userId, phone, parsed, advancedTime, advanceMin);
+    }
+    // Não entendeu
+    return {
+      response: "Não entendi. Com quanto tempo antes? Ex: *15 min*, *1 hora* — ou diga *só na hora*",
+      pendingAction: "reminder_set",
+      pendingContext: ctx,
+    };
+  }
+
+  // ── Extrai intenção do lembrete com IA ──
   const parsed = await parseReminderIntent(message, nowIso);
 
   if (!parsed) {
-    return "⚠️ Não entendi o lembrete. Tente: *me lembra de ligar pro João amanhã às 14h* ou *me lembra todo dia 10 de pagar aluguel às 9h*";
+    return { response: "⚠️ Não entendi o lembrete. Tente: *me lembra de ligar pro João amanhã às 14h*" };
   }
 
-  // Valida que a data é futura
   const remindAt = new Date(parsed.remind_at);
   if (isNaN(remindAt.getTime())) {
-    return "⚠️ Não consegui identificar a data/hora do lembrete. Pode repetir com mais detalhes?";
+    return { response: "⚠️ Não consegui identificar a data/hora. Pode repetir com mais detalhes?" };
   }
 
   if (remindAt <= new Date()) {
-    // Hora já passou — assumimos amanhã mesmo horário
     remindAt.setDate(remindAt.getDate() + 1);
   }
 
+  // ── Pergunta com quanto tempo de antecedência ──
+  // Só pergunta se o lembrete não é recorrente nem tem "na hora" explícito na mensagem
+  const msgLower = message.toLowerCase();
+  const mentionedAdvance = /antes|antecedência|antecipado|minutos? antes|horas? antes/.test(msgLower);
+  const atTimeNow = isReminderAtTime(msgLower);
+
+  if (!mentionedAdvance && !atTimeNow && parsed.recurrence === "none") {
+    const timeStr = remindAt.toLocaleTimeString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit", minute: "2-digit",
+    });
+    const dateStr = remindAt.toLocaleDateString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      weekday: "long", day: "numeric", month: "long",
+    });
+    return {
+      response: `Ok! Vou te lembrar sobre *${parsed.title}* em ${dateStr} às ${timeStr}.\n\nQuer que eu te avise com antecedência ou *só na hora*? ⏱️\n\n_Ex: 15 min antes, 1 hora antes, só na hora_`,
+      pendingAction: "reminder_set",
+      pendingContext: { step: "reminder_advance", parsed },
+    };
+  }
+
+  // Tem antecedência explícita na mensagem → salva direto
+  return await saveReminder(userId, phone, parsed, remindAt, 0);
+}
+
+/** Salva o lembrete no banco e retorna confirmação formatada */
+async function saveReminder(
+  userId: string,
+  phone: string,
+  parsed: Record<string, unknown>,
+  remindAt: Date,
+  advanceMin: number
+): Promise<{ response: string }> {
   const { error } = await supabase.from("reminders").insert({
     user_id: userId,
     whatsapp_number: phone,
@@ -1354,7 +1423,6 @@ async function handleReminderSet(
 
   if (error) throw error;
 
-  // Formata confirmação
   const dateStr = remindAt.toLocaleDateString("pt-BR", {
     timeZone: "America/Sao_Paulo",
     weekday: "long", day: "numeric", month: "long",
@@ -1372,7 +1440,13 @@ async function handleReminderSet(
     day_of_month: `\n🔁 *Recorrente:* todo dia ${parsed.recurrence_value ?? ""} do mês`,
   };
 
-  return `⏰ *Lembrete criado!*\n📌 ${parsed.title}\n📅 ${dateStr} às ${timeStr}${recurrenceLabel[parsed.recurrence] ?? ""}\n\n_Vou te avisar aqui no WhatsApp!_`;
+  const advanceNote = advanceMin > 0
+    ? `\n🔔 Aviso ${advanceMin >= 60 ? advanceMin / 60 + " hora" + (advanceMin / 60 > 1 ? "s" : "") : advanceMin + " min"} antes`
+    : "\n🔔 Aviso na hora";
+
+  return {
+    response: `⏰ *Lembrete criado!*\n📌 ${parsed.title}\n📅 ${dateStr} às ${timeStr}${advanceNote}${recurrenceLabel[String(parsed.recurrence)] ?? ""}\n\n_Vou te avisar aqui no WhatsApp!_`,
+  };
 }
 
 async function processImageMessage(
@@ -1644,7 +1718,10 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "notes_save" && moduleNotes) {
       responseText = await handleNotesSave(profile.id, text);
     } else if (intent === "reminder_set") {
-      responseText = await handleReminderSet(profile.id, sendPhone || replyTo, text);
+      const reminderResult = await handleReminderSet(profile.id, sendPhone || replyTo, text, session);
+      responseText = reminderResult.response;
+      pendingAction = reminderResult.pendingAction;
+      pendingContext = reminderResult.pendingContext;
     } else if (moduleChat) {
       // Chat geral com IA
       const history = await getRecentHistory(profile.id);
