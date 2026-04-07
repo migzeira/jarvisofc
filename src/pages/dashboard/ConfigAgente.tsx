@@ -61,28 +61,47 @@ export default function ConfigAgente() {
       supabase.from("agent_configs").select("*").eq("user_id", user!.id).single(),
       supabase.from("quick_replies").select("*").eq("user_id", user!.id).order("created_at"),
     ]);
-    setConfig(configRes.data);
+    const raw = configRes.data;
+    if (raw) {
+      // Normalize NULL values to safe defaults.
+      // Modules: NULL means "never explicitly set" → treat as ON (matches webhook logic: !== false).
+      // tone/language: NULL → use app defaults so Select components never show blank.
+      setConfig({
+        ...raw,
+        tone: raw.tone ?? "profissional",
+        language: raw.language ?? "pt-BR",
+        module_finance: raw.module_finance !== false,
+        module_agenda: raw.module_agenda !== false,
+        module_notes: raw.module_notes !== false,
+        module_chat: raw.module_chat !== false,
+        daily_briefing_enabled: raw.daily_briefing_enabled !== false,
+      });
+    }
     setQuickReplies(qrRes.data ?? []);
     setLoading(false);
   };
 
   const handleSave = async () => {
     const { error } = await supabase.from("agent_configs").update({
-      user_nickname: config.user_nickname,
-      tone: config.tone,
-      language: config.language,
-      system_prompt: config.system_prompt,
-      custom_instructions: config.custom_instructions,
-      module_finance: config.module_finance,
-      module_agenda: config.module_agenda,
-      module_notes: config.module_notes,
-      module_chat: config.module_chat,
-      daily_briefing_enabled: config.daily_briefing_enabled,
-      template_expense: config.template_expense,
-      template_income: config.template_income,
-      template_expense_multi: config.template_expense_multi,
-      template_note: config.template_note,
-      greeting_message: config.greeting_message,
+      // Trim nickname; persist null when empty so the webhook falls back gracefully
+      user_nickname: config.user_nickname?.trim() || null,
+      // Always save resolved values (never undefined / never blank string for selects)
+      tone: config.tone || "profissional",
+      language: config.language || "pt-BR",
+      // Never overwrite system_prompt — it has no UI field here
+      custom_instructions: config.custom_instructions ?? null,
+      // Modules are boolean after normalization; persist explicit true/false (not null)
+      module_finance: config.module_finance === true,
+      module_agenda: config.module_agenda === true,
+      module_notes: config.module_notes === true,
+      module_chat: config.module_chat === true,
+      daily_briefing_enabled: config.daily_briefing_enabled === true,
+      // Message templates — persist null when cleared so webhook uses built-in defaults
+      template_expense: config.template_expense?.trim() || null,
+      template_income: config.template_income?.trim() || null,
+      template_expense_multi: config.template_expense_multi?.trim() || null,
+      template_note: config.template_note?.trim() || null,
+      greeting_message: config.greeting_message?.trim() || null,
     }).eq("user_id", user!.id);
     if (error) toast.error("Erro ao salvar");
     else toast.success("Configurações salvas!");
