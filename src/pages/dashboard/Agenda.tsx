@@ -544,7 +544,7 @@ export default function Agenda() {
         user_id: user!.id,
         source: "manual",
         status: "pending",
-      });
+      } as any);
       if (error) toast.error("Erro ao criar evento");
       else {
         toast.success("Evento criado!");
