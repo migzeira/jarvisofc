@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import {
   Users, MessageSquare, Wallet, Settings, Shield, Search, Eye, MessageCircle,
   Clock, CheckCircle, XCircle, RefreshCw, Download, CreditCard, AlertTriangle,
-  TrendingUp, TrendingDown, ChevronLeft, ChevronRight,
+  TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Webhook, ChevronDown, ChevronUp, Link2, Link2Off,
 } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -61,6 +61,7 @@ export default function AdminPanel() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [errorLogs, setErrorLogs] = useState<any[]>([]);
+  const [kirvanoEvents, setKirvanoEvents] = useState<any[]>([]);
 
   // Pagination
   const [usersPage, setUsersPage] = useState(0);
@@ -69,6 +70,7 @@ export default function AdminPanel() {
   const [txPage, setTxPage] = useState(0);
   const [payPage, setPayPage] = useState(0);
   const [errPage, setErrPage] = useState(0);
+  const [kirvanoPage, setKirvanoPage] = useState(0);
 
   // Counts for pagination
   const [userCount, setUserCount] = useState(0);
@@ -77,6 +79,11 @@ export default function AdminPanel() {
   const [txCount, setTxCount] = useState(0);
   const [payCount, setPayCount] = useState(0);
   const [errCount, setErrCount] = useState(0);
+  const [kirvanoCount, setKirvanoCount] = useState(0);
+
+  // Kirvano UI state
+  const [kirvanoExpandedId, setKirvanoExpandedId] = useState<string | null>(null);
+  const [kirvanoLiveRefresh, setKirvanoLiveRefresh] = useState(false);
 
   // Filters
   const [userSearch, setUserSearch] = useState("");
@@ -104,6 +111,14 @@ export default function AdminPanel() {
   useEffect(() => { if (!loading && isAdmin) loadPayments(); }, [payPage]);
   useEffect(() => { if (!loading && isAdmin) loadErrorLogs(); }, [errPage, errContextFilter]);
   useEffect(() => { if (!loading && isAdmin) loadProfiles(); }, [usersPage]);
+  useEffect(() => { if (!loading && isAdmin) loadKirvanoEvents(); }, [kirvanoPage]);
+
+  // Live refresh para Kirvano — atualiza a cada 3s enquanto a aba estiver ativa
+  useEffect(() => {
+    if (!kirvanoLiveRefresh) return;
+    const interval = setInterval(() => loadKirvanoEvents(), 3000);
+    return () => clearInterval(interval);
+  }, [kirvanoLiveRefresh, kirvanoPage]);
 
   useEffect(() => {
     if (isAdmin) loadData();
@@ -116,6 +131,7 @@ export default function AdminPanel() {
     await Promise.all([
       loadProfiles(), loadConversations(), loadMessages(),
       loadTransactions(), loadSettings(), loadPayments(), loadErrorLogs(),
+      loadKirvanoEvents(),
     ]);
     setLastRefresh(new Date());
     setLoading(false);
@@ -228,6 +244,15 @@ export default function AdminPanel() {
       setErrCount(count || 0);
       setStats(s => ({ ...s, errorCount: count || 0 }));
     }
+  };
+
+  const loadKirvanoEvents = async () => {
+    const { data, count } = await (supabase
+      .from("kirvano_events" as any)
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(kirvanoPage * PAGE_SIZE, (kirvanoPage + 1) * PAGE_SIZE - 1) as any);
+    if (data) { setKirvanoEvents(data); setKirvanoCount(count || 0); }
   };
 
   const loadSettings = async () => {
@@ -475,8 +500,14 @@ export default function AdminPanel() {
               <TabsTrigger value="messages"><MessageCircle className="h-4 w-4 mr-1" />Mensagens</TabsTrigger>
               <TabsTrigger value="transactions"><Wallet className="h-4 w-4 mr-1" />Transações</TabsTrigger>
               <TabsTrigger value="payments"><CreditCard className="h-4 w-4 mr-1" />Pagamentos</TabsTrigger>
-              <TabsTrigger value="errors"><AlertTriangle className="h-4 w-4 mr-1" />Erros</TabsTrigger>
-              <TabsTrigger value="settings"><Settings className="h-4 w-4 mr-1" />Config</TabsTrigger>
+              <TabsTrigger value="kirvano" onClick={() => { loadKirvanoEvents(); setKirvanoLiveRefresh(true); }} className="relative">
+                <Webhook className="h-4 w-4 mr-1" />Kirvano
+                {kirvanoEvents.some((e: any) => !e.matched) && (
+                  <span className="ml-1.5 bg-orange-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5">!</span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="errors" onClick={() => setKirvanoLiveRefresh(false)}><AlertTriangle className="h-4 w-4 mr-1" />Erros</TabsTrigger>
+              <TabsTrigger value="settings" onClick={() => setKirvanoLiveRefresh(false)}><Settings className="h-4 w-4 mr-1" />Config</TabsTrigger>
             </TabsList>
           </div>
 
@@ -782,6 +813,173 @@ export default function AdminPanel() {
                 <PaginationControls page={errPage} setPage={setErrPage} total={errCount} />
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* KIRVANO EVENTS */}
+          <TabsContent value="kirvano">
+            <div className="space-y-4">
+              {/* Painel de controle + URL */}
+              <Card className="bg-card border-border">
+                <CardContent className="pt-4">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                    <div className="flex-1 space-y-1">
+                      <p className="text-sm font-medium text-muted-foreground">URL do Webhook Kirvano</p>
+                      <div className="flex items-center gap-2">
+                        <code className="text-xs bg-muted px-3 py-1.5 rounded-md font-mono text-green-400 select-all break-all">
+                          https://fnilyapvhhygfzcdxqjm.supabase.co/functions/v1/kirvano-webhook
+                        </code>
+                        <Button size="sm" variant="ghost" className="shrink-0" onClick={() => {
+                          navigator.clipboard.writeText("https://fnilyapvhhygfzcdxqjm.supabase.co/functions/v1/kirvano-webhook");
+                          toast.success("URL copiada!");
+                        }}>Copiar</Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Cole essa URL nas configurações de webhook da Kirvano. Ative os eventos de compra, assinatura e reembolso.</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className={`w-2 h-2 rounded-full ${kirvanoLiveRefresh ? "bg-green-500 animate-pulse" : "bg-muted-foreground"}`} />
+                      <span className="text-xs text-muted-foreground">{kirvanoLiveRefresh ? "Ao vivo" : "Parado"}</span>
+                      <Button size="sm" variant={kirvanoLiveRefresh ? "default" : "outline"}
+                        onClick={() => setKirvanoLiveRefresh(v => !v)}>
+                        {kirvanoLiveRefresh ? "⏹ Parar" : "▶ Live"}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={loadKirvanoEvents}>
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Último evento recebido — destaque para debug */}
+              {kirvanoEvents.length > 0 && (
+                <Card className="bg-card border-border">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Webhook className="h-4 w-4 text-emerald-400" />
+                      Último evento recebido
+                      <span className="text-xs text-muted-foreground font-normal">
+                        — {formatDate(kirvanoEvents[0].created_at)}
+                      </span>
+                      {kirvanoEvents[0].matched ? (
+                        <Badge className="bg-green-500/20 text-green-300 border-green-500/30 text-xs"><Link2 className="h-3 w-3 mr-1" />Usuário encontrado</Badge>
+                      ) : (
+                        <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30 text-xs"><Link2Off className="h-3 w-3 mr-1" />Sem match</Badge>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid sm:grid-cols-3 gap-3 mb-3">
+                      <div className="space-y-0.5">
+                        <p className="text-xs text-muted-foreground">Evento</p>
+                        <p className="text-sm font-mono">{kirvanoEvents[0].event_type || "—"}</p>
+                        <Badge variant="outline" className="text-xs">{kirvanoEvents[0].canonical_event || "unknown"}</Badge>
+                      </div>
+                      <div className="space-y-0.5">
+                        <p className="text-xs text-muted-foreground">Email / Telefone</p>
+                        <p className="text-sm">{kirvanoEvents[0].email || "—"}</p>
+                        <p className="text-xs font-mono text-muted-foreground">{kirvanoEvents[0].phone || "—"}</p>
+                      </div>
+                      <div className="space-y-0.5">
+                        <p className="text-xs text-muted-foreground">Produto</p>
+                        <p className="text-sm">{kirvanoEvents[0].product_name || "—"}</p>
+                        <p className="text-xs text-muted-foreground">Sub: {kirvanoEvents[0].subscription_id || "—"}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground font-medium">Raw Payload (JSON completo)</p>
+                      <pre className="text-xs bg-muted/50 border border-border rounded-md p-3 overflow-auto max-h-64 text-green-300 font-mono whitespace-pre-wrap break-all">
+                        {JSON.stringify(kirvanoEvents[0].raw_payload, null, 2)}
+                      </pre>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Tabela de todos os eventos */}
+              <Card className="bg-card border-border">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Webhook className="h-5 w-5 text-purple-400" />
+                      Histórico de Eventos Kirvano
+                      <Badge variant="secondary">{kirvanoCount}</Badge>
+                    </CardTitle>
+                    <Button size="sm" variant="outline" onClick={() => exportCSV(kirvanoEvents, "kirvano-eventos.csv")}>
+                      <Download className="h-4 w-4 mr-1" /> CSV
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {kirvanoEvents.length === 0 ? (
+                    <div className="text-center py-12 space-y-2">
+                      <Webhook className="h-10 w-10 mx-auto text-muted-foreground/40" />
+                      <p className="text-muted-foreground text-sm">Nenhum evento recebido ainda.</p>
+                      <p className="text-xs text-muted-foreground">Configure a URL acima na Kirvano e dispare um evento de teste.</p>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-32">Data</TableHead>
+                          <TableHead>Evento</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Telefone</TableHead>
+                          <TableHead>Produto</TableHead>
+                          <TableHead>Match</TableHead>
+                          <TableHead className="w-10"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {kirvanoEvents.map((ev: any) => (
+                          <>
+                            <TableRow key={ev.id} className={!ev.matched ? "bg-orange-500/5" : ""}>
+                              <TableCell className="text-xs whitespace-nowrap text-muted-foreground">{formatDate(ev.created_at)}</TableCell>
+                              <TableCell>
+                                <div className="space-y-0.5">
+                                  <p className="text-xs font-mono">{ev.event_type || "—"}</p>
+                                  <Badge variant="outline" className="text-[10px] h-4">{ev.canonical_event || "unknown"}</Badge>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-sm">{ev.email || "—"}</TableCell>
+                              <TableCell className="text-xs font-mono">{ev.phone || "—"}</TableCell>
+                              <TableCell className="text-sm max-w-[140px] truncate">{ev.product_name || "—"}</TableCell>
+                              <TableCell>
+                                {ev.matched ? (
+                                  <Badge className="bg-green-500/20 text-green-300 border-green-500/30 text-xs"><Link2 className="h-3 w-3 mr-1" />Match</Badge>
+                                ) : (
+                                  <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30 text-xs"><Link2Off className="h-3 w-3 mr-1" />Sem match</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Button size="sm" variant="ghost" className="h-7 w-7 p-0"
+                                  onClick={() => setKirvanoExpandedId(kirvanoExpandedId === ev.id ? null : ev.id)}>
+                                  {kirvanoExpandedId === ev.id
+                                    ? <ChevronUp className="h-4 w-4" />
+                                    : <ChevronDown className="h-4 w-4" />}
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                            {kirvanoExpandedId === ev.id && (
+                              <TableRow key={`${ev.id}-detail`}>
+                                <TableCell colSpan={7} className="bg-muted/20 p-0">
+                                  <div className="p-4 space-y-2">
+                                    <p className="text-xs font-medium text-muted-foreground">Raw Payload completo:</p>
+                                    <pre className="text-xs bg-background border border-border rounded-md p-3 overflow-auto max-h-72 text-green-300 font-mono whitespace-pre-wrap break-all">
+                                      {JSON.stringify(ev.raw_payload, null, 2)}
+                                    </pre>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                  <PaginationControls page={kirvanoPage} setPage={setKirvanoPage} total={kirvanoCount} />
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           {/* SETTINGS */}

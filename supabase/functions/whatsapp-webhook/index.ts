@@ -2603,12 +2603,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     }
 
     // ── Busca perfil por LID (novo WhatsApp) ou telefone (fallback) ──
-    let profile: { id: string; plan: string; messages_used: number; messages_limit: number; phone_number: string; account_status: string; timezone: string | null } | null = null;
+    let profile: { id: string; plan: string; messages_used: number; messages_limit: number; phone_number: string; account_status: string; timezone: string | null; access_until: string | null } | null = null;
 
     if (lid) {
       const { data } = await supabase
         .from("profiles")
-        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone")
+        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until")
         .eq("whatsapp_lid", lid)
         .maybeSingle();
       profile = data;
@@ -2622,7 +2622,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         .replace(/:\d+$/, "");
       const { data } = await supabase
         .from("profiles")
-        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone")
+        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until")
         .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
         .maybeSingle();
       profile = data;
@@ -2642,7 +2642,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (extraNum?.user_id) {
         const { data } = await supabase
           .from("profiles")
-          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until")
           .eq("id", extraNum.user_id)
           .maybeSingle();
         profile = data;
@@ -2656,7 +2656,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (resolvedPhone) {
         const { data } = await supabase
           .from("profiles")
-          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until")
           .or(
             `phone_number.eq.${resolvedPhone},phone_number.eq.+${resolvedPhone},phone_number.eq.55${resolvedPhone}`
           )
@@ -2684,13 +2684,39 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     // Usa o telefone do perfil para enviar respostas (LID não funciona no sendText)
     const sendPhone = profile.phone_number?.replace(/\D/g, "") ?? "";
 
-    // 2. Verifica se a conta foi aprovada pelo admin
-    if (profile.account_status !== "active") {
+    // 2. Verifica se a conta está ativa
+    if (profile.account_status === "suspended") {
+      // Silêncio total para contas suspensas (reembolso / chargeback)
+      log.push("account_suspended");
+      return log;
+    }
+
+    if (profile.account_status === "pending") {
       await sendText(
         sendPhone || replyTo,
         "⏳ *Sua conta está aguardando aprovação.*\n\nAssim que o administrador aprovar seu acesso, você receberá uma confirmação aqui e poderá usar a Minha Maya normalmente.\n\nQualquer dúvida, acesse o app."
       );
       return log;
+    }
+
+    // 2b. Verifica se o período de acesso expirou (assinatura cancelada que estava em grace period)
+    if (profile.access_until) {
+      const accessUntilDate = new Date(profile.access_until);
+      if (!isNaN(accessUntilDate.getTime()) && accessUntilDate < new Date()) {
+        // Período expirou → suspende a conta automaticamente e silencia
+        supabase.from("profiles")
+          .update({ account_status: "suspended", access_until: null })
+          .eq("id", profile.id)
+          .then(() => {})
+          .catch(() => {});
+        supabase.from("agent_configs")
+          .update({ is_active: false })
+          .eq("user_id", profile.id)
+          .then(() => {})
+          .catch(() => {});
+        log.push("access_expired");
+        return log;
+      }
     }
 
     // 3. Verifica limite de mensagens
