@@ -1541,32 +1541,281 @@ async function handleAgendaQuery(userId: string, message: string): Promise<strin
   return `📅 *Sua agenda — ${periodDescription}*\n_(${countLabel})_${doneNote}\n\n${sections.join("\n\n")}`;
 }
 
-async function handleNotesSave(
-  userId: string,
-  message: string
-): Promise<string> {
-  let content = message
-    .replace(/^(anota|anotacao|anote|salva|escreve|registra|guarda|nota)[\s:,]+/i, "")
-    .replace(/^preciso lembrar[\s:,]*/i, "")
-    .replace(/^lembrar de[\s:,]*/i, "")
-    .trim();
+// ─────────────────────────────────────────────
+// SMART NOTE PROCESSING — classifica e limpa com IA
+// ─────────────────────────────────────────────
 
-  if (!content) {
-    return "O que você quer anotar?";
+interface NoteAnalysis {
+  cleanContent: string;
+  suggestedTitle: string;
+  looksLikeEvent: boolean;
+  needsMoreInfo: boolean;
+  moreInfoQuestion: string | null;
+}
+
+async function analyzeNoteContent(rawMessage: string): Promise<NoteAnalysis> {
+  const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
+  const MODEL = Deno.env.get("CLAUDE_MODEL") ?? "claude-haiku-4-5-20251001";
+
+  const prompt = `Analise esta mensagem de WhatsApp enviada para uma assistente pessoal: "${rawMessage}"
+
+Responda SOMENTE com JSON válido (sem texto extra):
+{
+  "cleanContent": "conteúdo limpo sem verbos como 'anota'/'salva'/'registra' e sem 'pra mim que'/'que'/'isso'. Corrija capitalização.",
+  "suggestedTitle": "título curto e objetivo (máx 50 chars)",
+  "looksLikeEvent": true ou false (contém médico/dentista/reunião/consulta + data ou horário específico?),
+  "needsMoreInfo": true ou false (é consulta médica/dentista onde perguntar especialidade ou local seria útil?),
+  "moreInfoQuestion": "pergunta natural para obter especialidade/local/mais detalhes se needsMoreInfo=true, caso contrário null"
+}`;
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 250,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    const data = await resp.json();
+    const text = data.content?.[0]?.text ?? "{}";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+  } catch {
+    // fallback
   }
 
+  // Fallback: limpeza básica por regex
+  const cleanContent = rawMessage
+    .replace(/^(anota|anotacao|anote|salva|escreve|registra|guarda|cria (uma )?nota)[\s:,]+(pra mim que|pra mim|que\s+)?/i, "")
+    .replace(/^(preciso lembrar|lembrar de)[\s:,]+/i, "")
+    .replace(/^(pra mim que|pra mim|que)\s+/i, "")
+    .trim();
+
+  return {
+    cleanContent: cleanContent || rawMessage,
+    suggestedTitle: cleanContent.slice(0, 50),
+    looksLikeEvent: false,
+    needsMoreInfo: false,
+    moreInfoQuestion: null,
+  };
+}
+
+async function handleNotesSave(
+  userId: string,
+  phone: string,
+  message: string,
+  session: Record<string, unknown> | null
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  const ctx = (session?.pending_context as Record<string, unknown>) ?? {};
+  const step = (ctx.step as string) ?? null;
+
+  // ─── STEP: note_or_event_choice ───
+  if (step === "note_or_event_choice") {
+    const m = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const cleanContent = ctx.cleanContent as string;
+    const suggestedTitle = ctx.suggestedTitle as string;
+    const needsMoreInfo = ctx.needsMoreInfo as boolean;
+    const moreInfoQuestion = ctx.moreInfoQuestion as string | null;
+    const originalMessage = ctx.originalMessage as string;
+
+    // Usuário quer colocar na agenda
+    if (/^1$|^agenda$|^agendar|^marcar|^compromisso|^sim$|^quero agenda/.test(m)) {
+      if (needsMoreInfo && moreInfoQuestion) {
+        return {
+          response: moreInfoQuestion,
+          pendingAction: "notes_save",
+          pendingContext: { ...ctx, step: "agenda_more_info" },
+        };
+      }
+      // Redireciona para criação de evento com a mensagem original
+      return await handleAgendaCreate(userId, phone, originalMessage, null);
+    }
+
+    // Usuário quer salvar como nota (opção 2, ou qualquer outra resposta = fallback)
+    // Salva a nota com conteúdo limpo
+    const { error } = await supabase.from("notes").insert({
+      user_id: userId,
+      title: suggestedTitle || null,
+      content: cleanContent,
+      source: "whatsapp",
+    });
+    if (error) throw error;
+    syncNotion(userId, cleanContent).catch(() => {});
+
+    return {
+      response: `📝 *Anotado!*\n_"${cleanContent}"_\n\nQuer que eu te lembre sobre isso mais tarde? ⏰\n_Diga o horário ou "não precisa"_`,
+      pendingAction: "notes_save",
+      pendingContext: { step: "note_reminder_offer", noteTitle: suggestedTitle || cleanContent.slice(0, 40) },
+    };
+  }
+
+  // ─── STEP: agenda_more_info ───
+  if (step === "agenda_more_info") {
+    // Combina detalhes extras com a mensagem original e cria evento
+    const originalMessage = ctx.originalMessage as string;
+    const combinedMessage = `${originalMessage} — ${message}`;
+    return await handleAgendaCreate(userId, phone, combinedMessage, null);
+  }
+
+  // ─── STEP: note_extra_info ───
+  // Usuário respondeu à pergunta de mais detalhes (especialidade, local, etc.)
+  if (step === "note_extra_info") {
+    const noteTitle = ctx.noteTitle as string;
+    const cleanContent = ctx.cleanContent as string;
+    const m = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+    // Se recusou dar mais info → vai direto para oferecer lembrete
+    if (/^(nao|não|n|dispenso|nao precisa|ta bom|tudo bem|sem detalhes|pula|pular)$/.test(m)) {
+      return {
+        response: `Ok! Nota salva como: _"${cleanContent}"_\n\nQuer que eu te lembre sobre isso mais tarde? ⏰\n_Diga o horário ou "não precisa"_`,
+        pendingAction: "notes_save",
+        pendingContext: { step: "note_reminder_offer", noteTitle },
+      };
+    }
+
+    // Enriquece o título com a info extra
+    const enrichedTitle = `${noteTitle} — ${message.trim()}`;
+
+    // Atualiza a nota mais recente do usuário (a que acabou de ser salva)
+    const { data: lastNote } = await supabase
+      .from("notes")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("source", "whatsapp")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastNote?.id) {
+      await supabase.from("notes")
+        .update({ title: enrichedTitle.slice(0, 100) })
+        .eq("id", lastNote.id);
+    }
+
+    return {
+      response: `Perfeito! Anotei: _"${enrichedTitle}"_ 📝\n\nQuer que eu te lembre sobre isso mais tarde? ⏰\n_Diga o horário ou "não precisa"_`,
+      pendingAction: "notes_save",
+      pendingContext: { step: "note_reminder_offer", noteTitle: enrichedTitle.slice(0, 60) },
+    };
+  }
+
+  // ─── STEP: note_reminder_offer ───
+  if (step === "note_reminder_offer") {
+    const noteTitle = ctx.noteTitle as string;
+    const m = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+    if (isReminderDecline(m) || /^(nao|não|n|dispenso|nao precisa|ta bom|tudo bem)$/.test(m)) {
+      return {
+        response: `Ok! A anotação está salva. 📝\nQuando precisar é só pedir: _"busca minha anotação sobre ${noteTitle}"_ 🔍`,
+      };
+    }
+
+    // Tenta extrair horário diretamente da resposta
+    const nowIso = new Date().toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).replace(" ", "T") + "-03:00";
+    const parsed = await parseReminderIntent(message, nowIso);
+    if (parsed) {
+      const remindAt = new Date(parsed.remind_at);
+      if (!isNaN(remindAt.getTime()) && remindAt > new Date()) {
+        const { data: profile } = await supabase.from("profiles").select("phone_number").eq("id", userId).maybeSingle();
+        const whatsappPhone = phone || profile?.phone_number || "";
+        await supabase.from("reminders").insert({
+          user_id: userId,
+          whatsapp_number: whatsappPhone,
+          title: noteTitle,
+          message: `⏰ *Lembrete!*\n📝 ${noteTitle}`,
+          send_at: remindAt.toISOString(),
+          recurrence: "none",
+          source: "whatsapp",
+          status: "pending",
+        });
+        const timeStr = remindAt.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+        const dateStr = remindAt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long", day: "numeric", month: "long" });
+        return { response: `⏰ *Lembrete criado!*\nVou te avisar sobre _"${noteTitle}"_ em ${dateStr} às ${timeStr}. ✅` };
+      }
+    }
+
+    // Usuário disse sim mas sem horário — pede quando
+    if (isReminderAccept(m)) {
+      return {
+        response: `Quando você quer ser lembrado? 📅\n\n_Ex: amanhã às 10h, sexta às 15h, daqui 2 horas_`,
+        pendingAction: "notes_save",
+        pendingContext: { step: "note_reminder_offer", noteTitle },
+      };
+    }
+
+    // Não entendeu — segue sem lembrete
+    return {
+      response: `Ok, nota salva! Quando quiser ser lembrado é só dizer: _"me lembra de ${noteTitle} às Xh"_ 📝`,
+    };
+  }
+
+  // ─── FLUXO PRINCIPAL ───
+  // Analisa e classifica a nota com IA
+  const analysis = await analyzeNoteContent(message);
+
+  // Se parece um evento → pergunta o que fazer
+  if (analysis.looksLikeEvent) {
+    const eventHint = analysis.needsMoreInfo && analysis.moreInfoQuestion
+      ? `\n\n_Também posso te pedir mais detalhes como especialidade ou local._`
+      : "";
+
+    return {
+      response: `Isso parece um compromisso! 📅${eventHint}\n\nO que você prefere?\n1️⃣ *Colocar na agenda* — com data, hora e lembrete\n2️⃣ *Salvar como anotação* — só para consulta depois`,
+      pendingAction: "notes_save",
+      pendingContext: {
+        step: "note_or_event_choice",
+        cleanContent: analysis.cleanContent,
+        suggestedTitle: analysis.suggestedTitle,
+        needsMoreInfo: analysis.needsMoreInfo,
+        moreInfoQuestion: analysis.moreInfoQuestion,
+        originalMessage: message,
+      },
+    };
+  }
+
+  // Se precisa de mais info mas é nota mesmo → salva e pergunta detalhes
   const { error } = await supabase.from("notes").insert({
     user_id: userId,
-    content,
+    title: analysis.suggestedTitle || null,
+    content: analysis.cleanContent,
     source: "whatsapp",
   });
-
   if (error) throw error;
+  syncNotion(userId, analysis.cleanContent).catch(() => {});
 
-  // Sync Notion (fire-and-forget)
-  syncNotion(userId, content).catch(() => {});
+  // Pergunta se quer lembrete
+  let responseText = `📝 *Anotado!*\n_"${analysis.cleanContent}"_\n\nQuer que eu te lembre sobre isso mais tarde? ⏰\n_Diga o horário ou "não precisa"_`;
 
-  return `📝 *Anotado!*\n"${content}"`;
+  // Se tem mais info a perguntar, adiciona após confirmar lembrete
+  if (analysis.needsMoreInfo && analysis.moreInfoQuestion) {
+    responseText = `📝 *Anotado!*\n_"${analysis.cleanContent}"_\n\n${analysis.moreInfoQuestion}\n\n_Ou diga "não precisa" para pular_`;
+    // Vai aguardar resposta de mais info e depois oferecer lembrete
+    return {
+      response: responseText,
+      pendingAction: "notes_save",
+      pendingContext: {
+        step: "note_extra_info",
+        noteId: null, // already saved
+        noteTitle: analysis.suggestedTitle || analysis.cleanContent.slice(0, 40),
+        cleanContent: analysis.cleanContent,
+      },
+    };
+  }
+
+  return {
+    response: responseText,
+    pendingAction: "notes_save",
+    pendingContext: {
+      step: "note_reminder_offer",
+      noteTitle: analysis.suggestedTitle || analysis.cleanContent.slice(0, 40),
+    },
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -2236,7 +2485,10 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "agenda_delete" && moduleAgenda) {
       responseText = await handleAgendaDelete(profile.id, text);
     } else if (intent === "notes_save" && moduleNotes) {
-      responseText = await handleNotesSave(profile.id, text);
+      const notesResult = await handleNotesSave(profile.id, sendPhone || replyTo, text, session);
+      responseText = notesResult.response;
+      pendingAction = notesResult.pendingAction;
+      pendingContext = notesResult.pendingContext;
     } else if (intent === "reminder_set") {
       const reminderResult = await handleReminderSet(profile.id, sendPhone || replyTo, text, session);
       responseText = reminderResult.response;
