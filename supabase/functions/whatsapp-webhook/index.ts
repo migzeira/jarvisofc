@@ -120,6 +120,9 @@ function getModuleDisabledMsg(
     event_followup:  "agenda",
     notes_save:      "notes",
     reminder_set:    "notes",
+    reminder_list:   "notes",
+    reminder_cancel: "notes",
+    reminder_edit:   "notes",
     reminder_snooze: "notes",
     ai_chat:         "chat",
   };
@@ -257,6 +260,9 @@ type Intent =
   | "agenda_delete"
   | "notes_save"
   | "reminder_set"
+  | "reminder_list"
+  | "reminder_cancel"
+  | "reminder_edit"
   | "reminder_snooze"
   | "event_followup"
   | "ai_chat";
@@ -328,6 +334,26 @@ function classifyIntent(msg: string): Intent {
     /daqui a pouco de novo/.test(m) ||
     /me lembra (daqui|em) \d/.test(m)
   ) return "reminder_snooze";
+
+  // Listar lembretes
+  if (
+    /^(quais|mostra|lista|ver|veja|mostre|me mostra)\s+(s[ãa]o\s+)?(meus\s+)?lembretes?/.test(m) ||
+    /^meus lembretes?$/.test(m) ||
+    /^(tem|tenho|tenho\s+algum)\s+(lembrete|lembretes)\s*(pendente|ativo|marcado)?/.test(m) ||
+    /^(lembretes?\s*(pendentes?|ativos?|marcados?))$/.test(m)
+  ) return "reminder_list";
+
+  // Cancelar lembrete
+  if (
+    /^(cancela|cancelar|remove|apaga|deleta|exclui)\s+(o\s+)?(lembrete|aviso|alarme)\s+(d[eo]\s+)?.+/.test(m) ||
+    /^(cancela|remove|apaga|deleta)\s+lembrete\b/.test(m)
+  ) return "reminder_cancel";
+
+  // Editar lembrete (muda horário ou dia)
+  if (
+    /^(muda|mudar|alterar|altera|atualiza|reagenda|remarca)\s+(o\s+)?(lembrete|aviso)\s+(d[eo]\s+)?.+/.test(m) ||
+    /(lembrete\s+d[eo]\s+.+\s+para?\s+\d)/.test(m)
+  ) return "reminder_edit";
 
   // Lembrete simples — exige forma imperativa (não pega perguntas sobre a Maya)
   // Evita falso positivo em "você não vai me lembrar?", "ia me lembrar", etc.
@@ -2258,6 +2284,175 @@ serve(async (req) => {
 });
 
 // ─────────────────────────────────────────────
+// LISTAR LEMBRETES
+// ─────────────────────────────────────────────
+async function handleReminderList(
+  userId: string,
+  lang = "pt-BR",
+  userTz = "America/Sao_Paulo"
+): Promise<string> {
+  const { data: reminders } = await supabase
+    .from("reminders")
+    .select("id, title, message, send_at, recurrence, recurrence_value, status")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .order("send_at", { ascending: true })
+    .limit(8);
+
+  if (!reminders || reminders.length === 0) {
+    return lang === "en"
+      ? "📭 You have no pending reminders.\n\nTo create one: _\"remind me of X tomorrow at 10am\"_ ⏰"
+      : "📭 Você não tem lembretes pendentes no momento.\n\nPara criar: _\"me lembra de X amanhã às 10h\"_ ⏰";
+  }
+
+  const locale = langToLocale(lang);
+  const WEEKDAYS_PT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+  const lines = reminders.map((r, i) => {
+    const dt = new Date(r.send_at);
+    const dateStr = dt.toLocaleDateString(locale, { timeZone: userTz, weekday: "short", day: "numeric", month: "short" });
+    const timeStr = dt.toLocaleTimeString(locale, { timeZone: userTz, hour: "2-digit", minute: "2-digit" });
+    const title = (r.title || r.message || "").slice(0, 50);
+    let recLabel = "";
+    if (r.recurrence === "daily") recLabel = " 🔁 todo dia";
+    else if (r.recurrence === "weekly") recLabel = ` 🔁 toda ${r.recurrence_value != null ? WEEKDAYS_PT[r.recurrence_value] : "semana"}`;
+    else if (r.recurrence === "monthly") recLabel = " 🔁 todo mês";
+    else if (r.recurrence === "day_of_month") recLabel = ` 🔁 dia ${r.recurrence_value} do mês`;
+    else if (r.recurrence === "hourly") recLabel = ` 🔁 a cada ${r.recurrence_value ?? 1}h`;
+    return `${i + 1}. *${title}*\n   📅 ${dateStr} às ${timeStr}${recLabel}`;
+  });
+
+  const header = lang === "en" ? "⏰ *Your pending reminders:*\n\n" : "⏰ *Seus lembretes pendentes:*\n\n";
+  const footer = lang === "en"
+    ? "\n\n_To cancel: \"cancel reminder [name]\"_\n_To edit: \"change reminder [name] to [time]\"_"
+    : "\n\n_Para cancelar: \"cancela o lembrete de [nome]\"_\n_Para editar: \"muda o lembrete de [nome] para [hora]\"_";
+  return header + lines.join("\n\n") + footer;
+}
+
+// ─────────────────────────────────────────────
+// CANCELAR LEMBRETE
+// ─────────────────────────────────────────────
+async function handleReminderCancel(
+  userId: string,
+  message: string,
+  lang = "pt-BR"
+): Promise<string> {
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const m = norm(message);
+
+  // Extrai o que quer cancelar (tudo depois de "cancela o lembrete de ...")
+  const searchMatch = m.match(
+    /(?:cancela(?:r)?|remove(?:r)?|apaga(?:r)?|deleta(?:r)?|exclui(?:r)?)(?:\s+o)?(?:\s+lembrete)?(?:\s+d[eo])?\s+(.+)/
+  );
+  const searchTerm = searchMatch?.[1]?.trim();
+
+  const { data: reminders } = await supabase
+    .from("reminders")
+    .select("id, title, message, send_at")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .order("send_at", { ascending: true });
+
+  if (!reminders || reminders.length === 0) {
+    return lang === "en"
+      ? "📭 You have no pending reminders to cancel."
+      : "📭 Você não tem lembretes pendentes para cancelar.";
+  }
+
+  if (!searchTerm) {
+    const list = reminders.slice(0, 4).map(r => `• ${r.title || r.message.slice(0, 40)}`).join("\n");
+    return `Qual lembrete quer cancelar? Seus lembretes pendentes:\n\n${list}\n\nEx: _"cancela o lembrete de pagar aluguel"_`;
+  }
+
+  // Busca melhor match por similaridade de texto
+  const match = reminders.find(r => {
+    const t = norm(r.title ?? r.message ?? "");
+    return t.includes(searchTerm) || searchTerm.includes(t.slice(0, 12));
+  });
+
+  if (!match) {
+    const list = reminders.slice(0, 4).map(r => `• ${r.title || r.message.slice(0, 40)}`).join("\n");
+    return `Não encontrei esse lembrete. Seus pendentes:\n\n${list}\n\nTente o nome exato.`;
+  }
+
+  // Cancela este e todas as recorrências futuras com o mesmo título
+  await supabase.from("reminders")
+    .update({ status: "cancelled" })
+    .eq("user_id", userId)
+    .eq("title", match.title)
+    .eq("status", "pending");
+
+  const title = match.title || match.message.slice(0, 40);
+  return lang === "en"
+    ? `✅ Reminder *"${title}"* cancelled! All future recurrences were also removed.`
+    : `✅ Lembrete *"${title}"* cancelado! Todas as recorrências futuras também foram removidas.`;
+}
+
+// ─────────────────────────────────────────────
+// EDITAR LEMBRETE (mudar horário/dia)
+// ─────────────────────────────────────────────
+async function handleReminderEdit(
+  userId: string,
+  message: string,
+  lang = "pt-BR",
+  userTz = "America/Sao_Paulo"
+): Promise<string> {
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  const tzOff = getTzOffset(userTz);
+  const nowIso = new Date().toLocaleString("sv-SE", { timeZone: userTz, hour12: false }).replace(" ", "T") + tzOff;
+
+  // Extrai o nome do lembrete e novo horário com IA
+  const parsed = await parseReminderIntent(message, nowIso, lang);
+
+  const { data: reminders } = await supabase
+    .from("reminders")
+    .select("id, title, message, send_at")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .order("send_at", { ascending: true });
+
+  if (!reminders || reminders.length === 0) {
+    return lang === "en"
+      ? "📭 You have no pending reminders to edit."
+      : "📭 Você não tem lembretes pendentes para editar.";
+  }
+
+  // Tenta achar o lembrete pelo título na mensagem
+  const m = norm(message);
+  let match = reminders.find(r => {
+    const t = norm(r.title ?? r.message ?? "");
+    return t.split(" ").some(word => word.length > 4 && m.includes(word));
+  });
+  // Fallback: o mais próximo em tempo
+  if (!match) match = reminders[0];
+
+  if (!parsed) {
+    return `Não entendi o novo horário. Ex: _"muda o lembrete de ${match.title?.slice(0, 20) ?? "X"} para 19h"_`;
+  }
+
+  const newDate = new Date(parsed.remind_at);
+  if (isNaN(newDate.getTime())) {
+    return "Não consegui identificar o novo horário. Pode repetir?";
+  }
+
+  const { error } = await supabase.from("reminders")
+    .update({ send_at: newDate.toISOString(), status: "pending" })
+    .eq("id", match.id);
+
+  if (error) throw error;
+
+  const locale = langToLocale(lang);
+  const dateStr = newDate.toLocaleDateString(locale, { timeZone: userTz, weekday: "long", day: "numeric", month: "long" });
+  const timeStr = newDate.toLocaleTimeString(locale, { timeZone: userTz, hour: "2-digit", minute: "2-digit" });
+  const title = match.title || match.message.slice(0, 40);
+
+  return lang === "en"
+    ? `✅ Reminder *"${title}"* rescheduled!\n📅 ${dateStr} at ${timeStr}`
+    : `✅ Lembrete *"${title}"* reagendado!\n📅 ${dateStr} às ${timeStr}`;
+}
+
+// ─────────────────────────────────────────────
 // LEMBRETE AVULSO (com recorrência)
 // ─────────────────────────────────────────────
 async function handleReminderSet(
@@ -2334,8 +2529,18 @@ async function handleReminderSet(
     remindAt.setDate(remindAt.getDate() + 1);
   }
 
+  // ── Garante que recorrência detectada via regex prevaleça sobre IA ──
+  // Evita que o Haiku retorne "none" para mensagens recorrentes claras
+  const msgNormFull = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const regexRecurrence = detectRecurrenceFromText(msgNormFull, remindAt);
+  if (regexRecurrence && parsed.recurrence === "none") {
+    parsed.recurrence = regexRecurrence.recurrence as typeof parsed.recurrence;
+    parsed.recurrence_value = regexRecurrence.recurrence_value;
+  }
+
   // ── Pergunta com quanto tempo de antecedência ──
-  // Só pergunta se o lembrete não é recorrente nem tem "na hora" explícito na mensagem
+  // Só pergunta se o lembrete NÃO é recorrente nem tem "na hora" explícito
+  // Para recorrentes: salva direto sem perguntar (não faz sentido perguntar antecedência para lembrete diário)
   const msgLower = message.toLowerCase();
   const mentionedAdvance = /antes|antecedência|antecipado|minutos? antes|horas? antes/.test(msgLower);
   const atTimeNow = isReminderAtTime(msgLower);
@@ -2802,12 +3007,29 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     const tzOffset = getTzOffset(userTz);
 
     // 4. Busca/cria sessão (contexto de conversa ativa)
-    const sessionId = lid ?? replyTo;
-    const { data: session } = await supabase
+    // Sempre usa o telefone do perfil como chave canônica para evitar sessões duplicadas
+    // (LID do WhatsApp Web vs telefone real resultariam em sessões separadas sem isso)
+    const sessionPhone = profile.phone_number?.replace(/\D/g, "") || (lid ?? replyTo);
+    const sessionId = sessionPhone;
+
+    // Busca sessão: tenta pelo telefone canônico OU pelo user_id (para migrar sessões antigas por LID)
+    let { data: session } = await supabase
       .from("whatsapp_sessions")
       .select("*")
       .eq("phone_number", sessionId)
       .maybeSingle();
+
+    if (!session) {
+      // Fallback: busca qualquer sessão desse user (pode ter sido criada por LID diferente)
+      const { data: sessionByUser } = await supabase
+        .from("whatsapp_sessions")
+        .select("*")
+        .eq("user_id", profile.id)
+        .order("last_activity", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      session = sessionByUser;
+    }
 
     // 4b. Verifica respostas rápidas (prioridade máxima)
     // Só dispara quando NÃO há fluxo multi-step pendente — evitar interromper agenda/nota/lembrete em andamento
@@ -2870,6 +3092,9 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       event_followup:  "agenda",
       notes_save:      "notes",
       reminder_set:    "notes",
+      reminder_list:   "notes",
+      reminder_cancel: "notes",
+      reminder_edit:   "notes",
       reminder_snooze: "notes",
       ai_chat:         "chat",
     };
@@ -2931,6 +3156,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = notesResult.response;
       pendingAction = notesResult.pendingAction;
       pendingContext = notesResult.pendingContext;
+    } else if (intent === "reminder_list") {
+      responseText = await handleReminderList(profile.id, language, userTz);
+    } else if (intent === "reminder_cancel") {
+      responseText = await handleReminderCancel(profile.id, text, language);
+    } else if (intent === "reminder_edit") {
+      responseText = await handleReminderEdit(profile.id, text, language, userTz);
     } else if (intent === "reminder_set") {
       const reminderResult = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
       responseText = reminderResult.response;
