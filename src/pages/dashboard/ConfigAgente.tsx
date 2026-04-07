@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Plus, Trash2, Save } from "lucide-react";
+import { Plus, Trash2, Save, Clock } from "lucide-react";
 
 export default function ConfigAgente() {
   const { user } = useAuth();
@@ -41,6 +41,7 @@ export default function ConfigAgente() {
         module_notes: raw.module_notes !== false,
         module_chat: raw.module_chat !== false,
         daily_briefing_enabled: raw.daily_briefing_enabled !== false,
+        briefing_hour: raw.briefing_hour ?? 8,
       });
     }
     setQuickReplies(qrRes.data ?? []);
@@ -62,6 +63,7 @@ export default function ConfigAgente() {
       module_notes: config.module_notes === true,
       module_chat: config.module_chat === true,
       daily_briefing_enabled: config.daily_briefing_enabled === true,
+      briefing_hour: config.briefing_hour ?? 8,
     }).eq("user_id", user!.id);
     if (error) toast.error("Erro ao salvar");
     else toast.success("Configurações salvas!");
@@ -141,7 +143,6 @@ export default function ConfigAgente() {
             { key: "module_agenda", label: "📅 Agenda", desc: "Criar, consultar e editar compromissos — se desativado, a Maya recusa pedidos de agenda e followups de eventos" },
             { key: "module_notes", label: "📝 Anotações e Lembretes", desc: "Salvar notas e criar lembretes WhatsApp — se desativado, a Maya recusa anotações e lembretes" },
             { key: "module_chat", label: "💬 Conversa livre", desc: "Respostas de IA para perguntas gerais — se desativado, a Maya só responde com os módulos ativos" },
-            { key: "daily_briefing_enabled", label: "🌅 Resumo diário", desc: "Mensagem automática às 8h com compromissos e lembretes do dia — desative para não receber" },
           ].map(m => (
             <div key={m.key} className="flex items-center justify-between">
               <div>
@@ -151,6 +152,36 @@ export default function ConfigAgente() {
               <Switch checked={!!config[m.key]} onCheckedChange={v => setConfig({...config, [m.key]: v})} />
             </div>
           ))}
+
+          {/* Resumo diário com seletor de horário condicional */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">🌅 Resumo diário</p>
+                <p className="text-xs text-muted-foreground">Mensagem automática com compromissos e lembretes do dia — desative para não receber</p>
+              </div>
+              <Switch checked={!!config.daily_briefing_enabled} onCheckedChange={v => setConfig({...config, daily_briefing_enabled: v})} />
+            </div>
+            {config.daily_briefing_enabled && (
+              <div className="flex items-center gap-2 pl-0 pt-1">
+                <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span className="text-xs text-muted-foreground">Horário:</span>
+                <Select value={String(config.briefing_hour)} onValueChange={v => setConfig({...config, briefing_hour: Number(v)})}>
+                  <SelectTrigger className="h-7 w-24 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[5, 6, 7, 8, 9, 10].map(h => (
+                      <SelectItem key={h} value={String(h)} className="text-xs">
+                        {h}:00
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground">no seu fuso horário</span>
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 

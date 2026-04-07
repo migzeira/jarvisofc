@@ -23,7 +23,8 @@ const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 async function generateBriefingMessage(
   userName: string,
   scheduleLines: string | null,
-  lang = "pt-BR"
+  lang = "pt-BR",
+  tz = "America/Sao_Paulo"
 ): Promise<string> {
   const langInstruction = lang === "en"
     ? "You MUST write EXCLUSIVELY in English. All text must be in English."
@@ -47,7 +48,7 @@ Rules:
     userPrompt = `Gere uma mensagem de bom dia para ${userName} com o resumo do dia de hoje. Compromissos de hoje:\n\n${scheduleLines}\n\nSeja animada, organize o resumo de forma clara e termine com uma frase motivadora.`;
   } else {
     // Varia a mensagem baseado no dia da semana para não ficar repetitivo
-    const dow = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long" });
+    const dow = new Date().toLocaleDateString("pt-BR", { timeZone: tz, weekday: "long" });
     userPrompt = `Gere uma mensagem de bom dia para ${userName}. Hoje é ${dow} e não há nada agendado. Pergunte de forma natural e acolhedora se há algo que ${userName} queira agendar, criar um lembrete ou anotar para hoje ou essa semana. Varie a abordagem para não parecer um robô — seja criativa e genuína.`;
   }
 
@@ -75,11 +76,11 @@ Rules:
 
     if (!resp.ok) {
       console.error("Anthropic API error:", resp.status, await resp.text());
-      return fallbackMessage(userName, scheduleLines, lang);
+      return fallbackMessage(userName, scheduleLines, lang, tz);
     }
 
     const data = await resp.json();
-    return data.content?.[0]?.text ?? fallbackMessage(userName, scheduleLines);
+    return data.content?.[0]?.text ?? fallbackMessage(userName, scheduleLines, lang, tz);
   } catch (err) {
     clearTimeout(timer);
     if (err instanceof Error && err.name === "AbortError") {
@@ -87,11 +88,11 @@ Rules:
     } else {
       console.error("AI briefing error:", err);
     }
-    return fallbackMessage(userName, scheduleLines);
+    return fallbackMessage(userName, scheduleLines, lang, tz);
   }
 }
 
-function fallbackMessage(userName: string, scheduleLines: string | null, lang = "pt-BR"): string {
+function fallbackMessage(userName: string, scheduleLines: string | null, lang = "pt-BR", tz = "America/Sao_Paulo"): string {
   if (lang === "en") {
     if (scheduleLines) {
       return `🌅 Good morning, ${userName}!\n\nHere's your summary for today:\n\n${scheduleLines}\n\nHave a great day! 💪`;
@@ -122,21 +123,33 @@ const EVENT_TYPE_EMOJIS: Record<string, string> = {
 };
 
 // ─────────────────────────────────────────────
+// TIMEZONE HELPER
+// ─────────────────────────────────────────────
+
+/** Retorna a hora atual (0-23) no fuso do usuário */
+function currentHourInTz(tz: string): number {
+  return parseInt(
+    new Date().toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", hour12: false }),
+    10
+  );
+}
+
+/** Retorna a data de hoje (YYYY-MM-DD) no fuso do usuário */
+function todayInTz(tz: string): string {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: tz });
+}
+
+// ─────────────────────────────────────────────
 // MAIN
 // ─────────────────────────────────────────────
 serve(async (_req) => {
-  // Calcula data de hoje em BRT (UTC-3)
-  const todayBRT = new Date().toLocaleDateString("sv-SE", {
-    timeZone: "America/Sao_Paulo",
-  }); // formato YYYY-MM-DD
-
-  console.log(`[daily-briefing] Running for date: ${todayBRT}`);
+  const nowUtcHour = new Date().getUTCHours();
+  console.log(`[daily-briefing] Running at UTC hour: ${nowUtcHour}`);
 
   // Busca todos os usuários ativos com número de telefone configurado
-  // e que têm o resumo diário ativado (daily_briefing_enabled = true ou null = padrão ativo)
   const { data: users, error: usersErr } = await supabase
     .from("profiles")
-    .select("id, phone_number")
+    .select("id, phone_number, timezone")
     .eq("account_status", "active")
     .not("phone_number", "is", null);
 
@@ -160,10 +173,10 @@ serve(async (_req) => {
     }
 
     try {
-      // Busca apelido e configurações do agente (inclui flag de resumo diário)
+      // Busca apelido e configurações do agente (inclui flag de resumo diário e horário)
       const { data: agentConfig } = await supabase
         .from("agent_configs")
-        .select("user_nickname, daily_briefing_enabled, language")
+        .select("user_nickname, daily_briefing_enabled, language, briefing_hour")
         .eq("user_id", user.id)
         .maybeSingle();
 
@@ -174,28 +187,42 @@ serve(async (_req) => {
         continue;
       }
 
+      // Fuso e horário do usuário
+      const userTz = (user.timezone as string) || "America/Sao_Paulo";
+      const userBriefingHour = (agentConfig?.briefing_hour as number) ?? 8;
+      const userCurrentHour = currentHourInTz(userTz);
+
+      // Só envia se a hora atual no fuso do usuário bate com o horário configurado
+      if (userCurrentHour !== userBriefingHour) {
+        skipped++;
+        continue;
+      }
+
+      const todayUserTz = todayInTz(userTz);
       const userName = (agentConfig?.user_nickname as string) || "você";
       const userLang = (agentConfig?.language as string) || "pt-BR";
 
-      // Busca eventos de hoje
+      // Busca eventos de hoje no fuso do usuário
       const { data: events } = await supabase
         .from("events")
         .select("title, event_time, end_time, event_type, location, status")
         .eq("user_id", user.id)
-        .eq("event_date", todayBRT)
+        .eq("event_date", todayUserTz)
         .neq("status", "cancelled")
         .order("event_time", { ascending: true });
 
-      // Busca lembretes pendentes de hoje — usa BRT explícito para evitar incluir lembretes do dia anterior
-      const todayStart = new Date(`${todayBRT}T00:00:00-03:00`).toISOString();
-      const todayEndBRT = new Date(`${todayBRT}T23:59:59-03:00`).toISOString();
+      // Busca lembretes pendentes de hoje no fuso do usuário
+      const todayStart = new Date(`${todayUserTz}T00:00:00`);
+      todayStart.setMinutes(todayStart.getMinutes() - todayStart.getTimezoneOffset());
+      const todayStartIso = new Date(`${todayUserTz}T00:00:00Z`).toISOString();
+      const todayEndIso = new Date(`${todayUserTz}T23:59:59Z`).toISOString();
       const { data: reminders } = await supabase
         .from("reminders")
         .select("title, send_at, message")
         .eq("user_id", user.id)
         .eq("status", "pending")
-        .gte("send_at", todayStart)
-        .lte("send_at", todayEndBRT)
+        .gte("send_at", todayStartIso)
+        .lte("send_at", todayEndIso)
         .order("send_at", { ascending: true });
 
       const hasEvents = events && events.length > 0;
@@ -219,8 +246,9 @@ serve(async (_req) => {
 
         if (hasReminders) {
           for (const rem of reminders!) {
-            const remTime = new Date(rem.send_at).toLocaleTimeString("pt-BR", {
-              timeZone: "America/Sao_Paulo",
+            const locale = userLang === "en" ? "en-US" : userLang === "es" ? "es-ES" : "pt-BR";
+            const remTime = new Date(rem.send_at).toLocaleTimeString(locale, {
+              timeZone: userTz,
               hour: "2-digit",
               minute: "2-digit",
             });
@@ -232,7 +260,7 @@ serve(async (_req) => {
       }
 
       // Gera mensagem personalizada
-      const message = await generateBriefingMessage(userName, scheduleLines, userLang);
+      const message = await generateBriefingMessage(userName, scheduleLines, userLang, userTz);
 
       // Envia via WhatsApp
       await sendText(user.phone_number, message);

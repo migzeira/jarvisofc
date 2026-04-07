@@ -26,6 +26,24 @@ const supabase = createClient(
 // LOCALIZATION HELPERS
 // ─────────────────────────────────────────────
 
+/** Retorna o offset UTC do fuso (ex: "-03:00") calculado em runtime */
+function getTzOffset(tz: string): string {
+  const now = new Date();
+  const utcMs = now.getTime();
+  const tzMs = new Date(now.toLocaleString("en-US", { timeZone: tz })).getTime();
+  const totalMins = Math.round((tzMs - utcMs) / 60000);
+  const sign = totalMins >= 0 ? "+" : "-";
+  const abs = Math.abs(totalMins);
+  const h = Math.floor(abs / 60);
+  const m = abs % 60;
+  return `${sign}${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/** Retorna a data de hoje (YYYY-MM-DD) no fuso do usuário */
+function todayInTz(tz: string): string {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: tz });
+}
+
 function langToLocale(lang: string): string {
   const map: Record<string, string> = { "pt-BR": "pt-BR", "en": "en-US", "es": "es-ES" };
   return map[lang] ?? "pt-BR";
@@ -737,9 +755,10 @@ async function handleAgendaCreate(
   message: string,
   session: Record<string, unknown> | null,
   language = "pt-BR",
-  userNickname: string | null = null
+  userNickname: string | null = null,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayInTz(userTz);
 
   // Recupera contexto pendente de follow-up
   const context = (session?.pending_context as Record<string, unknown>) ?? {};
@@ -753,18 +772,18 @@ async function handleAgendaCreate(
     const recurrenceFromCtx = context._recurrence ? { type: context._recurrence as string, weekday: context._recurrence_weekday as number | undefined } : undefined;
     if (isReminderAtTime(message)) {
       const finalData = { ...partial, reminder_minutes: 0 } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
     }
     // "não quero lembrete"
     if (isReminderDecline(message)) {
       const finalData = { ...partial, reminder_minutes: null } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
     }
     // Já veio com tempo especificado (ex: "30 minutos antes", "2 horas antes")
     const minutesInAnswer = parseMinutes(message);
     if (minutesInAnswer !== null && message.match(/\d|hora|minuto|meia/)) {
       const finalData = { ...partial, reminder_minutes: minutesInAnswer } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
     }
     if (isReminderAccept(message)) {
       // Aceitou — perguntar quanto tempo antes
@@ -789,7 +808,7 @@ async function handleAgendaCreate(
     if (minutes !== null) {
       const recurrenceFromCtxMin = context._recurrence ? { type: context._recurrence as string, weekday: context._recurrence_weekday as number | undefined } : undefined;
       const finalData = { ...partial, reminder_minutes: minutes } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtxMin, language, userNickname);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtxMin, language, userNickname, userTz);
     }
     // Não entendeu — pede de novo
     return {
@@ -837,7 +856,7 @@ async function handleAgendaCreate(
         pendingContext: { partial: dataWithTitle, step: "conflict_resolution" },
       };
     }
-    return await createEventAndConfirm(userId, phone, dataWithTitle, recurrenceFromCtxTitle, language, userNickname);
+    return await createEventAndConfirm(userId, phone, dataWithTitle, recurrenceFromCtxTitle, language, userNickname, userTz);
   }
 
   // ─── STEP: conflict_resolution ───
@@ -860,7 +879,7 @@ async function handleAgendaCreate(
           pendingContext: { partial: savedPartial, step: "waiting_reminder_answer" },
         };
       }
-      return await createEventAndConfirm(userId, phone, savedPartial, undefined, language, userNickname);
+      return await createEventAndConfirm(userId, phone, savedPartial, undefined, language, userNickname, userTz);
     }
 
     // Opção 2: Mudar horário
@@ -906,7 +925,7 @@ async function handleAgendaCreate(
           pendingContext: { partial: newData, step: "waiting_reminder_answer" },
         };
       }
-      return await createEventAndConfirm(userId, phone, newData, undefined, language, userNickname);
+      return await createEventAndConfirm(userId, phone, newData, undefined, language, userNickname, userTz);
     }
 
     // Resposta ambígua
@@ -992,7 +1011,7 @@ async function handleAgendaCreate(
   }
 
   // Tudo preenchido — criar evento
-  return await createEventAndConfirm(userId, phone, extracted, recurrence ?? undefined, language, userNickname);
+  return await createEventAndConfirm(userId, phone, extracted, recurrence ?? undefined, language, userNickname, userTz);
 }
 
 /** Cria o evento no banco e retorna a confirmação formatada */
@@ -1002,8 +1021,10 @@ async function createEventAndConfirm(
   extracted: ExtractedEvent,
   recurrence?: { type: string; weekday?: number },
   lang = "pt-BR",
-  userNickname: string | null = null
+  userNickname: string | null = null,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ response: string }> {
+  const tzOffset = getTzOffset(userTz);
   const color = EVENT_TYPE_COLORS[extracted.event_type] ?? "#3b82f6";
   const emoji = EVENT_TYPE_EMOJIS[extracted.event_type] ?? "📌";
 
@@ -1039,9 +1060,9 @@ async function createEventAndConfirm(
 
   // Cria lembrete se solicitado (reminder_minutes >= 0 significa lembrete ativo)
   if (extracted.reminder_minutes != null && extracted.time) {
-    // Interpreta o horário como Brasília (UTC-3) usando offset explícito
+    // Interpreta o horário no fuso do usuário usando offset dinâmico
     const timeStr = extracted.time.length === 5 ? extracted.time : extracted.time.slice(0, 5);
-    const eventDateTime = new Date(`${extracted.date}T${timeStr}:00-03:00`);
+    const eventDateTime = new Date(`${extracted.date}T${timeStr}:00${tzOffset}`);
     const reminderTime = new Date(
       eventDateTime.getTime() - extracted.reminder_minutes * 60 * 1000
     );
@@ -1106,7 +1127,7 @@ async function createEventAndConfirm(
   const eventType = extracted.event_type ?? "compromisso";
   if (FOLLOWUP_TYPES.includes(eventType) && extracted.time && !recurrence) {
     const timeStr = extracted.time.length === 5 ? extracted.time : extracted.time.slice(0, 5);
-    const eventDateTime = new Date(`${extracted.date}T${timeStr}:00-03:00`);
+    const eventDateTime = new Date(`${extracted.date}T${timeStr}:00${tzOffset}`);
     const followupTime = new Date(eventDateTime.getTime() + 15 * 60 * 1000); // 15 min após o evento
 
     if (followupTime > new Date()) {
@@ -1164,9 +1185,10 @@ async function createEventAndConfirm(
 
 async function handleAgendaLookup(
   userId: string,
-  message: string
+  message: string,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayInTz(userTz);
 
   // Extrai palavra-chave usando padrões contextuais (meu X, do X, sobre X, etc.)
   const msgNorm = message
@@ -1322,7 +1344,8 @@ async function applyEventUpdate(
     event_date: string;
     event_time: string | null;
     reminder_minutes: number | null;
-  }
+  },
+  userTz = "America/Sao_Paulo"
 ): Promise<string> {
   // 1. Atualiza o evento
   const { error: updateErr } = await supabase
@@ -1348,9 +1371,10 @@ async function applyEventUpdate(
     const finalTime = updates.event_time ?? originalData.event_time;
 
     if (finalTime) {
-      // Interpreta o horário como Brasília (UTC-3) usando offset explícito
+      // Interpreta o horário no fuso do usuário
       const finalTimeStr = finalTime.length >= 5 ? finalTime.slice(0, 5) : finalTime;
-      const eventDt = new Date(`${finalDate}T${finalTimeStr}:00-03:00`);
+      const tzOffsetEdit = getTzOffset(userTz);
+      const eventDt = new Date(`${finalDate}T${finalTimeStr}:00${tzOffsetEdit}`);
       const remindDt = new Date(eventDt.getTime() - reminderMinutes * 60 * 1000);
 
       if (remindDt > new Date()) {
@@ -1408,9 +1432,10 @@ async function handleAgendaEdit(
   userId: string,
   phone: string,
   message: string,
-  session: Record<string, unknown> | null
+  session: Record<string, unknown> | null,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayInTz(userTz);
   const ctx = (session?.pending_context as Record<string, unknown>) ?? {};
   const step = (ctx.step as string) ?? "awaiting_change";
 
@@ -1433,20 +1458,20 @@ async function handleAgendaEdit(
     return await offerReminderAfterEdit(userId, phone, {
       ...(ctx as Record<string, unknown>),
       pending_new_time: newTime,
-    });
+    }, userTz);
   }
 
   // ─── STEP: waiting_reminder_answer ───
   if (step === "waiting_reminder_answer") {
     if (isReminderAtTime(message)) {
-      return await finalizeEdit(userId, phone, ctx, 0);
+      return await finalizeEdit(userId, phone, ctx, 0, userTz);
     }
     if (isReminderDecline(message)) {
-      return await finalizeEdit(userId, phone, ctx, null);
+      return await finalizeEdit(userId, phone, ctx, null, userTz);
     }
     const minutesInAnswer = parseMinutes(message);
     if (minutesInAnswer !== null && message.match(/\d|hora|minuto|meia/)) {
-      return await finalizeEdit(userId, phone, ctx, minutesInAnswer);
+      return await finalizeEdit(userId, phone, ctx, minutesInAnswer, userTz);
     }
     if (isReminderAccept(message)) {
       return {
@@ -1466,7 +1491,7 @@ async function handleAgendaEdit(
   if (step === "waiting_reminder_minutes") {
     const minutes = parseMinutes(message);
     if (minutes !== null) {
-      return await finalizeEdit(userId, phone, ctx, minutes);
+      return await finalizeEdit(userId, phone, ctx, minutes, userTz);
     }
     return {
       response: "Não entendi. Com quanto tempo antes?\n\n_Ex: 15, 30, 1 hora — ou \"só na hora\"_ ⏱️",
@@ -1574,14 +1599,15 @@ async function handleAgendaEdit(
     ...ctx,
     pending_new_date: edit.new_date ?? ctx.event_date,
     pending_new_time: edit.new_time ?? ctx.event_time,
-  });
+  }, userTz);
 }
 
 /** Depois de coletar data/hora novos, oferece atualização de lembrete */
 async function offerReminderAfterEdit(
   userId: string,
   phone: string,
-  ctx: Record<string, unknown>
+  ctx: Record<string, unknown>,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   // Se o evento tinha lembrete, pergunta se quer manter/alterar
   const hadReminder = (ctx.reminder_minutes as number | null) != null;
@@ -1594,7 +1620,7 @@ async function offerReminderAfterEdit(
   }
 
   // Sem lembrete anterior — aplica direto sem perguntar
-  return await finalizeEdit(userId, phone, ctx, undefined);
+  return await finalizeEdit(userId, phone, ctx, undefined, userTz);
 }
 
 /** Aplica as alterações acumuladas e retorna a mensagem de confirmação */
@@ -1602,7 +1628,8 @@ async function finalizeEdit(
   userId: string,
   phone: string,
   ctx: Record<string, unknown>,
-  reminderMinutes: number | null | undefined
+  reminderMinutes: number | null | undefined,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ response: string }> {
   const updates: { event_date?: string; event_time?: string } = {};
   if (ctx.pending_new_date && ctx.pending_new_date !== ctx.event_date) {
@@ -1623,7 +1650,8 @@ async function finalizeEdit(
       event_date: ctx.event_date as string,
       event_time: (ctx.event_time as string | null) ?? null,
       reminder_minutes: (ctx.reminder_minutes as number | null) ?? null,
-    }
+    },
+    userTz
   );
 
   return { response };
@@ -1693,8 +1721,8 @@ async function handleAgendaDelete(
   return `✅ *${found.title}* cancelado e removido da sua agenda.`;
 }
 
-async function handleAgendaQuery(userId: string, message: string): Promise<string> {
-  const today = new Date().toISOString().split("T")[0];
+async function handleAgendaQuery(userId: string, message: string, userTz = "America/Sao_Paulo"): Promise<string> {
+  const today = todayInTz(userTz);
 
   // Usa IA para interpretar o período desejado
   let startDate: string;
@@ -1841,7 +1869,8 @@ async function handleNotesSave(
   phone: string,
   message: string,
   session: Record<string, unknown> | null,
-  config: Record<string, unknown> | null = null
+  config: Record<string, unknown> | null = null,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const userNickname = (config?.user_nickname as string) || "";
   const tplNote = (config?.template_note as string) || '📝 *Anotado, {{user_name}}!*\n"{{content}}"';
@@ -1871,7 +1900,7 @@ async function handleNotesSave(
         };
       }
       // Redireciona para criação de evento com a mensagem original
-      return await handleAgendaCreate(userId, phone, originalMessage, null);
+      return await handleAgendaCreate(userId, phone, originalMessage, null, "pt-BR", null, userTz);
     }
 
     // Usuário quer salvar como nota (opção 2, ou qualquer outra resposta = fallback)
@@ -1897,7 +1926,7 @@ async function handleNotesSave(
     // Combina detalhes extras com a mensagem original e cria evento
     const originalMessage = ctx.originalMessage as string;
     const combinedMessage = `${originalMessage} — ${message}`;
-    return await handleAgendaCreate(userId, phone, combinedMessage, null);
+    return await handleAgendaCreate(userId, phone, combinedMessage, null, "pt-BR", null, userTz);
   }
 
   // ─── STEP: note_extra_info ───
@@ -1954,13 +1983,14 @@ async function handleNotesSave(
     }
 
     // Tenta extrair horário diretamente da resposta
-    const nowIso = new Date().toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).replace(" ", "T") + "-03:00";
+    const noteTzOff = getTzOffset(userTz);
+    const nowIso = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + noteTzOff;
     const parsed = await parseReminderIntent(message, nowIso);
     if (parsed) {
       const remindAt = new Date(parsed.remind_at);
       if (!isNaN(remindAt.getTime()) && remindAt > new Date()) {
-        const { data: profile } = await supabase.from("profiles").select("phone_number").eq("id", userId).maybeSingle();
-        const whatsappPhone = phone || profile?.phone_number || "";
+        const { data: profileRow } = await supabase.from("profiles").select("phone_number").eq("id", userId).maybeSingle();
+        const whatsappPhone = phone || profileRow?.phone_number || "";
         await supabase.from("reminders").insert({
           user_id: userId,
           whatsapp_number: whatsappPhone,
@@ -1971,8 +2001,8 @@ async function handleNotesSave(
           source: "whatsapp",
           status: "pending",
         });
-        const timeStr = remindAt.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
-        const dateStr = remindAt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long", day: "numeric", month: "long" });
+        const timeStr = remindAt.toLocaleTimeString("pt-BR", { timeZone: userTz, hour: "2-digit", minute: "2-digit" });
+        const dateStr = remindAt.toLocaleDateString("pt-BR", { timeZone: userTz, weekday: "long", day: "numeric", month: "long" });
         const noteNameGreet = userNickname ? `, ${userNickname}` : "";
         return { response: `⏰ *Lembrete criado${noteNameGreet}!*\nVou te avisar sobre _"${noteTitle}"_ em ${dateStr} às ${timeStr}. ✅` };
       }
@@ -2197,12 +2227,14 @@ async function handleReminderSet(
   message: string,
   session: Record<string, unknown> | null = null,
   lang = "pt-BR",
-  userNickname: string | null = null
+  userNickname: string | null = null,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  const tzOff = getTzOffset(userTz);
   const nowIso = new Date().toLocaleString("sv-SE", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: userTz,
     hour12: false,
-  }).replace(" ", "T") + "-03:00";
+  }).replace(" ", "T") + tzOff;
 
   // ── Recupera contexto pendente (fluxo de antecedência) ──
   const ctx = (session?.pending_context as Record<string, unknown>) ?? {};
@@ -2215,17 +2247,17 @@ async function handleReminderSet(
 
     // "só na hora" / "na hora" → 0 min de antecedência (avisa exatamente no horário)
     if (isReminderAtTime(message)) {
-      return await saveReminder(userId, phone, parsed, remindAt, 0, lang);
+      return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz);
     }
     // "não precisa" → avisa na hora mesmo (sem antecedência adicional)
     if (isReminderDecline(message)) {
-      return await saveReminder(userId, phone, parsed, remindAt, 0, lang);
+      return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz);
     }
     // Tenta extrair minutos de antecedência
     const advanceMin = parseMinutes(message);
     if (advanceMin !== null && advanceMin > 0) {
       const advancedTime = new Date(remindAt.getTime() - advanceMin * 60 * 1000);
-      return await saveReminder(userId, phone, parsed, advancedTime, advanceMin, lang);
+      return await saveReminder(userId, phone, parsed, advancedTime, advanceMin, lang, userNickname, userTz);
     }
     // Não entendeu
     return {
@@ -2258,12 +2290,13 @@ async function handleReminderSet(
   const atTimeNow = isReminderAtTime(msgLower);
 
   if (!mentionedAdvance && !atTimeNow && parsed.recurrence === "none") {
-    const timeStr = remindAt.toLocaleTimeString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
+    const locale = langToLocale(lang);
+    const timeStr = remindAt.toLocaleTimeString(locale, {
+      timeZone: userTz,
       hour: "2-digit", minute: "2-digit",
     });
-    const dateStr = remindAt.toLocaleDateString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
+    const dateStr = remindAt.toLocaleDateString(locale, {
+      timeZone: userTz,
       weekday: "long", day: "numeric", month: "long",
     });
     return {
@@ -2274,7 +2307,7 @@ async function handleReminderSet(
   }
 
   // Tem antecedência explícita na mensagem → salva direto
-  return await saveReminder(userId, phone, parsed, remindAt, 0, lang);
+  return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz);
 }
 
 /** Salva o lembrete no banco e retorna confirmação formatada */
@@ -2284,7 +2317,9 @@ async function saveReminder(
   parsed: Record<string, unknown>,
   remindAt: Date,
   advanceMin: number,
-  lang = "pt-BR"
+  lang = "pt-BR",
+  userNickname: string | null = null,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ response: string }> {
   const { error } = await supabase.from("reminders").insert({
     user_id: userId,
@@ -2302,12 +2337,12 @@ async function saveReminder(
 
   const locale = langToLocale(lang);
   const dateRaw = remindAt.toLocaleDateString(locale, {
-    timeZone: "America/Sao_Paulo",
+    timeZone: userTz,
     weekday: "long", day: "numeric", month: "long",
   });
   const dateStr = dateRaw.charAt(0).toUpperCase() + dateRaw.slice(1);
   const timeStr = remindAt.toLocaleTimeString(locale, {
-    timeZone: "America/Sao_Paulo",
+    timeZone: userTz,
     hour: "2-digit", minute: "2-digit",
   });
 
@@ -2351,7 +2386,8 @@ async function saveReminder(
 async function handleReminderSnooze(
   userId: string,
   phone: string,
-  message: string
+  message: string,
+  userTz = "America/Sao_Paulo"
 ): Promise<string> {
   // Busca o lembrete enviado mais recentemente (nos últimos 30 min)
   const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
@@ -2404,7 +2440,7 @@ async function handleReminderSnooze(
   });
 
   const timeStr = newSendAt.toLocaleTimeString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: userTz,
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -2566,12 +2602,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     }
 
     // ── Busca perfil por LID (novo WhatsApp) ou telefone (fallback) ──
-    let profile: { id: string; plan: string; messages_used: number; messages_limit: number; phone_number: string; account_status: string } | null = null;
+    let profile: { id: string; plan: string; messages_used: number; messages_limit: number; phone_number: string; account_status: string; timezone: string | null } | null = null;
 
     if (lid) {
       const { data } = await supabase
         .from("profiles")
-        .select("id, plan, messages_used, messages_limit, phone_number, account_status")
+        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone")
         .eq("whatsapp_lid", lid)
         .maybeSingle();
       profile = data;
@@ -2585,7 +2621,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         .replace(/:\d+$/, "");
       const { data } = await supabase
         .from("profiles")
-        .select("id, plan, messages_used, messages_limit, phone_number, account_status")
+        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone")
         .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
         .maybeSingle();
       profile = data;
@@ -2605,7 +2641,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (extraNum?.user_id) {
         const { data } = await supabase
           .from("profiles")
-          .select("id, plan, messages_used, messages_limit, phone_number, account_status")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone")
           .eq("id", extraNum.user_id)
           .maybeSingle();
         profile = data;
@@ -2619,7 +2655,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (resolvedPhone) {
         const { data } = await supabase
           .from("profiles")
-          .select("id, plan, messages_used, messages_limit, phone_number, account_status")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone")
           .or(
             `phone_number.eq.${resolvedPhone},phone_number.eq.+${resolvedPhone},phone_number.eq.55${resolvedPhone}`
           )
@@ -2679,6 +2715,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     const language = (config?.language as string) || "pt-BR";
     const userNickname = (config?.user_nickname as string) || null;
     const customInstructions = (config?.custom_instructions as string) || null;
+    const userTz = (profile.timezone as string) || "America/Sao_Paulo";
+    const tzOffset = getTzOffset(userTz);
 
     // 4. Busca/cria sessão (contexto de conversa ativa)
     const sessionId = lid ?? replyTo;
@@ -2787,36 +2825,36 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "finance_report") {
       responseText = await handleFinanceReport(profile.id, text);
     } else if (intent === "agenda_create") {
-      const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname);
+      const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
     } else if (intent === "agenda_query") {
-      responseText = await handleAgendaQuery(profile.id, text);
+      responseText = await handleAgendaQuery(profile.id, text, userTz);
     } else if (intent === "agenda_lookup") {
-      const result = await handleAgendaLookup(profile.id, text);
+      const result = await handleAgendaLookup(profile.id, text, userTz);
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
     } else if (intent === "agenda_edit") {
-      const result = await handleAgendaEdit(profile.id, sendPhone || replyTo, text, session);
+      const result = await handleAgendaEdit(profile.id, sendPhone || replyTo, text, session, userTz);
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
     } else if (intent === "agenda_delete") {
       responseText = await handleAgendaDelete(profile.id, text);
     } else if (intent === "notes_save") {
-      const notesResult = await handleNotesSave(profile.id, sendPhone || replyTo, text, session, config);
+      const notesResult = await handleNotesSave(profile.id, sendPhone || replyTo, text, session, config, userTz);
       responseText = notesResult.response;
       pendingAction = notesResult.pendingAction;
       pendingContext = notesResult.pendingContext;
     } else if (intent === "reminder_set") {
-      const reminderResult = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname);
+      const reminderResult = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
       responseText = reminderResult.response;
       pendingAction = reminderResult.pendingAction;
       pendingContext = reminderResult.pendingContext;
     } else if (intent === "reminder_snooze") {
-      responseText = await handleReminderSnooze(profile.id, sendPhone || replyTo, text);
+      responseText = await handleReminderSnooze(profile.id, sendPhone || replyTo, text, userTz);
     } else if (intent === "event_followup") {
       const followupResult = await handleEventFollowup(profile.id, sendPhone || replyTo, text, session ?? {});
       responseText = followupResult.response;
