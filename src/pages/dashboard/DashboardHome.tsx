@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "react-router-dom";
-import { MessageSquare, Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2, TrendingDown } from "lucide-react";
+import { MessageSquare, Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2, TrendingDown, BookOpen } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
 import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { OnboardingModal } from "@/components/OnboardingModal";
 
 export default function DashboardHome() {
   const { user } = useAuth();
@@ -20,6 +21,7 @@ export default function DashboardHome() {
   const [chartData, setChartData] = useState<any[]>([]);
   const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -151,11 +153,22 @@ export default function DashboardHome() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold">Olá, {profile?.display_name || "usuário"}! 👋</h1>
-        <Card className="bg-card border-border inline-flex items-center gap-3 px-4 py-3">
-          <div className={`w-2 h-2 rounded-full ${agentConfig?.is_active ? "bg-green-500" : "bg-muted-foreground"}`} />
-          <span className="text-sm">Agente {agentConfig?.is_active ? "ativo" : "inativo"}</span>
-          <Switch checked={agentConfig?.is_active ?? false} onCheckedChange={toggleAgent} />
-        </Card>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setOnboardingOpen(true)}
+            className="gap-2 border-violet-500/40 text-violet-400 hover:bg-violet-500/10 hover:text-violet-300"
+          >
+            <BookOpen className="h-4 w-4" />
+            Como usar a Maya
+          </Button>
+          <Card className="bg-card border-border inline-flex items-center gap-3 px-4 py-3">
+            <div className={`w-2 h-2 rounded-full ${agentConfig?.is_active ? "bg-green-500" : "bg-muted-foreground"}`} />
+            <span className="text-sm">Agente {agentConfig?.is_active ? "ativo" : "inativo"}</span>
+            <Switch checked={agentConfig?.is_active ?? false} onCheckedChange={toggleAgent} />
+          </Card>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -258,6 +271,8 @@ export default function DashboardHome() {
         <Button variant="outline" asChild><Link to="/dashboard/financas"><BarChart3 className="mr-2 h-4 w-4" /> Ver finanças</Link></Button>
         <Button variant="outline" asChild><Link to="/dashboard/integracoes"><Link2 className="mr-2 h-4 w-4" /> Conectar integração</Link></Button>
       </div>
+
+      <OnboardingModal open={onboardingOpen} onClose={() => setOnboardingOpen(false)} />
     </div>
   );
 }
