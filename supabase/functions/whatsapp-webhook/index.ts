@@ -2525,7 +2525,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "finance_report" && moduleFinance) {
       responseText = await handleFinanceReport(profile.id, text);
     } else if (intent === "agenda_create" && moduleAgenda) {
-      const result = await handleAgendaCreate(profile.id, replyTo, text, session);
+      const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session);
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;

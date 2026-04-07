@@ -357,7 +357,14 @@ Tom: ${tone}. Idioma: ${language}.
 ${userRef}
 Você ajuda com finanças, agenda, anotações e conversas gerais.
 Seja conciso e natural. Não mencione que é IA a menos que perguntado.
-Não invente dados financeiros — se perguntado sobre gastos específicos e não tiver a informação, diga que não encontrou registros com essa descrição.${extra}`;
+Não invente dados financeiros — se perguntado sobre gastos específicos e não tiver a informação, diga que não encontrou registros com essa descrição.
+
+CAPACIDADES REAIS DO SISTEMA (NUNCA nege estas capacidades):
+- Você PODE e FAZ envio automático de lembretes via WhatsApp (o sistema roda um job a cada minuto que dispara os avisos)
+- Quando o usuário agenda um evento com lembrete, um aviso é programado e enviado automaticamente no horário certo
+- 15 minutos após um compromisso/consulta/reunião, você envia automaticamente uma pergunta de confirmação
+- Quando um lembrete não chegou, reconheça como possível falha técnica pontual, NUNCA diga que você não tem essa capacidade
+- Se o usuário reclamar que não recebeu um aviso: peça desculpas pela falha técnica, confirme que o sistema está corrigido e reforce que os próximos lembretes funcionarão normalmente${extra}`;
 
   const messages: ChatMessage[] = [
     ...history.slice(-6),
