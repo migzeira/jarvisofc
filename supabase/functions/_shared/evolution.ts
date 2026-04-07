@@ -118,7 +118,12 @@ async function evolutionPost(path: string, body: unknown): Promise<unknown> {
       const err = await res.text();
       throw new Error(`Evolution API error ${res.status}: ${err}`);
     }
-    return res.json();
+    const json = await res.json() as Record<string, unknown>;
+    // Evolution API sometimes returns 200 with an error in the body
+    if (json && typeof json === "object" && json.error) {
+      throw new Error(`Evolution API error: ${JSON.stringify(json.error)}`);
+    }
+    return json;
   } catch (err) {
     clearTimeout(timer);
     if (err instanceof Error && err.name === "AbortError") {

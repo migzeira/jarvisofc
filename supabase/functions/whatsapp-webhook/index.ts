@@ -626,6 +626,33 @@ const EVENT_TYPE_EMOJIS: Record<string, string> = {
   tarefa: "✏️",
 };
 
+// Detecta recorrência a partir de texto normalizado (sem acentos, lowercase)
+// Retorna { recurrence, recurrence_value } ou null se não detectar
+function detectRecurrenceFromText(
+  normMsg: string,
+  remindAt: Date
+): { recurrence: string; recurrence_value: number | null } | null {
+  if (/todo dia\b|todos os dias|diariamente|cada dia|sempre que|todo dia de/.test(normMsg))
+    return { recurrence: "daily", recurrence_value: null };
+  if (/toda segunda|toda segunda.feira/.test(normMsg)) return { recurrence: "weekly", recurrence_value: 1 };
+  if (/toda terca|toda terca.feira/.test(normMsg)) return { recurrence: "weekly", recurrence_value: 2 };
+  if (/toda quarta|toda quarta.feira/.test(normMsg)) return { recurrence: "weekly", recurrence_value: 3 };
+  if (/toda quinta|toda quinta.feira/.test(normMsg)) return { recurrence: "weekly", recurrence_value: 4 };
+  if (/toda sexta|toda sexta.feira/.test(normMsg)) return { recurrence: "weekly", recurrence_value: 5 };
+  if (/todo sabado|todo fim de semana/.test(normMsg)) return { recurrence: "weekly", recurrence_value: 6 };
+  if (/todo domingo/.test(normMsg)) return { recurrence: "weekly", recurrence_value: 0 };
+  if (/toda semana|semanalmente|todas as semanas/.test(normMsg))
+    return { recurrence: "weekly", recurrence_value: remindAt.getDay() };
+  if (/todo mes|mensalmente|todos os meses/.test(normMsg)) {
+    const dayMatch = normMsg.match(/dia (\d{1,2})/);
+    if (dayMatch) return { recurrence: "day_of_month", recurrence_value: parseInt(dayMatch[1]) };
+    return { recurrence: "monthly", recurrence_value: null };
+  }
+  const dayOfMonthMatch = normMsg.match(/todo dia (\d{1,2})\b/);
+  if (dayOfMonthMatch) return { recurrence: "day_of_month", recurrence_value: parseInt(dayOfMonthMatch[1]) };
+  return null;
+}
+
 // Detecta se o usuário NÃO quer lembrete nenhum
 function isReminderDecline(msg: string): boolean {
   const m = msg.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -2245,6 +2272,18 @@ async function handleReminderSet(
   if (step === "reminder_advance") {
     const parsed = ctx.parsed as Record<string, unknown>;
     const remindAt = new Date(parsed.remind_at as string);
+
+    // ── Detecta se usuário está especificando recorrência na resposta ──
+    const msgNorm = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const recurrenceUpdate = detectRecurrenceFromText(msgNorm, remindAt);
+    if (recurrenceUpdate) {
+      const updatedParsed = {
+        ...parsed,
+        recurrence: recurrenceUpdate.recurrence,
+        recurrence_value: recurrenceUpdate.recurrence_value,
+      };
+      return await saveReminder(userId, phone, updatedParsed, remindAt, 0, lang, userNickname, userTz);
+    }
 
     // "só na hora" / "na hora" → 0 min de antecedência (avisa exatamente no horário)
     if (isReminderAtTime(message)) {

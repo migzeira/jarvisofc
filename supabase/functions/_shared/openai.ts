@@ -455,12 +455,21 @@ Regras para remind_at:
 - "sexta" / "segunda" → próximo dia da semana mencionado
 - "semana que vem" → +7 dias
 
-Regras para recurrence:
-- Sem "todo" / "toda" / "sempre" → "none"
-- "todo dia" → "daily"
-- "toda segunda/terça/..." → "weekly", recurrence_value = dia (0=dom,1=seg,2=ter,3=qua,4=qui,5=sex,6=sáb)
-- "todo dia 10" / "dia 10 de todo mês" → "day_of_month", recurrence_value = 10
-- "todo mês" → "monthly", recurrence_value = null
+Regras para recurrence (analise CUIDADOSAMENTE — é muito importante detectar corretamente):
+- Sem indicativo de repetição → "none"
+- "todo dia" / "todos os dias" / "diariamente" / "cada dia" / "sempre" / "todo dia de manhã/tarde/noite" → "daily", recurrence_value = null
+- "toda semana" / "semanalmente" / "todas as semanas" (sem dia específico) → "weekly", recurrence_value = null
+- "toda segunda" / "toda segunda-feira" → "weekly", recurrence_value = 1
+- "toda terça" / "toda terça-feira" → "weekly", recurrence_value = 2
+- "toda quarta" / "toda quarta-feira" → "weekly", recurrence_value = 3
+- "toda quinta" / "toda quinta-feira" → "weekly", recurrence_value = 4
+- "toda sexta" / "toda sexta-feira" → "weekly", recurrence_value = 5
+- "todo sábado" / "todo fim de semana" → "weekly", recurrence_value = 6
+- "todo domingo" → "weekly", recurrence_value = 0
+- "todo dia 10" / "dia 10 de todo mês" / "todo mês no dia X" / "mensalmente no dia X" → "day_of_month", recurrence_value = X
+- "todo mês" / "mensalmente" (sem dia específico) → "monthly", recurrence_value = null
+- Para "toda [dia-da-semana]": recurrence_value = (0=dom, 1=seg, 2=ter, 3=qua, 4=qui, 5=sex, 6=sáb)
+- Se for recorrente semanal sem dia específico → recurrence_value = null (herda o dia do remind_at)
 
 Pedido: "${message}"`;
 

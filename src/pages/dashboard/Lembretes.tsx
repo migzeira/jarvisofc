@@ -186,13 +186,16 @@ export default function Lembretes() {
     else { toast.success("Lembrete excluído"); load(); }
   };
 
-  const handleRetry = async (id: string) => {
-    const retryAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+  const handleRetry = async (id: string, currentStatus?: string) => {
+    const retryAt = new Date(Date.now() + 60 * 1000).toISOString();
     const { error } = await supabase.from("reminders")
       .update({ status: "pending", send_at: retryAt })
       .eq("id", id);
     if (error) toast.error("Erro ao reagendar");
-    else { toast.success("Reagendado para daqui 2 minutos!"); load(); }
+    else {
+      toast.success(currentStatus === "sent" ? "Reenvio agendado para daqui 1 minuto!" : "Reagendado para daqui 1 minuto!");
+      load();
+    }
   };
 
   const openEdit = (r: Reminder) => {
@@ -474,10 +477,10 @@ export default function Lembretes() {
                     </div>
 
                     <div className="flex items-center gap-1.5 mt-1 flex-shrink-0">
-                      {r.status === "failed" && (
+                      {(r.status === "failed" || r.status === "sent") && (
                         <button
-                          onClick={() => handleRetry(r.id)}
-                          title="Reagendar para daqui 2 minutos"
+                          onClick={() => handleRetry(r.id, r.status)}
+                          title={r.status === "sent" ? "Reenviar este lembrete" : "Reagendar para daqui 1 minuto"}
                           className="text-muted-foreground hover:text-amber-400 transition-colors"
                         >
                           <RefreshCw className="h-4 w-4" />
