@@ -143,13 +143,20 @@ function classifyIntent(msg: string): Intent {
   )
     return "notes_save";
 
-  // Snooze de lembrete — adiar um lembrete recente
+  // Snooze de lembrete — adiar um lembrete recente (em português natural)
   if (
     /^snooze\b/.test(m) ||
-    m === "adiar" ||
-    m === "adia" ||
-    /^snooze \d/.test(m) ||
-    /^adiar?\s+\d+\s*(min|minuto|hora)/.test(m)
+    m === "adiar" || m === "adia" ||
+    /^adiar?\s+\d+\s*(min|minuto|hora)/.test(m) ||
+    /me lembra (isso |de novo |novamente )?(daqui|em) \d/.test(m) ||
+    /me lembra (de novo|novamente) (daqui|em)/.test(m) ||
+    /me avisa (de novo|novamente) (daqui|em) \d/.test(m) ||
+    /manda (de novo|novamente) (daqui|em) \d/.test(m) ||
+    /repete (daqui|em) \d/.test(m) ||
+    /avisa (de novo|novamente) (daqui|em) \d/.test(m) ||
+    /(de novo|novamente) em \d/.test(m) ||
+    /daqui a pouco de novo/.test(m) ||
+    /me lembra (daqui|em) \d/.test(m)
   ) return "reminder_snooze";
 
   // Lembrete simples — exige forma imperativa (não pega perguntas sobre a Maya)

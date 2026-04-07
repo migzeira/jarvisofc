@@ -78,6 +78,7 @@ export default function ConfigAgente() {
       module_agenda: config.module_agenda,
       module_notes: config.module_notes,
       module_chat: config.module_chat,
+      daily_briefing_enabled: config.daily_briefing_enabled,
       template_expense: config.template_expense,
       template_income: config.template_income,
       template_expense_multi: config.template_expense_multi,
@@ -177,6 +178,7 @@ export default function ConfigAgente() {
             { key: "module_agenda", label: "📅 Agenda", desc: "Criar/consultar compromissos" },
             { key: "module_notes", label: "📝 Anotações", desc: "Salvar notas e lembretes" },
             { key: "module_chat", label: "💬 Conversa livre", desc: "Perguntas gerais respondidas por IA" },
+            { key: "daily_briefing_enabled", label: "🌅 Resumo diário", desc: "Receber resumo da agenda todo dia às 8h no WhatsApp" },
           ].map(m => (
             <div key={m.key} className="flex items-center justify-between">
               <div>

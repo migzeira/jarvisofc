@@ -103,6 +103,7 @@ serve(async (_req) => {
   console.log(`[daily-briefing] Running for date: ${todayBRT}`);
 
   // Busca todos os usuários ativos com número de telefone configurado
+  // e que têm o resumo diário ativado (daily_briefing_enabled = true ou null = padrão ativo)
   const { data: users, error: usersErr } = await supabase
     .from("profiles")
     .select("id, phone_number")
@@ -129,12 +130,19 @@ serve(async (_req) => {
     }
 
     try {
-      // Busca apelido do usuário na configuração do agente
+      // Busca apelido e configurações do agente (inclui flag de resumo diário)
       const { data: agentConfig } = await supabase
         .from("agent_configs")
-        .select("user_nickname")
+        .select("user_nickname, daily_briefing_enabled")
         .eq("user_id", user.id)
         .maybeSingle();
+
+      // Pula se o usuário desativou o resumo diário
+      // null = padrão (ativado), false = desativado explicitamente
+      if (agentConfig?.daily_briefing_enabled === false) {
+        skipped++;
+        continue;
+      }
 
       const userName = (agentConfig?.user_nickname as string) || "você";
 
