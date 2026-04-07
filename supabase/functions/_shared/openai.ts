@@ -229,6 +229,63 @@ export async function transcribeAudio(base64: string, mimetype: string): Promise
   return (await res.text()).trim();
 }
 
+/** Resultado da extração de edição de evento */
+export interface ExtractedAgendaEdit {
+  new_date: string | null;          // YYYY-MM-DD
+  new_time: string | null;          // HH:MM
+  new_title: string | null;
+  cancel: boolean;                  // true se o usuário quer cancelar/excluir
+  fields_changed: string[];         // ["date", "time", "title"]
+  needs_clarification: string | null;
+}
+
+/** Extrai o que o usuário quer alterar em um evento existente */
+export async function extractAgendaEdit(
+  text: string,
+  today: string
+): Promise<ExtractedAgendaEdit> {
+  const system = `Você é um extrator de edições de agenda. Responda APENAS com JSON válido, sem markdown, sem explicações.`;
+
+  const prompt = `Analise a mensagem do usuário e extraia o que ele quer mudar em um evento. Hoje é ${today}.
+
+O usuário pode dizer coisas como:
+- "mudei para dia 15" → nova data
+- "muda o horário para 14:00" → novo horário
+- "cancela esse evento" → cancelar
+- "é às 3 da tarde agora" → novo horário
+- "remarca pro dia 20 às 10h" → nova data e horário
+
+Retorne JSON com EXATAMENTE esta estrutura:
+{
+  "new_date": "YYYY-MM-DD ou null",
+  "new_time": "HH:MM ou null",
+  "new_title": "string ou null",
+  "cancel": false,
+  "fields_changed": ["date", "time"],
+  "needs_clarification": null
+}
+
+REGRAS:
+- Se detectar intenção de cancelar/excluir/apagar/deletar → cancel: true, demais campos null
+- Se o usuário informou apenas nova data (sem horário) → needs_clarification: "Qual será o novo horário? 🕐"
+- Se o usuário informou nova data E novo horário → needs_clarification: null
+- Para horários no formato "3 da tarde" → "15:00", "3 da manhã" → "03:00", "meio-dia" → "12:00"
+- Datas relativas: "dia 15" → dia 15 do mês atual ou próximo mês se já passou
+- "amanhã" → tomorrow based on hoje=${today}
+- fields_changed deve listar apenas os campos que foram alterados
+
+Mensagem: "${text}"
+
+Responda SOMENTE com o JSON.`;
+
+  const result = await chat(
+    [{ role: "user", content: prompt }],
+    system,
+    true
+  );
+  return JSON.parse(result) as ExtractedAgendaEdit;
+}
+
 /**
  * Analisa imagem com Claude Vision.
  * Se for nota fiscal/recibo, extrai transações. Retorna array vazio se não for.

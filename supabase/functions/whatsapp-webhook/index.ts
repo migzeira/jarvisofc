@@ -6,6 +6,7 @@ import {
   extractTransactions,
   extractEvent,
   parseAgendaQuery,
+  extractAgendaEdit,
   assistantChat,
   transcribeAudio,
   extractReceiptFromImage,
@@ -88,6 +89,8 @@ type Intent =
   | "finance_report"
   | "agenda_create"
   | "agenda_query"
+  | "agenda_lookup"
+  | "agenda_edit"
   | "notes_save"
   | "reminder_set"
   | "ai_chat";
@@ -140,6 +143,14 @@ function classifyIntent(msg: string): Intent {
 
   // Lembrete simples
   if (/me lembra|me avisa|me notific|lembrete/.test(m)) return "reminder_set";
+
+  // Buscar evento específico
+  if (/voce lembra (do|da|de) (meu|minha)|lembra (do|da|de) (meu|minha)|tem (meu|minha) .{2,30} marcad|qual (e|é) (meu|minha)|quando (e|é) (meu|minha)|tem algo (marcado|agendado) (dia|no dia|para)/.test(m))
+    return "agenda_lookup";
+
+  // Editar/remarcar evento
+  if (/(mudei|muda|mude|alterei|altera|altere|remarca|remarcar|atualiza|cancela|cancelar|excluir|deletar|mover) .{0,20}(dia|hora|horario|data|evento|compromisso|reuniao|consulta)|mudei de (data|dia|horario|hora)|nao e mais (dia|hora)|e (dia|hora) \d|muda (o|a) (dia|hora|horario|data)/.test(m))
+    return "agenda_edit";
 
   return "ai_chat";
 }
@@ -640,6 +651,426 @@ async function createEventAndConfirm(
       : `${mins} min`;
     response += `\n🔔 Te lembro ${reminderLabel} antes`;
   }
+
+  return { response };
+}
+
+// ─────────────────────────────────────────────
+// AGENDA LOOKUP — encontra um evento específico
+// ─────────────────────────────────────────────
+
+async function handleAgendaLookup(
+  userId: string,
+  message: string
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  const today = new Date().toISOString().split("T")[0];
+
+  // Extrai palavra-chave da mensagem removendo palavras comuns
+  const keyword = message
+    .toLowerCase()
+    .replace(/voce lembra|lembra|do|da|de|meu|minha|tem|qual|e|quando|marcado|agendado|dia|no|para/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((w) => w.length > 2)[0] ?? "";
+
+  // Tenta extrair um intervalo de datas da mensagem
+  let startDate: string | null = null;
+  let endDate: string | null = null;
+  try {
+    const parsed = await parseAgendaQuery(message, today);
+    // Só usa o intervalo se for diferente do fallback padrão de 7 dias (heurística: start === hoje)
+    if (parsed.start_date && parsed.end_date) {
+      startDate = parsed.start_date;
+      endDate = parsed.end_date;
+    }
+  } catch {
+    // ignora — fará busca só por keyword
+  }
+
+  // Monta query combinando keyword + datas
+  let query = supabase
+    .from("events")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .order("event_date", { ascending: true })
+    .limit(3);
+
+  if (keyword && startDate && endDate) {
+    query = query.or(
+      `title.ilike.%${keyword}%,and(event_date.gte.${startDate},event_date.lte.${endDate})`
+    );
+  } else if (keyword) {
+    query = query.ilike("title", `%${keyword}%`);
+  } else if (startDate && endDate) {
+    query = query.gte("event_date", startDate).lte("event_date", endDate);
+  }
+
+  const { data: events, error } = await query;
+  if (error) throw error;
+
+  if (!events || events.length === 0) {
+    return {
+      response: "Não encontrei nenhum compromisso com esse nome. 🔍 Quer ver sua agenda completa?",
+    };
+  }
+
+  if (events.length === 1) {
+    const e = events[0];
+    const dateStr = new Date(e.event_date + "T12:00:00").toLocaleDateString("pt-BR", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+    });
+    const dateFormatted = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+    const typeEmoji = EVENT_TYPE_EMOJIS[e.event_type] ?? "📌";
+
+    let response = `${typeEmoji} *${e.title}*\n🗓 ${dateFormatted}`;
+    if (e.event_time) response += `\n⏰ ${e.event_time.slice(0, 5)}`;
+    if (e.end_time) response += ` - ${e.end_time.slice(0, 5)}`;
+    if (e.location) response += `\n📍 ${e.location}`;
+    if (e.reminder && e.reminder_minutes_before != null) {
+      response += `\n🔔 Lembrete: ${e.reminder_minutes_before === 0 ? "na hora" : `${e.reminder_minutes_before} min antes`}`;
+    }
+    response += `\n\nQuer fazer alguma alteração? Pode me dizer a nova data, horário, ou "cancela" se quiser excluir.`;
+
+    return {
+      response,
+      pendingAction: "agenda_edit",
+      pendingContext: {
+        event_id: e.id,
+        event_title: e.title,
+        event_date: e.event_date,
+        event_time: e.event_time ?? null,
+        reminder_minutes: e.reminder_minutes_before ?? null,
+        step: "awaiting_change",
+      },
+    };
+  }
+
+  // Múltiplos eventos — lista e pede confirmação
+  const lines = events.map((e, i) => {
+    const dateStr = new Date(e.event_date + "T12:00:00").toLocaleDateString("pt-BR", {
+      day: "numeric",
+      month: "short",
+    });
+    const time = e.event_time ? ` às ${e.event_time.slice(0, 5)}` : "";
+    return `${i + 1}. *${e.title}* — ${dateStr}${time}`;
+  });
+
+  return {
+    response: `Encontrei ${events.length} compromissos:\n\n${lines.join("\n")}\n\nQual deles você quer ver ou editar?`,
+  };
+}
+
+// ─────────────────────────────────────────────
+// APPLY EVENT UPDATE — aplica alterações no BD
+// ─────────────────────────────────────────────
+
+async function applyEventUpdate(
+  userId: string,
+  phone: string,
+  eventId: string,
+  updates: { event_date?: string; event_time?: string; end_time?: string },
+  reminderMinutes: number | null | undefined,
+  originalData: {
+    title: string;
+    event_date: string;
+    event_time: string | null;
+    reminder_minutes: number | null;
+  }
+): Promise<string> {
+  // 1. Atualiza o evento
+  const { error: updateErr } = await supabase
+    .from("events")
+    .update(updates)
+    .eq("id", eventId)
+    .eq("user_id", userId);
+
+  if (updateErr) throw updateErr;
+
+  // 2. Cancela lembretes pendentes se reminderMinutes foi explicitamente informado
+  if (reminderMinutes !== undefined) {
+    await supabase
+      .from("reminders")
+      .update({ status: "cancelled" })
+      .eq("event_id", eventId)
+      .eq("status", "pending");
+  }
+
+  // 3. Cria novo lembrete se solicitado
+  if (reminderMinutes != null && reminderMinutes >= 0) {
+    const finalDate = updates.event_date ?? originalData.event_date;
+    const finalTime = updates.event_time ?? originalData.event_time;
+
+    if (finalTime) {
+      const [y, mo, d] = finalDate.split("-").map(Number);
+      const [h, min] = finalTime.split(":").map(Number);
+      const eventDt = new Date(y, mo - 1, d, h, min);
+      const remindDt = new Date(eventDt.getTime() - reminderMinutes * 60 * 1000);
+
+      if (remindDt > new Date()) {
+        const reminderMsg = reminderMinutes === 0
+          ? `⏰ *Hora do seu compromisso!*\n📌 *${originalData.title}* está marcado agora às ${finalTime.slice(0, 5)}`
+          : `⏰ *Lembrete!*\nEm ${reminderMinutes} min você tem: *${originalData.title}* às ${finalTime.slice(0, 5)}`;
+
+        await supabase.from("reminders").insert({
+          user_id: userId,
+          event_id: eventId,
+          whatsapp_number: phone,
+          message: reminderMsg,
+          send_at: remindDt.toISOString(),
+          status: "pending",
+        });
+      }
+    }
+  }
+
+  // 4. Sync Google Calendar (fire-and-forget)
+  const gcalDate = updates.event_date ?? originalData.event_date;
+  const gcalTime = updates.event_time ?? originalData.event_time;
+  syncGoogleCalendar(userId, originalData.title, gcalDate, gcalTime ?? null).catch(() => {});
+
+  // 5. Formata confirmação
+  const dateStr = new Date(gcalDate + "T12:00:00").toLocaleDateString("pt-BR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+  const dateFormatted = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+
+  let response = `✅ *Compromisso atualizado!*\n📌 ${originalData.title}\n🗓 ${dateFormatted}`;
+  if (gcalTime) response += `\n⏰ ${gcalTime.slice(0, 5)}`;
+  if (reminderMinutes === 0) {
+    response += `\n🔔 Te aviso na hora do evento`;
+  } else if (reminderMinutes != null && reminderMinutes > 0) {
+    const label = reminderMinutes >= 60
+      ? `${reminderMinutes / 60 === Math.floor(reminderMinutes / 60) ? reminderMinutes / 60 + " hora" + (reminderMinutes / 60 > 1 ? "s" : "") : reminderMinutes + " min"}`
+      : `${reminderMinutes} min`;
+    response += `\n🔔 Te lembro ${label} antes`;
+  }
+
+  return response;
+}
+
+// ─────────────────────────────────────────────
+// AGENDA EDIT — edita evento via conversa
+// ─────────────────────────────────────────────
+
+async function handleAgendaEdit(
+  userId: string,
+  phone: string,
+  message: string,
+  session: Record<string, unknown> | null
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  const today = new Date().toISOString().split("T")[0];
+  const ctx = (session?.pending_context as Record<string, unknown>) ?? {};
+  const step = (ctx.step as string) ?? "awaiting_change";
+
+  // ─── STEP: waiting_time ───
+  if (step === "waiting_time") {
+    const timeMatch = message.match(/(\d{1,2})[h:](\d{0,2})/);
+    let newTime: string | null = null;
+    if (timeMatch) {
+      const hh = timeMatch[1].padStart(2, "0");
+      const mm = (timeMatch[2] || "00").padStart(2, "0");
+      newTime = `${hh}:${mm}`;
+    } else {
+      return {
+        response: "Não entendi o horário. Pode me dizer no formato *14:00* ou *14h30*? 🕐",
+        pendingAction: "agenda_edit",
+        pendingContext: ctx,
+      };
+    }
+
+    return await offerReminderAfterEdit(userId, phone, {
+      ...(ctx as Record<string, unknown>),
+      pending_new_time: newTime,
+    });
+  }
+
+  // ─── STEP: waiting_reminder_answer ───
+  if (step === "waiting_reminder_answer") {
+    if (isReminderAtTime(message)) {
+      return await finalizeEdit(userId, phone, ctx, 0);
+    }
+    if (isReminderDecline(message)) {
+      return await finalizeEdit(userId, phone, ctx, null);
+    }
+    const minutesInAnswer = parseMinutes(message);
+    if (minutesInAnswer !== null && message.match(/\d|hora|minuto|meia/)) {
+      return await finalizeEdit(userId, phone, ctx, minutesInAnswer);
+    }
+    if (isReminderAccept(message)) {
+      return {
+        response: "Com quanto tempo de antecedência? ⏱️\n\n_Ex: 15 min, 30 min, 1 hora — ou \"só na hora\"_",
+        pendingAction: "agenda_edit",
+        pendingContext: { ...ctx, step: "waiting_reminder_minutes" },
+      };
+    }
+    return {
+      response: "Quer que eu te lembre antes? Pode me dizer:\n• *30 minutos antes*\n• *1 hora antes*\n• *só na hora*\n• *não precisa*",
+      pendingAction: "agenda_edit",
+      pendingContext: { ...ctx, step: "waiting_reminder_answer" },
+    };
+  }
+
+  // ─── STEP: waiting_reminder_minutes ───
+  if (step === "waiting_reminder_minutes") {
+    const minutes = parseMinutes(message);
+    if (minutes !== null) {
+      return await finalizeEdit(userId, phone, ctx, minutes);
+    }
+    return {
+      response: "Não entendi. Com quanto tempo antes?\n\n_Ex: 15, 30, 1 hora — ou \"só na hora\"_ ⏱️",
+      pendingAction: "agenda_edit",
+      pendingContext: { ...ctx, step: "waiting_reminder_minutes" },
+    };
+  }
+
+  // ─── STEP: awaiting_change (ou direto sem sessão anterior) ───
+
+  // Se não há event_id na sessão, tenta encontrar evento pelo texto
+  if (!ctx.event_id) {
+    const keyword = message
+      .toLowerCase()
+      .replace(/mudei|muda|mude|alterei|altera|altere|remarca|remarcar|atualiza|cancela|cancelar|excluir|deletar|mover|dia|hora|horario|data|evento|compromisso|reuniao|consulta|para|pro|pra|o|a/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter((w) => w.length > 2)[0] ?? "";
+
+    if (keyword) {
+      const { data: found } = await supabase
+        .from("events")
+        .select("id, title, event_date, event_time, reminder_minutes_before")
+        .eq("user_id", userId)
+        .eq("status", "pending")
+        .ilike("title", `%${keyword}%`)
+        .order("event_date", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (!found) {
+        return {
+          response: `Não encontrei nenhum compromisso com "${keyword}". 🔍\n\nComo está o nome do compromisso que você quer editar?`,
+        };
+      }
+      // Encontrou — usa como contexto e continua para extração de edição
+      ctx.event_id = found.id;
+      ctx.event_title = found.title;
+      ctx.event_date = found.event_date;
+      ctx.event_time = found.event_time ?? null;
+      ctx.reminder_minutes = found.reminder_minutes_before ?? null;
+    } else {
+      return {
+        response: "Qual compromisso você quer editar? 📅",
+      };
+    }
+  }
+
+  // Extrai o que mudou
+  const edit = await extractAgendaEdit(message, today);
+
+  // Cancelamento
+  if (edit.cancel) {
+    const { error } = await supabase
+      .from("events")
+      .update({ status: "cancelled" })
+      .eq("id", ctx.event_id as string)
+      .eq("user_id", userId);
+    if (error) throw error;
+
+    // Cancela lembretes pendentes
+    await supabase
+      .from("reminders")
+      .update({ status: "cancelled" })
+      .eq("event_id", ctx.event_id as string)
+      .eq("status", "pending");
+
+    return { response: `🗑️ Compromisso *${ctx.event_title}* cancelado. ✅` };
+  }
+
+  // Nada identificado
+  if (edit.fields_changed.length === 0 && !edit.needs_clarification) {
+    return {
+      response: "Não entendi o que você quer mudar. Pode me dizer a nova data, novo horário, ou \"cancela\"? 📝",
+      pendingAction: "agenda_edit",
+      pendingContext: { ...ctx, step: "awaiting_change" },
+    };
+  }
+
+  // Precisa de esclarecimento (ex: deu data mas não horário e evento tinha horário)
+  const hasOriginalTime = !!(ctx.event_time as string | null);
+  if (edit.new_date && !edit.new_time && hasOriginalTime && edit.needs_clarification) {
+    return {
+      response: edit.needs_clarification,
+      pendingAction: "agenda_edit",
+      pendingContext: {
+        ...ctx,
+        pending_new_date: edit.new_date,
+        step: "waiting_time",
+      },
+    };
+  }
+
+  // Tem tudo para aplicar — oferece lembrete antes
+  return await offerReminderAfterEdit(userId, phone, {
+    ...ctx,
+    pending_new_date: edit.new_date ?? ctx.event_date,
+    pending_new_time: edit.new_time ?? ctx.event_time,
+  });
+}
+
+/** Depois de coletar data/hora novos, oferece atualização de lembrete */
+async function offerReminderAfterEdit(
+  userId: string,
+  phone: string,
+  ctx: Record<string, unknown>
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  // Se o evento tinha lembrete, pergunta se quer manter/alterar
+  const hadReminder = (ctx.reminder_minutes as number | null) != null;
+  if (hadReminder) {
+    return {
+      response: `Quer atualizar o lembrete também?\n\n• *Sim* — me diga com quantos minutos de antecedência\n• *Só na hora* — te aviso na hora do evento\n• *Não precisa* — remove o lembrete`,
+      pendingAction: "agenda_edit",
+      pendingContext: { ...ctx, step: "waiting_reminder_answer" },
+    };
+  }
+
+  // Sem lembrete anterior — aplica direto sem perguntar
+  return await finalizeEdit(userId, phone, ctx, undefined);
+}
+
+/** Aplica as alterações acumuladas e retorna a mensagem de confirmação */
+async function finalizeEdit(
+  userId: string,
+  phone: string,
+  ctx: Record<string, unknown>,
+  reminderMinutes: number | null | undefined
+): Promise<{ response: string }> {
+  const updates: { event_date?: string; event_time?: string } = {};
+  if (ctx.pending_new_date && ctx.pending_new_date !== ctx.event_date) {
+    updates.event_date = ctx.pending_new_date as string;
+  }
+  if (ctx.pending_new_time !== undefined && ctx.pending_new_time !== ctx.event_time) {
+    updates.event_time = (ctx.pending_new_time as string | null) ?? undefined;
+  }
+
+  const response = await applyEventUpdate(
+    userId,
+    phone,
+    ctx.event_id as string,
+    updates,
+    reminderMinutes,
+    {
+      title: ctx.event_title as string,
+      event_date: ctx.event_date as string,
+      event_time: (ctx.event_time as string | null) ?? null,
+      reminder_minutes: (ctx.reminder_minutes as number | null) ?? null,
+    }
+  );
 
   return { response };
 }
@@ -1173,7 +1604,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     if (
       session?.pending_action &&
       intent === "ai_chat" &&
-      text.length < 100
+      text.length < 150
     ) {
       intent = session.pending_action as Intent;
     }
@@ -1200,6 +1631,16 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       pendingContext = result.pendingContext;
     } else if (intent === "agenda_query" && moduleAgenda) {
       responseText = await handleAgendaQuery(profile.id, text);
+    } else if (intent === "agenda_lookup" && moduleAgenda) {
+      const result = await handleAgendaLookup(profile.id, text);
+      responseText = result.response;
+      pendingAction = result.pendingAction;
+      pendingContext = result.pendingContext;
+    } else if (intent === "agenda_edit" && moduleAgenda) {
+      const result = await handleAgendaEdit(profile.id, sendPhone || replyTo, text, session);
+      responseText = result.response;
+      pendingAction = result.pendingAction;
+      pendingContext = result.pendingContext;
     } else if (intent === "notes_save" && moduleNotes) {
       responseText = await handleNotesSave(profile.id, text);
     } else if (intent === "reminder_set") {
