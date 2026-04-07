@@ -5,26 +5,40 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
-import Index from "./pages/Index";
-import Login from "./pages/Login";
-import Signup from "./pages/Signup";
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
-import DashboardLayout from "./components/DashboardLayout";
-import DashboardHome from "./pages/dashboard/DashboardHome";
-import Financas from "./pages/dashboard/Financas";
-import Agenda from "./pages/dashboard/Agenda";
-import Anotacoes from "./pages/dashboard/Anotacoes";
-import Conversas from "./pages/dashboard/Conversas";
-import Lembretes from "./pages/dashboard/Lembretes";
-import Integracoes from "./pages/dashboard/Integracoes";
-import ConfigAgente from "./pages/dashboard/ConfigAgente";
+import { lazy, Suspense } from "react";
 
-import MeuPerfil from "./pages/dashboard/MeuPerfil";
-import AdminPanel from "./pages/admin/AdminPanel";
-import NotFound from "./pages/NotFound";
-import TermosDeUso from "./pages/TermosDeUso";
-import PoliticaPrivacidade from "./pages/PoliticaPrivacidade";
+// Landing page carrega imediato (SEO + first paint)
+import Index from "./pages/Index";
+
+// Tudo mais carrega sob demanda (lazy loading)
+const Login = lazy(() => import("./pages/Login"));
+const Signup = lazy(() => import("./pages/Signup"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const TermosDeUso = lazy(() => import("./pages/TermosDeUso"));
+const PoliticaPrivacidade = lazy(() => import("./pages/PoliticaPrivacidade"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+
+const DashboardLayout = lazy(() => import("./components/DashboardLayout"));
+const DashboardHome = lazy(() => import("./pages/dashboard/DashboardHome"));
+const Financas = lazy(() => import("./pages/dashboard/Financas"));
+const Agenda = lazy(() => import("./pages/dashboard/Agenda"));
+const Anotacoes = lazy(() => import("./pages/dashboard/Anotacoes"));
+const Conversas = lazy(() => import("./pages/dashboard/Conversas"));
+const Lembretes = lazy(() => import("./pages/dashboard/Lembretes"));
+const Integracoes = lazy(() => import("./pages/dashboard/Integracoes"));
+const ConfigAgente = lazy(() => import("./pages/dashboard/ConfigAgente"));
+const MeuPerfil = lazy(() => import("./pages/dashboard/MeuPerfil"));
+const AdminPanel = lazy(() => import("./pages/admin/AdminPanel"));
+
+// Loading spinner minimalista
+function PageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
 
 const queryClient = new QueryClient();
 
@@ -35,29 +49,30 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
-            <Route path="/termos-de-uso" element={<TermosDeUso />} />
-            <Route path="/politica-de-privacidade" element={<PoliticaPrivacidade />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
-            <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
-              <Route index element={<DashboardHome />} />
-              <Route path="financas" element={<Financas />} />
-              <Route path="agenda" element={<Agenda />} />
-              <Route path="anotacoes" element={<Anotacoes />} />
-              <Route path="conversas" element={<Conversas />} />
-              <Route path="lembretes" element={<Lembretes />} />
-              <Route path="integracoes" element={<Integracoes />} />
-              <Route path="agente" element={<ConfigAgente />} />
-              
-              <Route path="perfil" element={<MeuPerfil />} />
-            </Route>
-            <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/signup" element={<Signup />} />
+              <Route path="/termos-de-uso" element={<TermosDeUso />} />
+              <Route path="/politica-de-privacidade" element={<PoliticaPrivacidade />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
+                <Route index element={<DashboardHome />} />
+                <Route path="financas" element={<Financas />} />
+                <Route path="agenda" element={<Agenda />} />
+                <Route path="anotacoes" element={<Anotacoes />} />
+                <Route path="conversas" element={<Conversas />} />
+                <Route path="lembretes" element={<Lembretes />} />
+                <Route path="integracoes" element={<Integracoes />} />
+                <Route path="agente" element={<ConfigAgente />} />
+                <Route path="perfil" element={<MeuPerfil />} />
+              </Route>
+              <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

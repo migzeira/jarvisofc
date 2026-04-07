@@ -1257,6 +1257,17 @@ export default function Index() {
         </div>
       </section>
 
+      {/* ══ MOBILE STICKY CTA ═══════════════════════════════════════════ */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-[#03030a]/95 backdrop-blur-xl border-t border-white/[0.08] px-4 py-3 safe-area-bottom">
+        <a
+          href="#planos"
+          className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 text-white font-bold text-[15px] shadow-lg shadow-violet-500/30 active:scale-[0.98] transition-transform"
+        >
+          Assinar por R$29,90/mês
+          <ArrowRight className="w-4 h-4" />
+        </a>
+      </div>
+
       {/* ══ FOOTER ═══════════════════════════════════════════════════════ */}
       <footer className="border-t border-white/[0.06] py-12 px-4">
         <div className="max-w-5xl mx-auto">

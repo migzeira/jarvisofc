@@ -91,8 +91,64 @@ export default function DashboardHome() {
     );
   }
 
+  const whatsappLinked = !!profile?.whatsapp_lid || !!profile?.phone_number;
+  const phoneSet = !!profile?.phone_number;
+
   return (
     <div className="space-y-6">
+      {/* Onboarding: guia passo a passo pra quem acabou de criar conta */}
+      {(!phoneSet || !whatsappLinked || profile?.messages_used === 0) && (
+        <Card className="bg-gradient-to-r from-violet-500/10 to-purple-500/10 border-violet-500/20">
+          <CardContent className="pt-5 pb-5">
+            <h3 className="text-base font-bold mb-3 flex items-center gap-2">
+              🚀 Configure sua Maya em 3 passos
+            </h3>
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${phoneSet ? "bg-green-500 text-white" : "bg-violet-500 text-white"}`}>
+                  {phoneSet ? "✓" : "1"}
+                </div>
+                <div>
+                  <p className={`text-sm font-medium ${phoneSet ? "text-green-400 line-through" : "text-white"}`}>
+                    Cadastre seu WhatsApp
+                  </p>
+                  {!phoneSet && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Vá em{" "}
+                      <Link to="/dashboard/perfil" className="text-violet-400 underline">Meu Perfil</Link>
+                      {" "}e salve seu número com DDD
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${profile?.messages_used > 0 ? "bg-green-500 text-white" : phoneSet ? "bg-violet-500 text-white" : "bg-muted text-muted-foreground"}`}>
+                  {profile?.messages_used > 0 ? "✓" : "2"}
+                </div>
+                <div>
+                  <p className={`text-sm font-medium ${profile?.messages_used > 0 ? "text-green-400 line-through" : ""}`}>
+                    Mande "oi" no WhatsApp do bot
+                  </p>
+                  {profile?.messages_used === 0 && phoneSet && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Envie uma mensagem para o número do bot e a Maya vai te responder automaticamente
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${profile?.messages_used >= 3 ? "bg-green-500 text-white" : "bg-muted text-muted-foreground"}`}>
+                  {profile?.messages_used >= 3 ? "✓" : "3"}
+                </div>
+                <p className={`text-sm font-medium ${profile?.messages_used >= 3 ? "text-green-400 line-through" : ""}`}>
+                  Registre seu primeiro gasto ou compromisso
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold">Olá, {profile?.display_name || "usuário"}! 👋</h1>
         <Card className="bg-card border-border inline-flex items-center gap-3 px-4 py-3">
