@@ -311,11 +311,21 @@ function classifyIntent(msg: string): Intent {
   )
     return "agenda_query";
 
-  // Salvar nota
+  // Salvar nota — cobre formas diretas, casuais e indiretas
   if (
-    /^(anota|anotacao|anote|salva|escreve|registra|guarda)[\s:,]|^nota[\s:,]|preciso lembrar|lembrar de /.test(
-      m
-    )
+    // Formas diretas com palavra-chave no início
+    /^(anota|anotacao|anote|salva|escreve|registra|guarda|coloca|bota|grava)[\s:,]/.test(m) ||
+    /^nota[\s:,]|^toma nota\b|^presta atencao\b/.test(m) ||
+    // "anota ai", "salva ai", "guarda isso", "bota ai", "coloca ai", "marca ai"
+    /\b(anota|salva|guarda|escreve|registra|bota|coloca|grava) (ai|isso|aqui|pra mim)\b/.test(m) ||
+    // "marca ai" (sem referência à agenda)
+    /^marca (ai|isso|aqui|pra mim)\b/.test(m) ||
+    // Formas explícitas de intenção
+    /^(quero|pode|preciso que voce|por favor) (anotar|salvar|registrar|guardar)\b/.test(m) ||
+    /^(pode |por favor )?(anotar|salvar|registrar|guardar) (isso|esse|essa|aqui|ai)\b/.test(m) ||
+    // Frases de contexto
+    /para nao esquecer|pra nao esquecer|nao quero esquecer/.test(m) ||
+    /preciso lembrar|lembrar de /.test(m)
   )
     return "notes_save";
 
@@ -1949,6 +1959,95 @@ async function handleNotesSave(
   const ctx = (session?.pending_context as Record<string, unknown>) ?? {};
   const step = (ctx.step as string) ?? null;
 
+  // ─── STEP: note_or_reminder_choice ───
+  // Usuário respondendo "anotações" ou "lembrete" à pergunta de disambiguação
+  if (step === "note_or_reminder_choice") {
+    const m2 = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const cleanContent = ctx.cleanContent as string;
+    const suggestedTitle = ctx.suggestedTitle as string;
+
+    const wantsReminder =
+      /^2$|^lembrete|^lembrar|^avisa|^aviso|^lembre|^quero lembrete|^criar lembrete/.test(m2);
+
+    if (wantsReminder) {
+      // Guarda o conteúdo e pede o horário
+      return {
+        response: `⏰ *Certo!* Em qual momento você quer ser lembrado sobre:\n_"${cleanContent}"_?\n\n_Ex: amanhã às 14h, sexta às 10h, daqui 2 horas_`,
+        pendingAction: "notes_save",
+        pendingContext: {
+          step: "note_reminder_time_pending",
+          cleanContent,
+          suggestedTitle,
+        },
+      };
+    }
+
+    // Escolheu anotações (ou qualquer outra resposta = padrão)
+    const { error: noteErr } = await supabase.from("notes").insert({
+      user_id: userId,
+      title: suggestedTitle || null,
+      content: cleanContent,
+      source: "whatsapp",
+    });
+    if (noteErr) throw noteErr;
+    syncNotion(userId, cleanContent).catch(() => {});
+
+    return {
+      response: buildNoteResponse(cleanContent),
+      pendingAction: "notes_save",
+      pendingContext: { step: "note_reminder_offer", noteTitle: suggestedTitle || cleanContent.slice(0, 40) },
+    };
+  }
+
+  // ─── STEP: note_reminder_time_pending ───
+  // Usuário escolheu "lembrete" e está informando o horário
+  if (step === "note_reminder_time_pending") {
+    const cleanContent = ctx.cleanContent as string;
+    const suggestedTitle = ctx.suggestedTitle as string;
+    const tzOff2 = getTzOffset(userTz);
+    const nowIso2 = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + tzOff2;
+    const parsed2 = await parseReminderIntent(message, nowIso2, noteLang);
+
+    if (!parsed2) {
+      return {
+        response: `Não entendi o horário. Pode repetir?\n\n_Ex: amanhã às 14h, sexta às 10h, daqui 2 horas_`,
+        pendingAction: "notes_save",
+        pendingContext: ctx,
+      };
+    }
+
+    const remindAt2 = new Date(parsed2.remind_at);
+    if (isNaN(remindAt2.getTime()) || remindAt2 <= new Date()) {
+      return {
+        response: `Esse horário já passou ou não entendi. Tente novamente:\n\n_Ex: amanhã às 14h, próxima sexta às 9h_`,
+        pendingAction: "notes_save",
+        pendingContext: ctx,
+      };
+    }
+
+    const { data: profileRow2 } = await supabase.from("profiles").select("phone_number").eq("id", userId).maybeSingle();
+    const reminderPhone = phone || profileRow2?.phone_number || "";
+
+    await supabase.from("reminders").insert({
+      user_id: userId,
+      whatsapp_number: reminderPhone,
+      title: suggestedTitle || cleanContent.slice(0, 60),
+      message: `🔔 *Lembrete!*\n📋 ${suggestedTitle || cleanContent.slice(0, 60)}`,
+      send_at: remindAt2.toISOString(),
+      recurrence: "none",
+      source: "whatsapp",
+      status: "pending",
+    });
+
+    const timeStr2 = remindAt2.toLocaleTimeString("pt-BR", { timeZone: userTz, hour: "2-digit", minute: "2-digit" });
+    const dateStr2 = remindAt2.toLocaleDateString("pt-BR", { timeZone: userTz, weekday: "long", day: "numeric", month: "long" });
+    const greetName = userNickname ? `, ${userNickname}` : "";
+
+    return {
+      response: `⏰ *Lembrete criado${greetName}!*\nVou te avisar sobre _"${suggestedTitle || cleanContent.slice(0, 60)}"_ em ${dateStr2} às ${timeStr2}. ✅`,
+    };
+  }
+
   // ─── STEP: note_or_event_choice ───
   if (step === "note_or_event_choice") {
     const m = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -2094,6 +2193,24 @@ async function handleNotesSave(
   // ─── FLUXO PRINCIPAL ───
   // Analisa e classifica a nota com IA
   const analysis = await analyzeNoteContent(message);
+
+  // Detecta se a mensagem tem referência de tempo (indica lembrete)
+  const hasTimeRef = /\b(amanha|amanhã|hoje|às \d|as \d|dia \d|\d+h\b|\d+ horas|proxim[ao]|semana|mes|daqui \d|em \d+ (min|hora|dia)|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/i.test(message);
+
+  // Se não tem referência de tempo e não parece evento → pergunta notas ou lembrete
+  if (!hasTimeRef && !analysis.looksLikeEvent) {
+    const userName = userNickname ? `, ${userNickname}` : "";
+    return {
+      response: `Entendido${userName}! Isso é para:\n\n📝 *1 — Anotações* — salvo para consultar depois\n🔔 *2 — Lembrete* — te aviso no horário que você quiser\n\n_Responda 1 ou 2_`,
+      pendingAction: "notes_save",
+      pendingContext: {
+        step: "note_or_reminder_choice",
+        cleanContent: analysis.cleanContent,
+        suggestedTitle: analysis.suggestedTitle,
+        originalMessage: message,
+      },
+    };
+  }
 
   // Se parece um evento → pergunta o que fazer
   if (analysis.looksLikeEvent) {
