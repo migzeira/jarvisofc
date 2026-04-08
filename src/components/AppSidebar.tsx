@@ -1,10 +1,11 @@
-import { Home, Wallet, CalendarDays, StickyNote, MessageSquare, Link2, Settings, User, LogOut, Menu, Shield, Bell } from "lucide-react";
+import { Home, Wallet, CalendarDays, StickyNote, MessageSquare, Link2, Settings, User, LogOut, Shield, Bell } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import logoEscrita from "@/assets/logo_escrita.png";
 import logoIcon from "@/assets/logo_icon.png";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   Sidebar,
   SidebarContent,
@@ -30,15 +31,26 @@ const menuItems = [
 ];
 
 export function AppSidebar() {
-  const { state } = useSidebar();
+  const { state, setOpenMobile } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
   const { signOut, isAdmin } = useAuth();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
 
   const handleLogout = async () => {
+    if (isMobile) setOpenMobile(false);
     await signOut();
     navigate("/");
+  };
+
+  const handleNavClick = () => {
+    if (isMobile) setOpenMobile(false);
+  };
+
+  const handleAdminClick = () => {
+    if (isMobile) setOpenMobile(false);
+    navigate("/admin");
   };
 
   return (
@@ -58,6 +70,7 @@ export function AppSidebar() {
                       end={item.url === "/dashboard"}
                       className="hover:bg-accent/50 transition-colors"
                       activeClassName="bg-accent text-primary font-medium"
+                      onClick={handleNavClick}
                     >
                       <item.icon className="h-4 w-4 mr-2 flex-shrink-0" />
                       {!collapsed && <span>{item.title}</span>}
@@ -71,7 +84,7 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="p-4 border-t border-border space-y-1">
         {isAdmin && (
-          <Button variant="ghost" className="w-full justify-start text-purple-400 hover:text-purple-300 hover:bg-purple-500/10" onClick={() => navigate("/admin")}>
+          <Button variant="ghost" className="w-full justify-start text-purple-400 hover:text-purple-300 hover:bg-purple-500/10" onClick={handleAdminClick}>
             <Shield className="h-4 w-4 mr-2 flex-shrink-0" />
             {!collapsed && <span>Painel Admin</span>}
           </Button>
