@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -346,10 +347,56 @@ export default function DashboardHome() {
         </Card>
       )}
 
+      {/* ── Mobile header portal: "Como usar a Maya" button ── */}
+      {typeof document !== "undefined" && document.getElementById("dashboard-header-actions") &&
+        createPortal(
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setOnboardingOpen(true)}
+            className="sm:hidden gap-1.5 border-violet-500/40 text-violet-400 hover:bg-violet-500/10 hover:text-violet-300 text-xs h-8"
+          >
+            <BookOpen className="h-3.5 w-3.5" />
+            Como usar a Maya
+          </Button>,
+          document.getElementById("dashboard-header-actions")!
+        )
+      }
+
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <h1 className="text-2xl font-bold">Olá, {profile?.display_name || "usuário"}! 👋</h1>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold">Olá, {profile?.display_name || "usuário"}!</h1>
+          <div className="flex items-center gap-3 mt-1">
+            {/* Phone number */}
+            {profile?.phone_number ? (
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                <Smartphone className="h-3 w-3 text-muted-foreground shrink-0" />
+                <span className="text-xs text-muted-foreground font-mono">
+                  {profile.phone_number.replace(/(\d{2})(\d{2})(\d{5})(\d{4})/, "+$1 ($2) $3-$4")}
+                </span>
+              </div>
+            ) : (
+              <Link to="/dashboard/perfil" className="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+                <Smartphone className="h-3 w-3 shrink-0" />
+                <span className="text-xs">Vincular WhatsApp</span>
+              </Link>
+            )}
+
+            <span className="text-muted-foreground/40 text-xs">•</span>
+
+            {/* Agent status */}
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${agentConfig?.is_active ? "bg-green-500" : "bg-muted-foreground"}`} />
+              <span className="text-xs text-muted-foreground">Agente {agentConfig?.is_active ? "ativo" : "inativo"}</span>
+              <Switch checked={agentConfig?.is_active ?? true} onCheckedChange={toggleAgent} className="scale-75 origin-left" />
+            </div>
+          </div>
+        </div>
+
+        {/* Desktop: Como usar a Maya button */}
+        <div className="hidden sm:flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -359,31 +406,6 @@ export default function DashboardHome() {
             <BookOpen className="h-4 w-4" />
             Como usar a Maya
           </Button>
-
-          {/* WhatsApp number status */}
-          {profile?.phone_number ? (
-            <Card className="bg-card border-border inline-flex items-center gap-2 px-3 py-2.5">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />
-              <Smartphone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="text-xs text-muted-foreground font-mono">
-                {profile.phone_number.replace(/(\d{2})(\d{2})(\d{5})(\d{4})/, "+$1 ($2) $3-$4")}
-              </span>
-            </Card>
-          ) : (
-            <Link to="/dashboard/perfil">
-              <Card className="bg-card border-amber-500/30 inline-flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-accent transition-colors">
-                <Smartphone className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                <span className="text-xs text-amber-400">Vincular WhatsApp</span>
-              </Card>
-            </Link>
-          )}
-
-          {/* Agent active/paused toggle */}
-          <Card className="bg-card border-border inline-flex items-center gap-3 px-4 py-2.5">
-            <div className={`w-2 h-2 rounded-full ${agentConfig?.is_active ? "bg-green-500 animate-pulse" : "bg-muted-foreground"}`} />
-            <span className="text-sm">Agente {agentConfig?.is_active ? "ativo" : "inativo"}</span>
-            <Switch checked={agentConfig?.is_active ?? true} onCheckedChange={toggleAgent} />
-          </Card>
         </div>
       </div>
 
