@@ -79,6 +79,12 @@ export default function Financas() {
     description: "", amount: "", type: "expense", category: "outros",
     frequency: "monthly", next_date: format(new Date(), "yyyy-MM-dd"),
   });
+  const [budgets, setBudgets] = useState<any[]>([]);
+  const [budgetDialog, setBudgetDialog] = useState(false);
+  const [editingBudget, setEditingBudget] = useState<any>(null);
+  const [budgetForm, setBudgetForm] = useState({
+    category: "alimentacao", amount_limit: "", alert_at_percent: "80",
+  });
   const [filterType, setFilterType] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
   const [form, setForm] = useState({
@@ -89,14 +95,16 @@ export default function Financas() {
   useEffect(() => { if (user) loadData(); }, [user]);
 
   const loadData = async () => {
-    const [txRes, catRes, recRes] = await Promise.all([
+    const [txRes, catRes, recRes, budRes] = await Promise.all([
       supabase.from("transactions").select("*").eq("user_id", user!.id).order("transaction_date", { ascending: false }).limit(500),
       supabase.from("categories").select("*").eq("user_id", user!.id).order("name"),
       (supabase.from("recurring_transactions" as any).select("*").eq("user_id", user!.id).order("next_date") as any),
+      (supabase.from("budgets" as any).select("*").eq("user_id", user!.id).order("category") as any),
     ]);
     setTransactions(txRes.data ?? []);
     setCategories(catRes.data ?? []);
     setRecurring(recRes.data ?? []);
+    setBudgets(budRes.data ?? []);
     setLoading(false);
   };
 
@@ -130,6 +138,61 @@ export default function Financas() {
     toast.success("Removida!");
     loadData();
   };
+
+  // ── Budget CRUD ──────────────────────────────────────────────────
+  const handleSaveBudget = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const limit = parseFloat(budgetForm.amount_limit);
+    if (!limit || limit <= 0) { toast.error("Valor inválido"); return; }
+    const alertPct = Math.min(Math.max(parseInt(budgetForm.alert_at_percent) || 80, 50), 100);
+
+    if (editingBudget) {
+      const { error } = await (supabase.from("budgets" as any).update({
+        amount_limit: limit, alert_at_percent: alertPct,
+      } as any).eq("id", editingBudget.id) as any);
+      if (error) toast.error("Erro ao atualizar");
+      else { toast.success("Orçamento atualizado!"); setBudgetDialog(false); setEditingBudget(null); loadData(); }
+    } else {
+      const { error } = await (supabase.from("budgets" as any).insert({
+        user_id: user!.id,
+        category: budgetForm.category,
+        amount_limit: limit,
+        alert_at_percent: alertPct,
+        period: "monthly",
+      } as any) as any);
+      if (error) {
+        if (error.code === "23505") toast.error("Já existe orçamento para essa categoria");
+        else toast.error("Erro ao criar: " + error.message);
+      } else {
+        toast.success("Orçamento criado!");
+        setBudgetDialog(false);
+        loadData();
+      }
+    }
+    setBudgetForm({ category: "alimentacao", amount_limit: "", alert_at_percent: "80" });
+  };
+
+  const deleteBudget = async (id: string) => {
+    await (supabase.from("budgets" as any).delete().eq("id", id) as any);
+    toast.success("Orçamento removido!");
+    loadData();
+  };
+
+  const openEditBudget = (budget: any) => {
+    setEditingBudget(budget);
+    setBudgetForm({
+      category: budget.category,
+      amount_limit: String(budget.amount_limit),
+      alert_at_percent: String(budget.alert_at_percent),
+    });
+    setBudgetDialog(true);
+  };
+
+  // Gastos do mes atual por categoria (para barras de orcamento)
+  const currentMonthStart = format(startOfMonth(new Date()), "yyyy-MM-dd");
+  const monthlyExpensesByCategory: Record<string, number> = {};
+  transactions.filter(t => t.type === "expense" && t.transaction_date >= currentMonthStart)
+    .forEach(t => { monthlyExpensesByCategory[t.category] = (monthlyExpensesByCategory[t.category] ?? 0) + Number(t.amount); });
 
   const handleDeleteTransaction = async (id: string) => {
     const { error } = await supabase.from("transactions").delete().eq("id", id);
@@ -345,6 +408,14 @@ export default function Financas() {
             {recurring.filter(r => r.active).length > 0 && (
               <span className="ml-1.5 bg-primary text-primary-foreground text-[10px] font-bold rounded-full px-1.5 py-0.5">
                 {recurring.filter(r => r.active).length}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="orcamentos">
+            <Target className="h-3.5 w-3.5 mr-1" />Orçamentos
+            {budgets.length > 0 && (
+              <span className="ml-1.5 bg-primary text-primary-foreground text-[10px] font-bold rounded-full px-1.5 py-0.5">
+                {budgets.length}
               </span>
             )}
           </TabsTrigger>
@@ -688,6 +759,136 @@ export default function Financas() {
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ORÇAMENTOS */}
+        <TabsContent value="orcamentos" className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold">Metas por categoria</h3>
+              <p className="text-sm text-muted-foreground">Defina limites mensais e acompanhe seus gastos</p>
+            </div>
+            <Dialog open={budgetDialog} onOpenChange={(v) => { setBudgetDialog(v); if (!v) setEditingBudget(null); }}>
+              <DialogTrigger asChild>
+                <Button size="sm" onClick={() => { setEditingBudget(null); setBudgetForm({ category: "alimentacao", amount_limit: "", alert_at_percent: "80" }); }}>
+                  <Plus className="h-4 w-4 mr-1" /> Nova meta
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>{editingBudget ? "Editar" : "Nova"} meta de gastos</DialogTitle></DialogHeader>
+                <form onSubmit={handleSaveBudget} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Categoria</Label>
+                    <Select value={budgetForm.category} onValueChange={v => setBudgetForm(f => ({ ...f, category: v }))} disabled={!!editingBudget}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {["alimentacao", "transporte", "moradia", "saude", "lazer", "educacao", "trabalho", "outros"].map(c => (
+                          <SelectItem key={c} value={c} disabled={!editingBudget && budgets.some(b => b.category === c)}>
+                            {c.charAt(0).toUpperCase() + c.slice(1)} {budgets.some(b => b.category === c) && !editingBudget ? "(já definido)" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Limite mensal (R$)</Label>
+                    <Input type="number" step="0.01" min="1" value={budgetForm.amount_limit}
+                      onChange={e => setBudgetForm(f => ({ ...f, amount_limit: e.target.value }))}
+                      placeholder="Ex: 2000" required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Alertar quando atingir (%)</Label>
+                    <Input type="number" min="50" max="100" value={budgetForm.alert_at_percent}
+                      onChange={e => setBudgetForm(f => ({ ...f, alert_at_percent: e.target.value }))} />
+                    <p className="text-xs text-muted-foreground">A Maya avisa no WhatsApp quando atingir esse percentual</p>
+                  </div>
+                  <Button type="submit" className="w-full">{editingBudget ? "Atualizar" : "Criar"} meta</Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          {budgets.length === 0 ? (
+            <Card className="bg-card border-border">
+              <CardContent className="py-12 text-center">
+                <Target className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+                <p className="text-muted-foreground">Nenhuma meta definida.</p>
+                <p className="text-sm text-muted-foreground/60 mt-1">Crie metas para controlar seus gastos por categoria!</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid sm:grid-cols-2 gap-4">
+              {budgets.map((b) => {
+                const catEmojis: Record<string, string> = {
+                  alimentacao: "🍔", transporte: "🚗", moradia: "🏠", saude: "💊",
+                  lazer: "🎮", educacao: "📚", trabalho: "💼", outros: "📦",
+                };
+                const spent = monthlyExpensesByCategory[b.category] ?? 0;
+                const limit = Number(b.amount_limit);
+                const pct = limit > 0 ? (spent / limit) * 100 : 0;
+                const remaining = limit - spent;
+                const emoji = catEmojis[b.category] ?? "📌";
+
+                let barColor = "bg-green-500";
+                let statusText = "Dentro do orçamento";
+                let statusClass = "text-green-400";
+                if (pct >= 100) {
+                  barColor = "bg-red-500";
+                  statusText = `Estourou em R$ ${Math.abs(remaining).toFixed(2)}`;
+                  statusClass = "text-red-400";
+                } else if (pct >= Number(b.alert_at_percent)) {
+                  barColor = "bg-red-400";
+                  statusText = `Atenção! ${pct.toFixed(0)}% usado`;
+                  statusClass = "text-red-400";
+                } else if (pct >= 60) {
+                  barColor = "bg-yellow-500";
+                  statusText = `Resta R$ ${remaining.toFixed(2)}`;
+                  statusClass = "text-yellow-400";
+                } else {
+                  statusText = `Resta R$ ${remaining.toFixed(2)}`;
+                }
+
+                return (
+                  <Card key={b.id} className="bg-card border-border">
+                    <CardContent className="pt-5">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">{emoji}</span>
+                          <span className="font-semibold capitalize">{b.category}</span>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEditBudget(b)}>
+                            <DollarSign className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={() => deleteBudget(b.id)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span>R$ {spent.toFixed(2)}</span>
+                          <span className="text-muted-foreground">de R$ {limit.toFixed(2)}</span>
+                        </div>
+                        <div className="w-full bg-muted rounded-full h-3 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${barColor} ${pct >= 100 ? "animate-pulse" : ""}`}
+                            style={{ width: `${Math.min(pct, 100)}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className={`text-xs font-medium ${statusClass}`}>{statusText}</span>
+                          <span className="text-xs text-muted-foreground">{pct.toFixed(0)}%</span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">Alerta no WhatsApp em {b.alert_at_percent}%</p>
+                      </div>
+                    </CardContent>
+                  </Card>
                 );
               })}
             </div>

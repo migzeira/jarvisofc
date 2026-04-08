@@ -113,6 +113,8 @@ function getModuleDisabledMsg(
   const INTENT_TO_MODULE: Partial<Record<Intent, keyof ModuleMap>> = {
     finance_record:  "finance",
     finance_report:  "finance",
+    budget_set:      "finance",
+    budget_query:    "finance",
     agenda_create:   "agenda",
     agenda_query:    "agenda",
     agenda_lookup:   "agenda",
@@ -254,6 +256,8 @@ type Intent =
   | "greeting"
   | "finance_record"
   | "finance_report"
+  | "budget_set"
+  | "budget_query"
   | "agenda_create"
   | "agenda_query"
   | "agenda_lookup"
@@ -279,6 +283,18 @@ function classifyIntent(msg: string): Intent {
     /^(oi|ola|olá|hello|hi|hey|bom dia|boa tarde|boa noite|hola|buenos dias|buenas tardes|buenas noches|good morning|good afternoon|good evening|good night|e ai|e aí|salve|fala|opa|tudo bem|tudo bom|como vai|como estas|como esta)[\s!,?.]*$/.test(m)
   )
     return "greeting";
+
+  // Definir orçamento/meta
+  if (
+    /maximo.{0,20}(gastar|gasto)|orcamento.{0,15}(de |pra |para )|meta.{0,15}(de |pra |para )?(gasto|gastar)|limite.{0,15}(de |pra |para )?(gasto|gastar)|definir (orcamento|meta|limite)|criar (orcamento|meta|limite)|quero gastar no maximo/.test(m)
+  )
+    return "budget_set";
+
+  // Consultar orçamento/meta
+  if (
+    /como.{0,10}(estou|esta|tá|ta).{0,10}orcamento|meu orcamento|minha meta|status.{0,10}orcamento|orcamento de|meta de (gasto|alimenta|transport|morad|saude|lazer|educa|trabalh)/.test(m)
+  )
+    return "budget_query";
 
   // Relatório financeiro (antes de finance_record para evitar falso positivo)
   if (
@@ -415,6 +431,181 @@ function applyTemplate(template: string, vars: Record<string, string>): string {
   return result;
 }
 
+// ─────────────────────────────────────────────
+// BUDGET HANDLERS
+// ─────────────────────────────────────────────
+
+async function handleBudgetSet(userId: string, message: string): Promise<string> {
+  const m = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // Extrai valor
+  const valueMatch = m.match(/(\d+[\.,]?\d*)\s*(reais|real|r\$|conto|pila)?/);
+  if (!valueMatch) return "Não entendi o valor. Exemplo: *quero gastar no máximo 2000 em alimentação*";
+  const amount = parseFloat(valueMatch[1].replace(",", "."));
+  if (amount <= 0) return "O valor precisa ser positivo.";
+
+  // Extrai categoria
+  const catSynonyms: Record<string, string[]> = {
+    alimentacao: ["alimentacao", "alimentação", "comida", "restaurante", "mercado", "alimento"],
+    transporte: ["transporte", "gasolina", "uber", "onibus", "combustivel"],
+    moradia: ["moradia", "aluguel", "casa", "condominio", "luz", "agua"],
+    saude: ["saude", "saúde", "remedio", "farmacia", "medico", "hospital"],
+    lazer: ["lazer", "diversao", "cinema", "bar", "viagem", "entretenimento"],
+    educacao: ["educacao", "educação", "curso", "faculdade", "livro", "escola"],
+    trabalho: ["trabalho", "escritorio", "material", "ferramenta"],
+    outros: ["outros", "geral"],
+  };
+  let category = "outros";
+  for (const [cat, synonyms] of Object.entries(catSynonyms)) {
+    if (synonyms.some(s => m.includes(s))) { category = cat; break; }
+  }
+
+  // Upsert no banco
+  const { error } = await supabase
+    .from("budgets")
+    .upsert({
+      user_id: userId,
+      category,
+      amount_limit: amount,
+      period: "monthly",
+      alert_at_percent: 80,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id,category,period" });
+
+  if (error) {
+    console.error("Budget set error:", error);
+    return "⚠️ Erro ao salvar orçamento. Tente novamente.";
+  }
+
+  const catEmojis: Record<string, string> = {
+    alimentacao: "🍔", transporte: "🚗", moradia: "🏠", saude: "💊",
+    lazer: "🎮", educacao: "📚", trabalho: "💼", outros: "📦",
+  };
+  const emoji = catEmojis[category] ?? "📌";
+  const catName = category.charAt(0).toUpperCase() + category.slice(1);
+
+  return `✅ *Meta definida!*\n\n${emoji} *${catName}*: máximo *R$ ${amount.toFixed(2).replace(".", ",")}* por mês\n\nVou te avisar quando atingir 80% do limite.`;
+}
+
+async function handleBudgetQuery(userId: string, message: string): Promise<string> {
+  const { data: budgets } = await supabase
+    .from("budgets")
+    .select("*")
+    .eq("user_id", userId)
+    .order("category");
+
+  if (!budgets?.length) {
+    return "📊 Você ainda não definiu nenhuma meta de gastos.\n\nExemplo: *quero gastar no máximo 2000 em alimentação*";
+  }
+
+  const now = new Date();
+  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+
+  const catEmojis: Record<string, string> = {
+    alimentacao: "🍔", transporte: "🚗", moradia: "🏠", saude: "💊",
+    lazer: "🎮", educacao: "📚", trabalho: "💼", outros: "📦",
+  };
+
+  let report = "📊 *Seus orçamentos — este mês*\n";
+
+  for (const b of budgets) {
+    const { data: monthTx } = await supabase
+      .from("transactions")
+      .select("amount")
+      .eq("user_id", userId)
+      .eq("type", "expense")
+      .eq("category", b.category)
+      .gte("transaction_date", monthStart);
+
+    const spent = (monthTx ?? []).reduce((s: number, t: any) => s + Number(t.amount), 0);
+    const limit = Number(b.amount_limit);
+    const pct = limit > 0 ? (spent / limit) * 100 : 0;
+    const remaining = limit - spent;
+    const emoji = catEmojis[b.category] ?? "📌";
+    const catName = b.category.charAt(0).toUpperCase() + b.category.slice(1);
+
+    const bar = pct >= 100 ? "🔴" : pct >= 80 ? "🟡" : "🟢";
+    report += `\n${emoji} *${catName}*: R$ ${spent.toFixed(2).replace(".", ",")} / R$ ${limit.toFixed(2).replace(".", ",")} ${bar}`;
+    if (remaining > 0) {
+      report += `\n   Resta: R$ ${remaining.toFixed(2).replace(".", ",")} (${pct.toFixed(0)}%)`;
+    } else {
+      report += `\n   Estourou: +R$ ${Math.abs(remaining).toFixed(2).replace(".", ",")}`;
+    }
+  }
+
+  return report;
+}
+
+// ─────────────────────────────────────────────
+// BUDGET ALERTS — Verifica orçamentos após registrar gasto
+// ─────────────────────────────────────────────
+async function checkBudgetAlerts(
+  userId: string,
+  phone: string,
+  newTransactions: Array<{ amount: number; type: string; category: string }>
+): Promise<void> {
+  // Só verifica gastos (não receitas)
+  const expenseCategories = [...new Set(newTransactions.filter(t => t.type === "expense").map(t => t.category))];
+  if (expenseCategories.length === 0) return;
+
+  // Busca budgets do usuário para as categorias afetadas
+  const { data: budgets } = await supabase
+    .from("budgets")
+    .select("*")
+    .eq("user_id", userId)
+    .in("category", expenseCategories);
+
+  if (!budgets?.length) return;
+
+  const now = new Date();
+  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const todayStr = now.toISOString().split("T")[0];
+
+  for (const budget of budgets) {
+    // Não enviar alerta repetido no mesmo dia
+    if (budget.last_alert_date === todayStr) continue;
+
+    // Total gasto no mês nessa categoria
+    const { data: monthTx } = await supabase
+      .from("transactions")
+      .select("amount")
+      .eq("user_id", userId)
+      .eq("type", "expense")
+      .eq("category", budget.category)
+      .gte("transaction_date", monthStart);
+
+    const totalSpent = (monthTx ?? []).reduce((s: number, t: any) => s + Number(t.amount), 0);
+    const limit = Number(budget.amount_limit);
+    const pct = limit > 0 ? (totalSpent / limit) * 100 : 0;
+    const alertThreshold = Number(budget.alert_at_percent) || 80;
+
+    const catEmojis: Record<string, string> = {
+      alimentacao: "🍔", transporte: "🚗", moradia: "🏠", saude: "💊",
+      lazer: "🎮", educacao: "📚", trabalho: "💼", outros: "📦",
+    };
+    const emoji = catEmojis[budget.category] ?? "📌";
+    const catName = budget.category.charAt(0).toUpperCase() + budget.category.slice(1);
+
+    let alertMsg = "";
+    if (pct >= 100) {
+      const excess = totalSpent - limit;
+      alertMsg = `🚨 *Orçamento estourado!*\n\n${emoji} *${catName}*: R$ ${totalSpent.toFixed(2).replace(".", ",")} de R$ ${limit.toFixed(2).replace(".", ",")}\n💸 Excedeu *R$ ${excess.toFixed(2).replace(".", ",")}*\n\nConsidere ajustar seus gastos ou a meta no app.`;
+    } else if (pct >= alertThreshold) {
+      const remaining = limit - totalSpent;
+      alertMsg = `⚠️ *Atenção com o orçamento!*\n\n${emoji} *${catName}*: R$ ${totalSpent.toFixed(2).replace(".", ",")} de R$ ${limit.toFixed(2).replace(".", ",")} (*${pct.toFixed(0)}%*)\n💰 Resta *R$ ${remaining.toFixed(2).replace(".", ",")}* este mês.`;
+    }
+
+    if (alertMsg) {
+      await sendText(phone, alertMsg);
+      // Marca que já alertou hoje para não repetir
+      await supabase
+        .from("budgets")
+        .update({ last_alert_date: todayStr })
+        .eq("id", budget.id);
+    }
+  }
+}
+
 async function handleFinanceRecord(
   userId: string,
   phone: string,
@@ -450,6 +641,11 @@ async function handleFinanceRecord(
       category: t.category,
     }).catch(() => {}); // ignora erros de sync
   }
+
+  // ── Verifica orçamentos e envia alertas proativos (fire-and-forget) ──
+  checkBudgetAlerts(userId, phone, transactions).catch(err =>
+    console.error("[budget-alert] Error:", err)
+  );
 
   if (transactions.length === 1) {
     const t = transactions[0];
@@ -650,6 +846,31 @@ async function handleFinanceReport(
   if (catLines) {
     report += `\n📂 *Por categoria:*\n${catLines}`;
   }
+
+  // Adiciona status de orçamentos (se houver)
+  try {
+    const { data: userBudgets } = await supabase
+      .from("budgets")
+      .select("category, amount_limit")
+      .eq("user_id", userId);
+
+    if (userBudgets?.length) {
+      const now = new Date();
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      let budgetLines = "";
+      for (const b of userBudgets) {
+        const spent = byCategory[b.category] ?? 0;
+        if (spent <= 0) continue;
+        const limit = Number(b.amount_limit);
+        const pct = limit > 0 ? (spent / limit) * 100 : 0;
+        const bar = pct >= 100 ? "🔴" : pct >= 80 ? "🟡" : "🟢";
+        budgetLines += `\n${bar} ${b.category}: ${pct.toFixed(0)}% do limite`;
+      }
+      if (budgetLines) {
+        report += `\n\n🎯 *Orçamentos:*${budgetLines}`;
+      }
+    }
+  } catch { /* silently skip budget info */ }
 
   report += `\n\n📱 Ver detalhes completos no app Minha Maya`;
 
@@ -3003,6 +3224,8 @@ function getHumanizedError(intent: string): string {
     case "agenda_delete":   return "⚠️ Não consegui remover o compromisso. Tente de novo em instantes.";
     case "notes_save":      return "⚠️ Não consegui salvar sua anotação. Pode tentar de novo?";
     case "finance_record":  return "⚠️ Não consegui registrar essa transação. Tente de novo. Ex: _Gastei 50 reais de almoço_";
+    case "budget_set":      return "⚠️ Não consegui definir o orçamento. Ex: _quero gastar no máximo 2000 em alimentação_";
+    case "budget_query":    return "⚠️ Não consegui consultar seus orçamentos. Tente de novo.";
     case "finance_report":  return "⚠️ Não consegui gerar o relatório financeiro agora. Tente de novo em instantes.";
     default:                return "⚠️ Ops, algo deu errado por aqui. Pode tentar de novo? 🙏";
   }
@@ -3271,6 +3494,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     const INTENT_REQUIRES: Partial<Record<Intent, keyof ModuleMap>> = {
       finance_record:  "finance",
       finance_report:  "finance",
+      budget_set:      "finance",
+      budget_query:    "finance",
       agenda_create:   "agenda",
       agenda_query:    "agenda",
       agenda_lookup:   "agenda",
@@ -3315,8 +3540,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = getModuleDisabledMsg(intent, language, modules);
       pendingAction = undefined;   // evita usuário preso em fluxo de módulo desativado
       pendingContext = undefined;
+    } else if (intent === "budget_set") {
+      responseText = await handleBudgetSet(profile.id, text);
+    } else if (intent === "budget_query") {
+      responseText = await handleBudgetQuery(profile.id, text);
     } else if (intent === "finance_record") {
-      responseText = await handleFinanceRecord(profile.id, replyTo, text, config);
+      responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config);
     } else if (intent === "finance_report") {
       const reportResult = await handleFinanceReport(profile.id, text);
       responseText = reportResult.text;

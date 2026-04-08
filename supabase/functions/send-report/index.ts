@@ -116,6 +116,27 @@ async function sendReports(startDate: string, endDate: string, periodLabel: stri
       }
       msg += `💰 Saldo: *${balanceSign}R$ ${balance.toFixed(2).replace(".", ",")}*\n`;
       if (topCats) msg += `\n📂 *Por categoria:*\n${topCats}\n`;
+
+      // Adiciona status de orcamentos
+      try {
+        const { data: userBudgets } = await supabase
+          .from("budgets")
+          .select("category, amount_limit")
+          .eq("user_id", user.id);
+        if (userBudgets?.length) {
+          let budgetLines = "";
+          for (const b of userBudgets) {
+            const spent = byCategory[b.category] ?? 0;
+            if (spent <= 0) continue;
+            const limit = Number(b.amount_limit);
+            const pct = limit > 0 ? (spent / limit) * 100 : 0;
+            const bar = pct >= 100 ? "🔴" : pct >= 80 ? "🟡" : "🟢";
+            budgetLines += `\n${bar} ${b.category}: ${pct.toFixed(0)}% do limite`;
+          }
+          if (budgetLines) msg += `\n🎯 *Orçamentos:*${budgetLines}\n`;
+        }
+      } catch { /* skip budget info */ }
+
       msg += `\n📱 Ver detalhes no app MayaChat`;
 
       const phone = user.phone_number.replace(/\D/g, "");
