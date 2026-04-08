@@ -14,13 +14,11 @@ const supabase = createClient(
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const CALLBACK_URL = `${SUPABASE_URL}/functions/v1/oauth-callback`;
 
-const supabaseAdmin = createClient(
-  SUPABASE_URL,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-);
+// URL fixa de redirect — no futuro, para app nativo: minhamaya://integracoes
+const DASHBOARD_URL = "https://minhamaya.com/dashboard/integracoes";
 
 async function getSetting(key: string): Promise<string> {
-  const { data } = await supabaseAdmin
+  const { data } = await supabase
     .from("app_settings")
     .select("value")
     .eq("key", key)
@@ -50,8 +48,6 @@ serve(async (req) => {
   }
 
   const { provider, userId } = state;
-
-  const dashboardUrl = await getSetting("dashboard_url") || "https://mayachat.com.br/dashboard/integracoes";
 
   try {
     if (provider === "google_calendar" || provider === "google_sheets") {
@@ -137,9 +133,9 @@ serve(async (req) => {
       }, { onConflict: "user_id,provider" });
     }
 
-    return Response.redirect(`${dashboardUrl}?success=${provider}`);
+    return Response.redirect(`${DASHBOARD_URL}?success=${provider}`);
   } catch (err) {
     console.error("oauth-callback error:", err);
-    return Response.redirect(`${dashboardUrl}?error=token_exchange_failed`);
+    return Response.redirect(`${DASHBOARD_URL}?error=token_exchange_failed`);
   }
 });

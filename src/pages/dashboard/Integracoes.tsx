@@ -59,7 +59,6 @@ export default function Integracoes() {
   const [googleClientSecret, setGoogleClientSecret] = useState("");
   const [notionClientId, setNotionClientId] = useState("");
   const [notionClientSecret, setNotionClientSecret] = useState("");
-  const [dashboardUrl, setDashboardUrl] = useState("");
 
   useEffect(() => { if (session?.access_token) loadCredentials(); }, [session]);
 
@@ -87,7 +86,6 @@ export default function Integracoes() {
       if (googleClientSecret) body.google_client_secret = googleClientSecret;
       if (notionClientId) body.notion_client_id = notionClientId;
       if (notionClientSecret) body.notion_client_secret = notionClientSecret;
-      if (dashboardUrl) body.dashboard_url = dashboardUrl;
       if (Object.keys(body).length === 0) { toast.error("Preencha pelo menos um campo"); setCredSaving(false); return; }
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const res = await fetch(`${supabaseUrl}/functions/v1/admin-settings`, {
@@ -97,7 +95,7 @@ export default function Integracoes() {
       });
       if (!res.ok) throw new Error("Erro");
       toast.success("Credenciais salvas!");
-      setGoogleClientId(""); setGoogleClientSecret(""); setNotionClientId(""); setNotionClientSecret(""); setDashboardUrl("");
+      setGoogleClientId(""); setGoogleClientSecret(""); setNotionClientId(""); setNotionClientSecret("");
       loadCredentials();
     } catch { toast.error("Erro ao salvar credenciais"); }
     setCredSaving(false);
@@ -402,12 +400,18 @@ export default function Integracoes() {
                 </div>
               </AccordionTrigger>
               <AccordionContent className="space-y-4 pb-5">
-                <div className="text-xs text-muted-foreground space-y-1 bg-muted/20 rounded-md p-3">
-                  <p className="font-medium text-foreground">Como obter:</p>
-                  <p>1. Acesse <span className="font-mono">console.cloud.google.com</span> → Credenciais → OAuth 2.0</p>
-                  <p>2. Tipo: <strong>Aplicativo Web</strong></p>
-                  <p>3. URI de redirecionamento autorizado:</p>
+                <div className="text-xs text-muted-foreground space-y-1.5 bg-muted/20 rounded-md p-3">
+                  <p className="font-medium text-foreground">Como obter suas credenciais Google:</p>
+                  <p>1. Acesse <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" className="text-primary underline font-mono">console.cloud.google.com/apis/credentials</a></p>
+                  <p>2. Crie um projeto (ou selecione um existente)</p>
+                  <p>3. Clique em <strong>+ Criar Credenciais</strong> → <strong>ID do cliente OAuth</strong></p>
+                  <p>4. Tipo de aplicativo: <strong>Aplicativo Web</strong></p>
+                  <p>5. Em <strong>"URIs de redirecionamento autorizados"</strong>, adicione:</p>
                   <code className="block bg-muted/40 rounded px-2 py-1 text-[11px] mt-1 break-all select-all">{callbackUrl}</code>
+                  <p>6. Copie o <strong>Client ID</strong> e <strong>Client Secret</strong> gerados e cole abaixo</p>
+                  <p className="text-[11px] text-muted-foreground/70 mt-2 italic">
+                    Obs: Ative as APIs do Google Calendar e Google Sheets no seu projeto Google Cloud.
+                  </p>
                 </div>
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -479,33 +483,6 @@ export default function Integracoes() {
               </AccordionContent>
             </AccordionItem>
 
-            {/* Geral */}
-            <AccordionItem value="general" className="border border-border rounded-xl bg-card px-4">
-              <AccordionTrigger className="hover:no-underline py-4">
-                <div className="flex items-center gap-3">
-                  <span className="text-xl">⚙️</span>
-                  <span className="font-medium text-sm">Geral</span>
-                  <Badge
-                    variant={isConfigured("dashboard_url") ? "default" : "secondary"}
-                    className={isConfigured("dashboard_url") ? "bg-success/20 text-success border-success/30 text-[10px]" : "text-[10px]"}
-                  >
-                    {isConfigured("dashboard_url") ? "✓ Configurado" : "Não configurado"}
-                  </Badge>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="space-y-4 pb-5">
-                <div className="space-y-2">
-                  <Label className="text-xs">URL do Dashboard</Label>
-                  <p className="text-[11px] text-muted-foreground">Usado para redirecionar após o usuário conectar/desconectar uma integração</p>
-                  <Input
-                    value={dashboardUrl}
-                    onChange={e => setDashboardUrl(e.target.value)}
-                    placeholder={isConfigured("dashboard_url") ? "Já configurado — cole para atualizar" : "https://seusite.com/dashboard/integracoes"}
-                    className="text-xs font-mono"
-                  />
-                </div>
-              </AccordionContent>
-            </AccordionItem>
           </Accordion>
         )}
 

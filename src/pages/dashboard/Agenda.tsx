@@ -363,8 +363,11 @@ function HourGrid({
 // ---------------------------------------------------------------------------
 
 export default function Agenda() {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [googleEvents, setGoogleEvents] = useState<CalendarEvent[]>([]);
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>("month");
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -374,6 +377,15 @@ export default function Agenda() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [form, setForm] = useState<EventFormData>(emptyForm());
   const [saving, setSaving] = useState(false);
+
+  // Todos os eventos (nativos + Google Calendar)
+  const allEvents = useMemo(() => {
+    if (!googleConnected) return events;
+    // Merge: eventos locais + eventos Google (evita duplicatas por google_event_id)
+    const localGoogleIds = new Set(events.filter(e => e.google_event_id).map(e => e.google_event_id));
+    const uniqueGoogleEvents = googleEvents.filter(ge => !localGoogleIds.has(ge.google_event_id));
+    return [...events, ...uniqueGoogleEvents];
+  }, [events, googleEvents, googleConnected]);
 
   // Responsive: use day view on mobile
   useEffect(() => {
@@ -386,7 +398,7 @@ export default function Agenda() {
     return () => mq.removeEventListener("change", handler);
   }, []);
 
-  // Fetch events
+  // Fetch local events
   const loadData = useCallback(async () => {
     if (!user) return;
     setLoading(true);
@@ -403,9 +415,39 @@ export default function Agenda() {
     setLoading(false);
   }, [user]);
 
+  // Fetch Google Calendar events
+  const loadGoogleEvents = useCallback(async () => {
+    if (!user || !session?.access_token) return;
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      // Range: 60 dias atras ate 90 dias a frente
+      const timeMin = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+      const timeMax = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+      const res = await fetch(
+        `${supabaseUrl}/functions/v1/google-calendar-events?timeMin=${timeMin}&timeMax=${timeMax}`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } }
+      );
+      const json = await res.json();
+      setGoogleConnected(!!json.connected);
+      setGoogleEmail(json.email || null);
+      if (json.connected && Array.isArray(json.events)) {
+        setGoogleEvents(json.events as CalendarEvent[]);
+      } else {
+        setGoogleEvents([]);
+      }
+    } catch {
+      // Silenciosamente falha — mostra agenda nativa
+      setGoogleConnected(false);
+      setGoogleEvents([]);
+    }
+  }, [user, session]);
+
   useEffect(() => {
-    if (user) loadData();
-  }, [user, loadData]);
+    if (user) {
+      loadData();
+      loadGoogleEvents();
+    }
+  }, [user, loadData, loadGoogleEvents]);
 
   // ---------------------------------------------------------------------------
   // Navigation
@@ -629,7 +671,7 @@ export default function Agenda() {
         </div>
         <div className="grid grid-cols-7 gap-px bg-border/50 rounded-lg overflow-hidden">
           {monthDays.map((day) => {
-            const dayEvents = getEventsForDay(events, day);
+            const dayEvents = getEventsForDay(allEvents, day);
             const inMonth = isSameMonth(day, currentDate);
             const today = isToday(day);
 
@@ -735,7 +777,7 @@ export default function Agenda() {
 
             {/* Day columns */}
             {weekDays.map((day) => {
-              const dayEvents = getEventsForDay(events, day);
+              const dayEvents = getEventsForDay(allEvents, day);
               const timedEvents = dayEvents.filter((e) => e.event_time);
               const dateStr = format(day, "yyyy-MM-dd");
               const today = isToday(day);
@@ -821,7 +863,7 @@ export default function Agenda() {
   // ---------------------------------------------------------------------------
 
   const renderDayView = () => {
-    const dayEvents = getEventsForDay(events, currentDate);
+    const dayEvents = getEventsForDay(allEvents, currentDate);
     const timedEvents = dayEvents.filter((e) => e.event_time);
     const allDayEvents = dayEvents.filter((e) => !e.event_time);
     const dateStr = format(currentDate, "yyyy-MM-dd");
@@ -1248,6 +1290,14 @@ export default function Agenda() {
                   WhatsApp
                 </Badge>
               )}
+              {(detailEvent.source as string) === "google_calendar" && (
+                <Badge
+                  variant="outline"
+                  className="border-blue-500 text-blue-400"
+                >
+                  Google Calendar
+                </Badge>
+              )}
               {detailEvent.event_type && (
                 <Badge variant="outline">
                   {EVENT_TYPE_LABELS[detailEvent.event_type]}
@@ -1319,48 +1369,56 @@ export default function Agenda() {
             )}
 
             {/* Actions */}
-            <div className="border-t border-border pt-4 space-y-2">
-              {detailEvent.status !== "cancelled" && (
+            {(detailEvent.source as string) === "google_calendar" ? (
+              <div className="border-t border-border pt-4">
+                <p className="text-xs text-muted-foreground text-center">
+                  Evento do Google Calendar — edite diretamente no Google Calendar
+                </p>
+              </div>
+            ) : (
+              <div className="border-t border-border pt-4 space-y-2">
+                {detailEvent.status !== "cancelled" && (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => toggleStatus(detailEvent)}
+                    >
+                      <Check className="h-4 w-4 mr-1" />
+                      {isDone ? "Reabrir" : "Concluir"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => openEditDialog(detailEvent)}
+                    >
+                      <Pencil className="h-4 w-4 mr-1" />
+                      Editar
+                    </Button>
+                  </div>
+                )}
                 <div className="flex gap-2">
+                  {detailEvent.status === "pending" && (
+                    <Button
+                      variant="outline"
+                      className="flex-1 text-yellow-500 hover:text-yellow-400"
+                      onClick={() => cancelEvent(detailEvent)}
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      Cancelar
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
-                    className="flex-1"
-                    onClick={() => toggleStatus(detailEvent)}
+                    className="flex-1 text-destructive hover:text-destructive"
+                    onClick={() => handleDelete(detailEvent.id)}
                   >
-                    <Check className="h-4 w-4 mr-1" />
-                    {isDone ? "Reabrir" : "Concluir"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => openEditDialog(detailEvent)}
-                  >
-                    <Pencil className="h-4 w-4 mr-1" />
-                    Editar
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Excluir
                   </Button>
                 </div>
-              )}
-              <div className="flex gap-2">
-                {detailEvent.status === "pending" && (
-                  <Button
-                    variant="outline"
-                    className="flex-1 text-yellow-500 hover:text-yellow-400"
-                    onClick={() => cancelEvent(detailEvent)}
-                  >
-                    <X className="h-4 w-4 mr-1" />
-                    Cancelar
-                  </Button>
-                )}
-                <Button
-                  variant="outline"
-                  className="flex-1 text-destructive hover:text-destructive"
-                  onClick={() => handleDelete(detailEvent.id)}
-                >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  Excluir
-                </Button>
               </div>
-            </div>
+            )}
           </div>
         </SheetContent>
       </Sheet>
@@ -1375,7 +1433,19 @@ export default function Agenda() {
     <div className="space-y-4">
       {/* Top bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Agenda</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">Agenda</h1>
+          {googleConnected ? (
+            <Badge className="bg-success/20 text-success border-success/30 text-[10px] gap-1">
+              <span>Google Calendar</span>
+              {googleEmail && <span className="opacity-70">({googleEmail})</span>}
+            </Badge>
+          ) : (
+            <Badge variant="secondary" className="text-[10px] gap-1">
+              Agenda nativa
+            </Badge>
+          )}
+        </div>
         <Button onClick={() => openCreateDialog()}>
           <Plus className="mr-2 h-4 w-4" />
           Novo evento
@@ -1430,7 +1500,7 @@ export default function Agenda() {
       {view === "day" && renderDayView()}
 
       {/* Global empty state */}
-      {events.length === 0 && view === "month" && (
+      {allEvents.length === 0 && view === "month" && (
         <Card className="bg-card border-border">
           <CardContent className="py-12 text-center">
             <CalendarDays className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
