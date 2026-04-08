@@ -66,13 +66,15 @@ export async function sendImage(
     number = normalizePhone(to);
   }
 
-  const body: Record<string, unknown> = {
+  const body = {
     number,
-    mediatype: "image",
-    mimetype: "image/png",
-    caption,
-    media,
-    fileName: "relatorio.png",
+    mediaMessage: {
+      mediatype: "image",
+      mimetype: "image/png",
+      caption,
+      media,
+      fileName: "relatorio.png",
+    },
   };
 
   await evolutionPost(`/message/sendMedia/${INSTANCE}`, body);

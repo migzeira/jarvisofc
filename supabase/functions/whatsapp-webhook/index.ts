@@ -3314,17 +3314,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = reportResult.text;
       // Envia grafico antes do texto (se disponivel)
       if (reportResult.chartUrl) {
-        console.log(`[finance_report] Chart URL ready: ${reportResult.chartUrl.slice(0, 80)}...`);
         try {
-          const imgTarget = sendPhone || replyTo;
-          console.log(`[finance_report] Sending chart to: ${imgTarget}`);
-          await sendImage(imgTarget, reportResult.chartUrl, "", true);
-          console.log("[finance_report] Chart image sent successfully");
+          await sendImage(sendPhone || replyTo, reportResult.chartUrl, "", true);
         } catch (chartErr) {
-          console.error("[finance_report] Failed to send chart image:", chartErr);
+          console.error("[finance_report] Failed to send chart:", chartErr);
         }
-      } else {
-        console.log("[finance_report] No chart generated");
       }
     } else if (intent === "agenda_create") {
       const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
