@@ -738,7 +738,6 @@ export default function Index() {
             </Button>
           </div>
         )}
-        </div>
       </header>
 
       {/* ══ HERO ══════════════════════════════════════════════════════════ */}
