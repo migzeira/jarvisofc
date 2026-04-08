@@ -42,6 +42,7 @@ export default function ConfigAgente() {
         module_chat: raw.module_chat !== false,
         daily_briefing_enabled: raw.daily_briefing_enabled !== false,
         briefing_hour: raw.briefing_hour ?? 8,
+        proactive_insights_enabled: raw.proactive_insights_enabled !== false,
       });
     }
     setQuickReplies(qrRes.data ?? []);
@@ -64,6 +65,7 @@ export default function ConfigAgente() {
       module_chat: config.module_chat === true,
       daily_briefing_enabled: config.daily_briefing_enabled === true,
       briefing_hour: config.briefing_hour ?? 8,
+      proactive_insights_enabled: config.proactive_insights_enabled === true,
     }).eq("user_id", user!.id);
     if (error) toast.error("Erro ao salvar");
     else toast.success("Configurações salvas!");
@@ -181,6 +183,15 @@ export default function ConfigAgente() {
                 <span className="text-xs text-muted-foreground">no seu fuso horário</span>
               </div>
             )}
+          </div>
+
+          {/* Insights proativos */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">🔍 Insights proativos</p>
+              <p className="text-xs text-muted-foreground">Toda segunda a Maya analisa seus dados e envia padrões detectados — gastos crescentes, dias com mais cancelamentos, hábitos em risco</p>
+            </div>
+            <Switch checked={!!config.proactive_insights_enabled} onCheckedChange={v => setConfig({...config, proactive_insights_enabled: v})} />
           </div>
         </CardContent>
       </Card>
