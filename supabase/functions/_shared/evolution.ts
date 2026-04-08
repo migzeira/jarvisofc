@@ -73,11 +73,8 @@ export async function sendImage(
     caption,
   };
 
-  if (isUrl) {
-    body.media = media;
-  } else {
-    body.media = `data:image/png;base64,${media}`;
-  }
+  // Evolution API aceita base64 puro ou URL
+  body.media = media;
 
   await evolutionPost(`/message/sendMedia/${INSTANCE}`, body);
 }

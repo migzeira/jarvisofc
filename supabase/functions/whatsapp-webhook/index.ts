@@ -282,7 +282,7 @@ function classifyIntent(msg: string): Intent {
 
   // Relatório financeiro (antes de finance_record para evitar falso positivo)
   if (
-    /quanto (gastei|ganhei|recebi|devo)|total (de |dos |das )?(gastos?|despesas?)|relatorio|resumo (de |dos )?(gastos?|financ)|meus gastos|minhas despesas/.test(
+    /quanto.{0,15}(gastei|ganhei|recebi|devo)|total (de |dos |das )?(gastos?|despesas?)|relat[oó]rio|resumo (de |dos )?(gastos?|financ)|meus gastos|minhas despesas/.test(
       m
     )
   )
