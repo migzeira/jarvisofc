@@ -292,7 +292,7 @@ export function OnboardingModal({ open, onClose }: OnboardingModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md p-0 overflow-hidden gap-0 mx-4 sm:mx-auto w-[calc(100%-2rem)] sm:w-full rounded-xl">
+      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md p-0 overflow-hidden gap-0 rounded-xl">
         {/* Progress bar */}
         <div className="h-1 bg-accent w-full">
           <div

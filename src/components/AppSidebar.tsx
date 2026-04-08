@@ -1,4 +1,4 @@
-import { Home, Wallet, CalendarDays, StickyNote, MessageSquare, Link2, Settings, User, LogOut, Shield, Bell } from "lucide-react";
+import { Home, Wallet, CalendarDays, StickyNote, MessageSquare, Link2, Settings, User, LogOut, Shield, Bell, X } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import logoEscrita from "@/assets/logo_escrita.png";
 import logoIcon from "@/assets/logo_icon.png";
@@ -55,8 +55,13 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r border-border bg-sidebar">
-      <div className="flex items-center gap-2 px-4 h-16 border-b border-border">
+      <div className="flex items-center justify-between px-4 h-16 border-b border-border">
         <img src={collapsed ? logoIcon : logoEscrita} alt="Minha Maya" className={`object-contain ${collapsed ? "h-8 w-8" : "h-7 w-auto"}`} />
+        {isMobile && (
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setOpenMobile(false)}>
+            <X className="h-5 w-5" />
+          </Button>
+        )}
       </div>
       <SidebarContent className="pt-4">
         <SidebarGroup>
