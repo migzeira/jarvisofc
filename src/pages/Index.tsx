@@ -729,7 +729,7 @@ export default function Index() {
         {/* Mobile menu dropdown */}
         {mobileMenuOpen && (
           <div className="sm:hidden absolute top-full left-0 right-0 bg-[#03030a]/95 backdrop-blur-xl border-b border-white/[0.06] px-4 py-4 space-y-2 animate-slide-up-fade">
-            <Button variant="ghost" size="sm" className="w-full justify-center text-gray-300 hover:text-white hover:bg-white/8" asChild>
+            <Button variant="ghost" size="sm" className="w-full justify-center text-violet-300 hover:text-white bg-violet-500/15 hover:bg-violet-500/25 border border-violet-400/20 rounded-lg" asChild>
               <Link to="/login" onClick={() => setMobileMenuOpen(false)}>Login</Link>
             </Button>
             <Button size="sm" asChild
