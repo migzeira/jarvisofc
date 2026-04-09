@@ -2823,6 +2823,37 @@ serve(async (req) => {
 
   const isForwarded = !!(ctxInfo?.isForwarded) || ((ctxInfo?.forwardingScore as number ?? 0) > 0);
 
+  // ─── Detecção de reply em mensagem cross-Maya ────────────────────────────
+  // Quando um usuário Maya recebe msg enviada pela Maya de outro cliente e
+  // responde via botão de reply, o quotedMessage vai conter nossa assinatura.
+  const quotedMsg = ctxInfo?.quotedMessage as Record<string, unknown> | undefined;
+  const quotedText: string =
+    (quotedMsg?.conversation as string) ??
+    ((quotedMsg?.extendedTextMessage as Record<string, unknown>)?.text as string) ??
+    "";
+  const isCrossMayaReply =
+    quotedText.includes("minhamaya.com") ||
+    quotedText.includes("assistente virtual do") ||
+    quotedText.includes("assistente virtual de");
+
+  if (isCrossMayaReply) {
+    // Checa se o remetente é um usuário registrado da Minha Maya
+    const { profile: senderProfile } = await resolveProfileForShadow(replyTo, lid);
+    if (senderProfile) {
+      // É um cliente Maya! Manda a mensagem especial e encerra sem processar como intent normal
+      const firstName = pushName?.split(" ")[0] || "você";
+      await sendText(replyTo,
+        `Que coincidência, *${firstName}*! 😄\n\n` +
+        `Você acabou de receber uma mensagem enviada pelo agente de outro cliente da *Minha Maya*! 🤖✨\n\n` +
+        `Somos todos família por aqui! haha\n\n` +
+        `Posso te ajudar com mais alguma coisa? 😊`
+      );
+      return new Response("OK");
+    }
+    // Não é usuário Maya → ignora silenciosamente (já é o comportamento padrão)
+    return new Response("OK");
+  }
+
   // ─── Áudio (ptt = push-to-talk / audioMessage) ───────────────────────────
   if (audioMsgRaw) {
     const media = await downloadMediaBase64(data);
