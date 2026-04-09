@@ -78,9 +78,9 @@ export async function sendButtons(
       description,
       footer,
       buttons: buttons.slice(0, 3).map(b => ({
-        type: "reply",
-        displayText: b.text,
-        id: b.id,
+        buttonId: b.id,
+        buttonText: { displayText: b.text },
+        type: 1,
       })),
     },
   };
