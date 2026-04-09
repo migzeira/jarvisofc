@@ -700,6 +700,9 @@ async function handleFinanceRecord(
     return "Não consegui identificar os valores. Pode repetir? Ex: *gastei 200 reais de gasolina*";
   }
 
+  // Usa data de Brasília para garantir que "hoje" na query bata com o registro
+  const todayBRT = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+
   const inserts = transactions.map((t) => ({
     user_id: userId,
     description: t.description,
@@ -707,6 +710,7 @@ async function handleFinanceRecord(
     type: t.type,
     category: t.category,
     source: "whatsapp",
+    transaction_date: todayBRT,
   }));
 
   const { error } = await supabase.from("transactions").insert(inserts);
@@ -801,7 +805,8 @@ function detectCategory(m: string): string | null {
 
 async function handleFinanceReport(
   userId: string,
-  message: string
+  message: string,
+  userTz = "America/Sao_Paulo"
 ): Promise<{ text: string; chartUrl: string | null }> {
   const m = message
     .toLowerCase()
@@ -811,24 +816,31 @@ async function handleFinanceReport(
   // Detecta categoria específica na pergunta
   const filterCategory = detectCategory(m);
 
-  // Determina período
+  // Determina período — sempre em BRT para bater com transaction_date salvo
   let startDate: string;
+  let endDate: string | null = null;
   let periodLabel: string;
   const now = new Date();
+  const nowBRT = now.toLocaleDateString("sv-SE", { timeZone: userTz }); // YYYY-MM-DD em BRT
 
   if (/hoje/.test(m)) {
-    startDate = now.toISOString().split("T")[0];
+    startDate = nowBRT;
+    endDate = nowBRT;
     periodLabel = "hoje";
   } else if (/semana/.test(m)) {
-    const start = new Date(now);
-    start.setDate(now.getDate() - now.getDay());
-    startDate = start.toISOString().split("T")[0];
+    // Início da semana atual em BRT
+    const startOfWeek = new Date(now);
+    const dayOfWeek = parseInt(now.toLocaleDateString("en-US", { timeZone: userTz, weekday: "numeric" as any }), 10) || now.getDay();
+    startOfWeek.setDate(now.getDate() - dayOfWeek);
+    startDate = startOfWeek.toLocaleDateString("sv-SE", { timeZone: userTz });
     periodLabel = "esta semana";
   } else if (/mes|mês/.test(m)) {
-    startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const [year, month] = nowBRT.split("-");
+    startDate = `${year}-${month}-01`;
     periodLabel = "este mês";
   } else {
-    startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const [year, month] = nowBRT.split("-");
+    startDate = `${year}-${month}-01`;
     periodLabel = "este mês";
   }
 
@@ -838,6 +850,11 @@ async function handleFinanceReport(
     .eq("user_id", userId)
     .gte("transaction_date", startDate)
     .order("transaction_date", { ascending: false });
+
+  // Para "hoje" usa limite superior exato para evitar trazer datas futuras
+  if (endDate) {
+    query = query.lte("transaction_date", endDate);
+  }
 
   if (filterCategory) {
     query = query.eq("category", filterCategory);
