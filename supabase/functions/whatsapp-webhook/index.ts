@@ -4892,7 +4892,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "shadow_finance_confirm") {
       const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
       const msgLow = text.toLowerCase();
-      if (text === "BUTTON:SHADOW_FIN_YES" || /^(sim|confirmar|registrar|ok)\b/.test(msgLow)) {
+      if (text === "BUTTON:SHADOW_FIN_YES" || /^(1|sim|confirmar|registrar|ok)\b/.test(msgLow)) {
         const txDate = (ctx.date as string) || new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
         await supabase.from("transactions").insert({
           user_id: profile.id,
@@ -4915,7 +4915,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "shadow_event_confirm") {
       const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
       const msgLow = text.toLowerCase();
-      if (text === "BUTTON:SHADOW_EVT_YES" || /^(sim|criar|confirmar|ok)\b/.test(msgLow)) {
+      if (text === "BUTTON:SHADOW_EVT_YES" || /^(1|sim|criar|confirmar|ok)\b/.test(msgLow)) {
         await supabase.from("events").insert({
           user_id: profile.id,
           title: ctx.title || "Evento encaminhado",
@@ -4937,7 +4937,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "shadow_reminder_confirm") {
       const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
       const msgLow = text.toLowerCase();
-      if (text === "BUTTON:SHADOW_REM_YES" || /^(sim|criar|confirmar|ok)\b/.test(msgLow)) {
+      if (text === "BUTTON:SHADOW_REM_YES" || /^(1|sim|criar|confirmar|ok)\b/.test(msgLow)) {
         const remindAt = ctx.remind_at
           ? new Date(ctx.remind_at as string)
           : new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -5009,7 +5009,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
       const isYes =
         text.startsWith("BUTTON:CONTACT_SAVE_YES") ||
-        /^(sim|salvar|salva|confirmar|ok|yes)\b/i.test(text);
+        /^(1|sim|salvar|salva|confirmar|ok|yes)\b/i.test(text);
 
       if (isYes && csName && csPhone) {
         const { error } = await supabase.from("contacts").upsert(

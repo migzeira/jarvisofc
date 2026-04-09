@@ -71,21 +71,36 @@ export async function sendButtons(
     number = normalizePhone(to);
   }
 
-  const body = {
-    number,
-    buttonMessage: {
-      title,
-      description,
-      footer,
-      buttons: buttons.slice(0, 3).map(b => ({
-        buttonId: b.id,
-        buttonText: b.text,
-        type: 1,
-      })),
-    },
-  };
+  // Tenta botões interativos primeiro (funciona só com WhatsApp Business API / Cloud API)
+  try {
+    const body = {
+      number,
+      buttonMessage: {
+        title,
+        description,
+        footer,
+        buttons: buttons.slice(0, 3).map(b => ({
+          buttonId: b.id,
+          buttonText: b.text,
+          type: 1,
+        })),
+      },
+    };
+    await evolutionPost(`/message/sendButtons/${INSTANCE}`, body);
+    return; // sucesso com botões nativos
+  } catch (err) {
+    // Baileys não suporta botões → fallback para texto formatado
+    console.warn("[sendButtons] Buttons not supported, falling back to text:", (err as Error).message?.slice(0, 80));
+  }
 
-  await evolutionPost(`/message/sendButtons/${INSTANCE}`, body);
+  // Fallback: texto formatado com opções numeradas
+  const opts = buttons.slice(0, 3).map((b, i) => `*${i + 1}.* ${b.text}`).join("\n");
+  const fallbackText =
+    `*${title}*\n\n${description}\n\n${opts}\n\n_Responda com o número ou a opção._`;
+  await evolutionPost(`/message/sendText/${INSTANCE}`, {
+    number,
+    textMessage: { text: fallbackText },
+  });
 }
 
 /** Envia imagem via Evolution API (base64 ou URL) */
