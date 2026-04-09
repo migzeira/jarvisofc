@@ -79,7 +79,7 @@ export async function sendButtons(
       footer,
       buttons: buttons.slice(0, 3).map(b => ({
         buttonId: b.id,
-        buttonText: { displayText: b.text },
+        buttonText: b.text,
         type: 1,
       })),
     },
