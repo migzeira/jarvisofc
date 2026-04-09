@@ -31,6 +31,7 @@ const Habitos = lazy(() => import("./pages/dashboard/Habitos"));
 const Integracoes = lazy(() => import("./pages/dashboard/Integracoes"));
 const ConfigAgente = lazy(() => import("./pages/dashboard/ConfigAgente"));
 const MeuPerfil = lazy(() => import("./pages/dashboard/MeuPerfil"));
+const Analytics = lazy(() => import("./pages/dashboard/Analytics"));
 const AdminPanel = lazy(() => import("./pages/admin/AdminPanel"));
 
 // Loading com logo da Maya girando
@@ -76,6 +77,7 @@ const App = () => (
                 <Route path="integracoes" element={<Integracoes />} />
                 <Route path="agente" element={<ConfigAgente />} />
                 <Route path="perfil" element={<MeuPerfil />} />
+                <Route path="analytics" element={<Analytics />} />
               </Route>
               <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />

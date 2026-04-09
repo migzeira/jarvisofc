@@ -1,0 +1,571 @@
+/**
+ * Testes unitários para classifyIntent e parsers de data/hora.
+ * Executar: deno test supabase/functions/tests/
+ */
+import { assertEquals, assertNotEquals } from "https://deno.land/std@0.168.0/testing/asserts.ts";
+import {
+  classifyIntent,
+  isReminderDecline,
+  isReminderAtTime,
+  isReminderAccept,
+  parseMinutes,
+} from "../_shared/classify.ts";
+
+// ─────────────────────────────────────────────
+// greeting
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - greeting: 'oi'", () => {
+  assertEquals(classifyIntent("oi"), "greeting");
+});
+
+Deno.test("classifyIntent - greeting: 'olá'", () => {
+  assertEquals(classifyIntent("olá"), "greeting");
+});
+
+Deno.test("classifyIntent - greeting: 'bom dia'", () => {
+  assertEquals(classifyIntent("bom dia"), "greeting");
+});
+
+Deno.test("classifyIntent - greeting: 'boa tarde'", () => {
+  assertEquals(classifyIntent("boa tarde"), "greeting");
+});
+
+Deno.test("classifyIntent - greeting: 'boa noite'", () => {
+  assertEquals(classifyIntent("boa noite"), "greeting");
+});
+
+Deno.test("classifyIntent - greeting: 'hello'", () => {
+  assertEquals(classifyIntent("hello"), "greeting");
+});
+
+Deno.test("classifyIntent - greeting: 'oi tudo bem?'", () => {
+  assertEquals(classifyIntent("oi tudo bem?"), "greeting");
+});
+
+// ─────────────────────────────────────────────
+// finance_record
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - finance_record: 'gastei 50 reais de almoço'", () => {
+  assertEquals(classifyIntent("gastei 50 reais de almoço"), "finance_record");
+});
+
+Deno.test("classifyIntent - finance_record: 'comprei pão por 5 reais'", () => {
+  assertEquals(classifyIntent("comprei pão por 5 reais"), "finance_record");
+});
+
+Deno.test("classifyIntent - finance_record: 'paguei 200 no dentista'", () => {
+  assertEquals(classifyIntent("paguei 200 no dentista"), "finance_record");
+});
+
+Deno.test("classifyIntent - finance_record: 'recebi meu salário'", () => {
+  assertEquals(classifyIntent("recebi meu salário"), "finance_record");
+});
+
+Deno.test("classifyIntent - finance_record: 'ganhei 1000 de freelance'", () => {
+  assertEquals(classifyIntent("ganhei 1000 de freelance"), "finance_record");
+});
+
+Deno.test("classifyIntent - finance_record: 'custou 30 reais'", () => {
+  assertEquals(classifyIntent("custou 30 reais"), "finance_record");
+});
+
+Deno.test("classifyIntent - finance_record: 'recebi um pix de 500'", () => {
+  assertEquals(classifyIntent("recebi um pix de 500"), "finance_record");
+});
+
+Deno.test("classifyIntent - finance_record: 'paguei a conta de luz'", () => {
+  assertEquals(classifyIntent("paguei a conta de luz"), "finance_record");
+});
+
+// ─────────────────────────────────────────────
+// finance_report
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - finance_report: 'quanto gastei esse mês'", () => {
+  assertEquals(classifyIntent("quanto gastei esse mês"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report: 'relatório de gastos'", () => {
+  assertEquals(classifyIntent("relatório de gastos"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report: 'meus gastos de hoje'", () => {
+  assertEquals(classifyIntent("meus gastos de hoje"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report: 'total de despesas'", () => {
+  assertEquals(classifyIntent("total de despesas"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report: 'quanto eu gastei essa semana'", () => {
+  assertEquals(classifyIntent("quanto eu gastei essa semana"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report: 'resumo dos gastos'", () => {
+  assertEquals(classifyIntent("resumo dos gastos"), "finance_report");
+});
+
+// ─────────────────────────────────────────────
+// budget_set
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - budget_set: 'quero gastar no máximo 2000 em alimentação'", () => {
+  assertEquals(classifyIntent("quero gastar no máximo 2000 em alimentação"), "budget_set");
+});
+
+Deno.test("classifyIntent - budget_set: 'meu orçamento de alimentação é 500'", () => {
+  assertEquals(classifyIntent("meu orçamento de alimentação é 500"), "budget_set");
+});
+
+Deno.test("classifyIntent - budget_set: 'limite de gasto em transporte 300'", () => {
+  assertEquals(classifyIntent("limite de gasto em transporte 300"), "budget_set");
+});
+
+Deno.test("classifyIntent - budget_set: 'meta de gastos de 3000'", () => {
+  assertEquals(classifyIntent("meta de gastos de 3000"), "budget_set");
+});
+
+// ─────────────────────────────────────────────
+// habit_create
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - habit_create: 'quero criar hábito de exercício'", () => {
+  assertEquals(classifyIntent("quero criar hábito de exercício"), "habit_create");
+});
+
+Deno.test("classifyIntent - habit_create: 'criar rotina de meditação'", () => {
+  assertEquals(classifyIntent("criar rotina de meditação"), "habit_create");
+});
+
+Deno.test("classifyIntent - habit_create: 'novo hábito de beber água'", () => {
+  assertEquals(classifyIntent("novo hábito de beber água"), "habit_create");
+});
+
+Deno.test("classifyIntent - habit_create: 'hábito de leitura todo dia'", () => {
+  assertEquals(classifyIntent("hábito de leitura todo dia"), "habit_create");
+});
+
+// ─────────────────────────────────────────────
+// habit_checkin
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - habit_checkin: 'fiz'", () => {
+  assertEquals(classifyIntent("fiz"), "habit_checkin");
+});
+
+Deno.test("classifyIntent - habit_checkin: 'feito'", () => {
+  assertEquals(classifyIntent("feito"), "habit_checkin");
+});
+
+Deno.test("classifyIntent - habit_checkin: 'pronto'", () => {
+  assertEquals(classifyIntent("pronto"), "habit_checkin");
+});
+
+Deno.test("classifyIntent - habit_checkin: 'done'", () => {
+  assertEquals(classifyIntent("done"), "habit_checkin");
+});
+
+Deno.test("classifyIntent - habit_checkin: '✅'", () => {
+  assertEquals(classifyIntent("✅"), "habit_checkin");
+});
+
+Deno.test("classifyIntent - habit_checkin: '👍'", () => {
+  assertEquals(classifyIntent("👍"), "habit_checkin");
+});
+
+Deno.test("classifyIntent - habit_checkin: 'fiz sim'", () => {
+  assertEquals(classifyIntent("fiz sim"), "habit_checkin");
+});
+
+// ─────────────────────────────────────────────
+// agenda_create
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - agenda_create: 'marcar reunião amanhã às 14h'", () => {
+  assertEquals(classifyIntent("marcar reunião amanhã às 14h"), "agenda_create");
+});
+
+Deno.test("classifyIntent - agenda_create: 'agendar consulta médica'", () => {
+  assertEquals(classifyIntent("agendar consulta médica"), "agenda_create");
+});
+
+Deno.test("classifyIntent - agenda_create: 'tenho reunião sexta às 10h'", () => {
+  assertEquals(classifyIntent("tenho reunião sexta às 10h"), "agenda_create");
+});
+
+Deno.test("classifyIntent - agenda_create: 'colocar na agenda dentista'", () => {
+  assertEquals(classifyIntent("colocar na agenda dentista"), "agenda_create");
+});
+
+Deno.test("classifyIntent - agenda_create: 'criar evento de treinamento'", () => {
+  assertEquals(classifyIntent("criar evento de treinamento"), "agenda_create");
+});
+
+Deno.test("classifyIntent - agenda_create: 'marcar com o doutor na quinta'", () => {
+  assertEquals(classifyIntent("marcar com o doutor na quinta"), "agenda_create");
+});
+
+// ─────────────────────────────────────────────
+// agenda_query
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - agenda_query: 'o que tenho hoje'", () => {
+  assertEquals(classifyIntent("o que tenho hoje"), "agenda_query");
+});
+
+Deno.test("classifyIntent - agenda_query: 'minha agenda dessa semana'", () => {
+  assertEquals(classifyIntent("minha agenda dessa semana"), "agenda_query");
+});
+
+Deno.test("classifyIntent - agenda_query: 'próximos compromissos'", () => {
+  assertEquals(classifyIntent("próximos compromissos"), "agenda_query");
+});
+
+Deno.test("classifyIntent - agenda_query: 'tem algo marcado amanhã'", () => {
+  assertEquals(classifyIntent("tem algo marcado amanhã"), "agenda_query");
+});
+
+Deno.test("classifyIntent - agenda_query: 'compromissos da semana'", () => {
+  assertEquals(classifyIntent("compromissos da semana"), "agenda_query");
+});
+
+// ─────────────────────────────────────────────
+// notes_save
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - notes_save: 'anota: reunião com João'", () => {
+  assertEquals(classifyIntent("anota: reunião com João"), "notes_save");
+});
+
+Deno.test("classifyIntent - notes_save: 'salva isso: ideia de negócio'", () => {
+  assertEquals(classifyIntent("salva isso: ideia de negócio"), "notes_save");
+});
+
+Deno.test("classifyIntent - notes_save: 'guarda ai esse número: 12345'", () => {
+  assertEquals(classifyIntent("guarda ai esse número: 12345"), "notes_save");
+});
+
+Deno.test("classifyIntent - notes_save: 'preciso lembrar de comprar leite'", () => {
+  assertEquals(classifyIntent("preciso lembrar de comprar leite"), "notes_save");
+});
+
+Deno.test("classifyIntent - notes_save: 'para não esquecer: ligar pro banco'", () => {
+  assertEquals(classifyIntent("para não esquecer: ligar pro banco"), "notes_save");
+});
+
+Deno.test("classifyIntent - notes_save: 'quero anotar um recado'", () => {
+  assertEquals(classifyIntent("quero anotar um recado"), "notes_save");
+});
+
+Deno.test("classifyIntent - notes_save: 'anote esse endereço'", () => {
+  assertEquals(classifyIntent("anote esse endereço"), "notes_save");
+});
+
+Deno.test("classifyIntent - notes_save: 'marca ai: senha 1234'", () => {
+  assertEquals(classifyIntent("marca ai: senha 1234"), "notes_save");
+});
+
+// ─────────────────────────────────────────────
+// reminder_set
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - reminder_set: 'me lembra de ligar amanhã às 14h'", () => {
+  assertEquals(classifyIntent("me lembra de ligar amanhã às 14h"), "reminder_set");
+});
+
+Deno.test("classifyIntent - reminder_set: 'me avisa às 10h para reunião'", () => {
+  assertEquals(classifyIntent("me avisa às 10h para reunião"), "reminder_set");
+});
+
+Deno.test("classifyIntent - reminder_set: 'quero um lembrete para sexta'", () => {
+  assertEquals(classifyIntent("quero um lembrete para sexta"), "reminder_set");
+});
+
+Deno.test("classifyIntent - reminder_set: 'me lembre do dentista amanhã'", () => {
+  assertEquals(classifyIntent("me lembre do dentista amanhã"), "reminder_set");
+});
+
+Deno.test("classifyIntent - reminder_set: 'me lembra desse lembrete 18h' (regression)", () => {
+  assertEquals(classifyIntent("me lembra desse lembrete 18h"), "reminder_set");
+});
+
+Deno.test("classifyIntent - reminder_set: 'me lembra disso às 15h'", () => {
+  assertEquals(classifyIntent("me lembra disso às 15h"), "reminder_set");
+});
+
+Deno.test("classifyIntent - reminder_set: 'você me lembra da reunião'", () => {
+  assertEquals(classifyIntent("você me lembra da reunião"), "reminder_set");
+});
+
+Deno.test("classifyIntent - reminder_set: 'criar lembrete para reunião'", () => {
+  assertEquals(classifyIntent("criar lembrete para reunião"), "reminder_set");
+});
+
+// ─────────────────────────────────────────────
+// reminder_list
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - reminder_list: 'meus lembretes'", () => {
+  assertEquals(classifyIntent("meus lembretes"), "reminder_list");
+});
+
+Deno.test("classifyIntent - reminder_list: 'quais são meus lembretes'", () => {
+  assertEquals(classifyIntent("quais são meus lembretes"), "reminder_list");
+});
+
+Deno.test("classifyIntent - reminder_list: 'tenho lembretes pendentes'", () => {
+  assertEquals(classifyIntent("tenho lembretes pendentes"), "reminder_list");
+});
+
+// ─────────────────────────────────────────────
+// reminder_snooze
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - reminder_snooze: 'me lembra de novo daqui 30 minutos'", () => {
+  assertEquals(classifyIntent("me lembra de novo daqui 30 minutos"), "reminder_snooze");
+});
+
+Deno.test("classifyIntent - reminder_snooze: 'snooze'", () => {
+  assertEquals(classifyIntent("snooze"), "reminder_snooze");
+});
+
+Deno.test("classifyIntent - reminder_snooze: 'adiar'", () => {
+  assertEquals(classifyIntent("adiar"), "reminder_snooze");
+});
+
+Deno.test("classifyIntent - reminder_snooze: 'adiar 15 minutos'", () => {
+  assertEquals(classifyIntent("adiar 15 minutos"), "reminder_snooze");
+});
+
+// ─────────────────────────────────────────────
+// ai_chat (should NOT be misclassified)
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - ai_chat: 'como você funciona'", () => {
+  assertEquals(classifyIntent("como você funciona"), "ai_chat");
+});
+
+Deno.test("classifyIntent - ai_chat: 'me conta uma piada'", () => {
+  assertEquals(classifyIntent("me conta uma piada"), "ai_chat");
+});
+
+Deno.test("classifyIntent - ai_chat: 'qual o sentido da vida'", () => {
+  assertEquals(classifyIntent("qual o sentido da vida"), "ai_chat");
+});
+
+Deno.test("classifyIntent - ai_chat: 'obrigado pela ajuda'", () => {
+  assertEquals(classifyIntent("obrigado pela ajuda"), "ai_chat");
+});
+
+Deno.test("classifyIntent - ai_chat: 'quanto é 2 + 2'", () => {
+  assertEquals(classifyIntent("quanto é 2 + 2"), "ai_chat");
+});
+
+// ─────────────────────────────────────────────
+// COLLISION tests (CRITICAL — easily misclassified)
+// ─────────────────────────────────────────────
+
+Deno.test("classifyIntent - collision: 'recebi um pix de 500' should be finance_record not reminder_set", () => {
+  assertEquals(classifyIntent("recebi um pix de 500"), "finance_record");
+});
+
+Deno.test("classifyIntent - collision: 'me lembra desse lembrete 18h' should be reminder_set not ai_chat", () => {
+  assertEquals(classifyIntent("me lembra desse lembrete 18h"), "reminder_set");
+});
+
+Deno.test("classifyIntent - collision: finance_report before finance_record (quanto gastei)", () => {
+  assertEquals(classifyIntent("quanto gastei esse mês"), "finance_report");
+  assertNotEquals(classifyIntent("quanto gastei esse mês"), "finance_record");
+});
+
+Deno.test("classifyIntent - collision: recurring before finance (netflix todo mês)", () => {
+  assertEquals(classifyIntent("netflix todo mês 55 reais"), "recurring_create");
+  assertNotEquals(classifyIntent("netflix todo mês 55 reais"), "finance_record");
+});
+
+Deno.test("classifyIntent - collision: snooze vs reminder_set ('me lembra de novo daqui 30 minutos')", () => {
+  assertEquals(classifyIntent("me lembra de novo daqui 30 minutos"), "reminder_snooze");
+  assertNotEquals(classifyIntent("me lembra de novo daqui 30 minutos"), "reminder_set");
+});
+
+Deno.test("classifyIntent - collision: 'paguei 200 no dentista' should be finance_record not agenda_create", () => {
+  assertEquals(classifyIntent("paguei 200 no dentista"), "finance_record");
+  assertNotEquals(classifyIntent("paguei 200 no dentista"), "agenda_create");
+});
+
+Deno.test("classifyIntent - collision: 'ganhei 1000 de freelance' should be finance_record not finance_report", () => {
+  assertEquals(classifyIntent("ganhei 1000 de freelance"), "finance_record");
+  assertNotEquals(classifyIntent("ganhei 1000 de freelance"), "finance_report");
+});
+
+Deno.test("classifyIntent - collision: 'criar lembrete para reunião' should be reminder_set not agenda_create", () => {
+  assertEquals(classifyIntent("criar lembrete para reunião"), "reminder_set");
+  assertNotEquals(classifyIntent("criar lembrete para reunião"), "agenda_create");
+});
+
+Deno.test("classifyIntent - collision: 'meus gastos de hoje' should be finance_report not notes_save", () => {
+  assertEquals(classifyIntent("meus gastos de hoje"), "finance_report");
+  assertNotEquals(classifyIntent("meus gastos de hoje"), "notes_save");
+});
+
+// ─────────────────────────────────────────────
+// parseMinutes
+// ─────────────────────────────────────────────
+
+Deno.test("parseMinutes - '15 min' → 15", () => {
+  assertEquals(parseMinutes("15 min"), 15);
+});
+
+Deno.test("parseMinutes - '15 minutos' → 15", () => {
+  assertEquals(parseMinutes("15 minutos"), 15);
+});
+
+Deno.test("parseMinutes - '30 min' → 30", () => {
+  assertEquals(parseMinutes("30 min"), 30);
+});
+
+Deno.test("parseMinutes - '1 hora' → 60", () => {
+  assertEquals(parseMinutes("1 hora"), 60);
+});
+
+Deno.test("parseMinutes - '2 horas' → 120", () => {
+  assertEquals(parseMinutes("2 horas"), 120);
+});
+
+Deno.test("parseMinutes - 'meia hora' → 30", () => {
+  assertEquals(parseMinutes("meia hora"), 30);
+});
+
+Deno.test("parseMinutes - '45 minutos' → 45", () => {
+  assertEquals(parseMinutes("45 minutos"), 45);
+});
+
+Deno.test("parseMinutes - 'só na hora' → 0 (avisa na hora)", () => {
+  assertEquals(parseMinutes("só na hora"), 0);
+});
+
+Deno.test("parseMinutes - 'na hora' → 0", () => {
+  assertEquals(parseMinutes("na hora"), 0);
+});
+
+Deno.test("parseMinutes - 'hora e meia' → 90", () => {
+  assertEquals(parseMinutes("hora e meia"), 90);
+});
+
+Deno.test("parseMinutes - 'não precisa' → null (not a duration)", () => {
+  assertEquals(parseMinutes("não precisa"), null);
+});
+
+Deno.test("parseMinutes - 'sim' → null", () => {
+  assertEquals(parseMinutes("sim"), null);
+});
+
+Deno.test("parseMinutes - 'nao' → null", () => {
+  assertEquals(parseMinutes("nao"), null);
+});
+
+// ─────────────────────────────────────────────
+// isReminderDecline
+// ─────────────────────────────────────────────
+
+Deno.test("isReminderDecline - 'não precisa' → true", () => {
+  assertEquals(isReminderDecline("não precisa"), true);
+});
+
+Deno.test("isReminderDecline - 'não' → true", () => {
+  assertEquals(isReminderDecline("não"), true);
+});
+
+Deno.test("isReminderDecline - 'nao obrigado' → true", () => {
+  assertEquals(isReminderDecline("nao obrigado"), true);
+});
+
+Deno.test("isReminderDecline - 'sem lembrete' → true", () => {
+  assertEquals(isReminderDecline("sem lembrete"), true);
+});
+
+Deno.test("isReminderDecline - 'pode não' → true", () => {
+  assertEquals(isReminderDecline("pode não"), true);
+});
+
+Deno.test("isReminderDecline - 'sim' → false", () => {
+  assertEquals(isReminderDecline("sim"), false);
+});
+
+Deno.test("isReminderDecline - '15 min' → false", () => {
+  assertEquals(isReminderDecline("15 min"), false);
+});
+
+Deno.test("isReminderDecline - 'dispenso' → true", () => {
+  assertEquals(isReminderDecline("dispenso"), true);
+});
+
+// ─────────────────────────────────────────────
+// isReminderAtTime
+// ─────────────────────────────────────────────
+
+Deno.test("isReminderAtTime - 'só na hora' → true", () => {
+  assertEquals(isReminderAtTime("só na hora"), true);
+});
+
+Deno.test("isReminderAtTime - 'na hora' → true", () => {
+  assertEquals(isReminderAtTime("na hora"), true);
+});
+
+Deno.test("isReminderAtTime - 'só na hora mesmo' → true", () => {
+  assertEquals(isReminderAtTime("só na hora mesmo"), true);
+});
+
+Deno.test("isReminderAtTime - 'me avisa na hora' → true", () => {
+  assertEquals(isReminderAtTime("me avisa na hora"), true);
+});
+
+Deno.test("isReminderAtTime - '15 minutos antes' → false", () => {
+  assertEquals(isReminderAtTime("15 minutos antes"), false);
+});
+
+Deno.test("isReminderAtTime - '1 hora antes' → false", () => {
+  assertEquals(isReminderAtTime("1 hora antes"), false);
+});
+
+Deno.test("isReminderAtTime - 'sim' → false", () => {
+  assertEquals(isReminderAtTime("sim"), false);
+});
+
+// ─────────────────────────────────────────────
+// isReminderAccept
+// ─────────────────────────────────────────────
+
+Deno.test("isReminderAccept - 'sim' → true", () => {
+  assertEquals(isReminderAccept("sim"), true);
+});
+
+Deno.test("isReminderAccept - 'quero' → true", () => {
+  assertEquals(isReminderAccept("quero"), true);
+});
+
+Deno.test("isReminderAccept - 'ok' → true", () => {
+  assertEquals(isReminderAccept("ok"), true);
+});
+
+Deno.test("isReminderAccept - 'claro' → true", () => {
+  assertEquals(isReminderAccept("claro"), true);
+});
+
+Deno.test("isReminderAccept - 'pode ser' → true", () => {
+  assertEquals(isReminderAccept("pode ser"), true);
+});
+
+Deno.test("isReminderAccept - 'não' → false", () => {
+  assertEquals(isReminderAccept("não"), false);
+});
+
+Deno.test("isReminderAccept - '15 min' → false", () => {
+  assertEquals(isReminderAccept("15 min"), false);
+});
+
+Deno.test("isReminderAccept - 'quero ser lembrado' → true", () => {
+  assertEquals(isReminderAccept("quero ser lembrado"), true);
+});
