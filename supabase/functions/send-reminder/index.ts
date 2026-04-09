@@ -6,7 +6,15 @@
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { sendText } from "../_shared/evolution.ts";
+import { sendText, sendButtons } from "../_shared/evolution.ts";
+
+/**
+ * Detecta se o título do lembrete contém intenção de enviar mensagem para contato.
+ * Ex: "enviar pro Caio dizendo que vai atrasar" / "manda pra Ana confirmar horário"
+ */
+function reminderHasSendToContact(title: string): boolean {
+  return /\b(enviar?|mandar?|falar?|avisar?)\s+(uma?\s+)?(mensagem\s+)?(pra|para|pro)\s+\w+/i.test(title ?? "");
+}
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -99,7 +107,37 @@ serve(async (_req) => {
 
   for (const reminder of reminders) {
     try {
-      await sendText(reminder.whatsapp_number, reminder.message);
+      // ─── Delegação de envio: quando o lembrete é "enviar pro X..." ────────
+      // Pergunta ao usuário se a Maya deve enviar ou se ele mesmo envia.
+      const isDelegateReminder =
+        reminder.source !== "send_to_contact" && // evita loop
+        reminderHasSendToContact(reminder.title ?? "");
+
+      if (isDelegateReminder) {
+        const sessionPhone = String(reminder.whatsapp_number ?? "").replace(/\D/g, "");
+        await sendButtons(
+          reminder.whatsapp_number,
+          `⏰ Lembrete: ${reminder.title}`,
+          `Quem envia essa mensagem?`,
+          [
+            { id: "DELEGATE_MAYA", text: "🤖 Maya envia" },
+            { id: "DELEGATE_ME",   text: "✉️ Eu mesmo envio" },
+          ]
+        );
+        // Armazena na sessão para processar a resposta do botão
+        await supabase.from("whatsapp_sessions").upsert(
+          {
+            user_id: reminder.user_id,
+            phone_number: sessionPhone,
+            pending_action: "reminder_delegate",
+            pending_context: { contact_text: reminder.title },
+            last_activity: now.toISOString(),
+          },
+          { onConflict: "phone_number" }
+        );
+      } else {
+        await sendText(reminder.whatsapp_number, reminder.message);
+      }
 
       // Marca como enviado
       await supabase

@@ -4078,9 +4078,21 @@ async function handleSendToContact(
     return `Não encontrei *${contactName}* nos seus contatos.\n\n*Seus contatos:*\n${lista}\n\nPara adicionar: compartilhe o contato ou diga _"Salva o contato [Nome]: [número]"_ 📇`;
   }
 
-  // Extrai conteúdo da mensagem: tudo após "dizendo", "dizer", "falando", "que", ":"
+  // Extrai conteúdo da mensagem
+  // 1ª tentativa: depois de palavra-gatilho ("dizendo", "falando", "que", ":")
   const msgMatch = text.match(/(?:dizendo|dizer|falando|que\s+(?!tal\b)|:\s*)(.+)/i);
-  const msgContent = msgMatch ? msgMatch[1].trim() : text;
+  let msgContent = msgMatch ? msgMatch[1].trim() : "";
+
+  // 2ª tentativa (fallback): tudo depois do último token do nome extraído
+  // Ex: "Enviar pro Caio confirmar horário" → tira "Enviar pro Caio " → "confirmar horário"
+  if (!msgContent) {
+    const nameInText = new RegExp(
+      `(?:pra|para|pro|ao?)\\s+${nameTokens.join("\\s+")}\\s+`,
+      "i"
+    );
+    const afterName = text.replace(nameInText, "");
+    msgContent = afterName !== text ? afterName.trim() : text.trim();
+  }
 
   // Nome e saudação com horário do dia
   const senderName = userNickname || pushName || "seu contato";
@@ -5066,6 +5078,38 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           : `✅ *${csName}* salvo nos seus contatos!\n\nAgora pode pedir:\n• _"Manda mensagem pro ${firstName} dizendo..."_\n• _"Marca reunião com ${firstName} amanhã às 14h"_`;
       } else {
         responseText = "Ok, contato não salvo. 👍";
+      }
+      pendingAction = undefined;
+      pendingContext = undefined;
+
+    } else if (intent === "reminder_delegate") {
+      // Resposta à pergunta "Quem envia?" disparada pelo send-reminder quando o
+      // lembrete continha um "enviar pro X..." — usuário escolhe Maya ou ele mesmo.
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const contactText = (ctx.contact_text as string) ?? "";
+      const msgLow = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+      const mayaSends =
+        text === "BUTTON:DELEGATE_MAYA" ||
+        /^(1|maya|pode|voce envia|pode enviar|maya envia|pode ser|manda voce|envia voce|sim)\b/i.test(msgLow);
+      const meSends =
+        text === "BUTTON:DELEGATE_ME" ||
+        /^(2|eu|eu mesmo|eu envio|vou eu|nao|deixa que eu|eu mando)\b/i.test(msgLow);
+
+      if (mayaSends && contactText) {
+        // Maya executa o envio — reutiliza handleSendToContact com o texto original do lembrete
+        responseText = await handleSendToContact(
+          profile.id, sendPhone || replyTo, contactText, userTz, agentName, userNickname, pushName
+        );
+      } else if (meSends) {
+        responseText = "Ok, você envia! ✌️ Me avisa se precisar de mais alguma coisa.";
+      } else {
+        // Não reconheceu — repete a pergunta
+        const opts =
+          `Quem envia essa mensagem?\n\n` +
+          `*1.* 🤖 Maya envia\n` +
+          `*2.* ✉️ Eu mesmo envio`;
+        responseText = opts;
       }
       pendingAction = undefined;
       pendingContext = undefined;
