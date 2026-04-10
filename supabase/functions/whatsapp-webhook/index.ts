@@ -361,7 +361,11 @@ Frase: "${message}"`;
   return `✅ *Habito criado!*\n\n${parsed.icon || "🎯"} *${parsed.name}*\n${parsed.description ? `📝 ${parsed.description}\n` : ""}⏰ Lembrete diario as ${parsed.reminder_time || "08:00"}\n\nQuando completar, responda *feito* e eu registro seu progresso!`;
 }
 
-async function handleHabitCheckin(userId: string, message: string, userTz = "America/Sao_Paulo"): Promise<string> {
+async function handleHabitCheckin(
+  userId: string,
+  message: string,
+  userTz = "America/Sao_Paulo"
+): Promise<{ response: string; pendingAction?: string; pendingContext?: any }> {
   // Usa timezone do usuario para determinar "hoje" corretamente
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
 
@@ -373,7 +377,7 @@ async function handleHabitCheckin(userId: string, message: string, userTz = "Ame
     .eq("is_active", true);
 
   if (!habits?.length) {
-    return "Voce nao tem habitos ativos. Crie um: *quero habito de exercicio todo dia as 7h*";
+    return { response: "Voce nao tem habitos ativos. Crie um: *quero habito de exercicio todo dia as 7h*" };
   }
 
   // Verifica quais ainda nao foram feitos hoje
@@ -387,11 +391,43 @@ async function handleHabitCheckin(userId: string, message: string, userTz = "Ame
   const pending = habits.filter((h: any) => !doneIds.has(h.id));
 
   if (pending.length === 0) {
-    return "🎉 Todos os habitos de hoje ja foram registrados! Continue assim!";
+    return { response: "🎉 Todos os habitos de hoje ja foram registrados! Continue assim!" };
   }
 
-  // Registra o primeiro habito pendente
-  const habit = pending[0] as any;
+  // Desambiguação: se múltiplos pendentes, tenta match por nome na mensagem
+  let habit: any = null;
+  if (pending.length > 1) {
+    const normalized = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const matched = pending.find((h: any) => {
+      const habitName = String(h.name).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return normalized.includes(habitName);
+    });
+    if (matched) {
+      habit = matched;
+    } else {
+      // Sem match claro → mostra lista numerada e pede pra escolher
+      const lines = pending.slice(0, 9).map((h: any, i: number) =>
+        `*${i + 1}.* ${h.icon ?? "✅"} ${h.name}`
+      ).join("\n");
+      return {
+        response: `Qual hábito você concluiu?\n\n${lines}\n\nResponda com o *número* (1 a ${Math.min(9, pending.length)}) ou o nome do hábito.`,
+        pendingAction: "habit_checkin_choose",
+        pendingContext: {
+          options: pending.slice(0, 9).map((h: any) => ({
+            id: h.id,
+            name: h.name,
+            icon: h.icon,
+            current_streak: h.current_streak,
+            best_streak: h.best_streak,
+          })),
+          total_pending: pending.length,
+        },
+      };
+    }
+  } else {
+    // Só 1 pendente → comportamento antigo (direto)
+    habit = pending[0];
+  }
   const { error } = await supabase.from("habit_logs").insert({
     habit_id: habit.id,
     user_id: userId,
@@ -399,9 +435,9 @@ async function handleHabitCheckin(userId: string, message: string, userTz = "Ame
   });
 
   if (error) {
-    if (error.code === "23505") return "Ja registrado hoje! 👍";
+    if (error.code === "23505") return { response: "Ja registrado hoje! 👍" };
     console.error("Habit checkin error:", error);
-    return "Erro ao registrar. Tente novamente.";
+    return { response: "Erro ao registrar. Tente novamente." };
   }
 
   // Verifica se o dia anterior tinha check-in para validar streak consecutivo
@@ -434,7 +470,7 @@ async function handleHabitCheckin(userId: string, message: string, userTz = "Ame
   const remaining = pending.length - 1;
   const remainingText = remaining > 0 ? `\n\n📋 Ainda ${remaining === 1 ? "falta 1 habito" : `faltam ${remaining} habitos`} hoje.` : "\n\n🎉 *Todos os habitos de hoje concluidos!*";
 
-  return `✅ *${habit.icon} ${habit.name}* — registrado!${motivation}${remainingText}`;
+  return { response: `✅ *${habit.icon} ${habit.name}* — registrado!${motivation}${remainingText}` };
 }
 
 // ─────────────────────────────────────────────
@@ -1302,6 +1338,143 @@ async function handleFinanceDeleteConfirm(
   return {
     response: `Escolha o *número* da transação que quer apagar (1 a ${(ctx.options ?? []).length}) ou diga *cancela*.`,
     pendingAction: "finance_delete_confirm",
+    pendingContext: ctx,
+  };
+}
+
+// ─────────────────────────────────────────────
+// NOTES DELETE HANDLERS (Onda 4)
+// ─────────────────────────────────────────────
+
+/** Primeira etapa: tenta achar a nota a deletar. Se há múltiplas, mostra lista. */
+async function handleNotesDelete(
+  userId: string,
+  message: string,
+): Promise<{ response: string; pendingAction?: string; pendingContext?: any }> {
+  const m = message
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  // Detecta "última" pra pegar a mais recente sem ambiguidade
+  const wantsLast = /\b(ultima?|ultimo|ultimas?|ultimos|recente|mais recente)\b/.test(m);
+
+  // Extrai keyword após "sobre" ou "de" pra buscar por título/conteúdo
+  const keywordMatch = m.match(/(?:sobre|de|da|do)\s+([a-z0-9\s]+?)(?:\s*$|\s+(?:a|o|que|isso))/);
+  const keyword = keywordMatch ? keywordMatch[1].trim() : null;
+
+  let query = supabase
+    .from("notes")
+    .select("id, title, content, created_at, source")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (keyword && keyword.length >= 2) {
+    // Busca em title OU content
+    query = query.or(`title.ilike.%${keyword}%,content.ilike.%${keyword}%`);
+  }
+
+  const { data: notes, error } = await query;
+
+  if (error || !notes || notes.length === 0) {
+    if (keyword) {
+      return { response: `🔍 Não encontrei nenhuma anotação com "${keyword}". Verifique no app e tente de novo.` };
+    }
+    return { response: "🔍 Você ainda não tem anotações pra apagar." };
+  }
+
+  // Se só tem 1, ou usuário pediu "a última" → confirma direto
+  if (notes.length === 1 || (wantsLast && notes.length > 0)) {
+    const n: any = notes[0];
+    const dateStr = new Date(n.created_at).toLocaleDateString("pt-BR");
+    const preview = (n.content ?? "").slice(0, 80);
+    return {
+      response: `Quer mesmo apagar essa anotação?\n\n📝 *${n.title || "Anotação"}*\n${preview}${preview.length >= 80 ? "..." : ""}\n📅 ${dateStr}\n\nResponda *sim* pra apagar ou *não* pra cancelar.`,
+      pendingAction: "notes_delete_confirm",
+      pendingContext: { note_ids: [n.id], single: true },
+    };
+  }
+
+  // Múltiplas notas → lista numerada
+  const lines = notes.slice(0, 5).map((n: any, i: number) => {
+    const dateStr = new Date(n.created_at).toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
+    const preview = (n.title || n.content || "").slice(0, 50);
+    return `*${i + 1}.* 📝 ${preview} (${dateStr})`;
+  });
+
+  const extraMsg = notes.length > 5 ? `\n\n_Mostrando 5 de ${notes.length}._` : "";
+
+  return {
+    response: `🔍 Encontrei *${notes.length}* anotação(ões). Qual apagar?\n\n${lines.join("\n")}${extraMsg}\n\nResponda com o *número* (1 a ${Math.min(5, notes.length)}).`,
+    pendingAction: "notes_delete_confirm",
+    pendingContext: {
+      note_ids: notes.slice(0, 5).map((n: any) => n.id),
+      options: notes.slice(0, 5).map((n: any) => ({
+        id: n.id,
+        title: n.title || "Anotação",
+        preview: (n.content ?? "").slice(0, 50),
+      })),
+      single: false,
+    },
+  };
+}
+
+/** Segunda etapa: confirma (sim/não) ou escolhe número da lista */
+async function handleNotesDeleteConfirm(
+  userId: string,
+  message: string,
+  session: Record<string, unknown>,
+): Promise<{ response: string; pendingAction: string | null; pendingContext: any }> {
+  const ctx = (session.pending_context ?? {}) as any;
+  const m = message.toLowerCase().trim();
+
+  // Cancelar
+  if (/^(nao|n|cancela|cancelar|deixa|esquece|nope|nada)\b/.test(m)) {
+    return { response: "✅ Ok, não apaguei nada.", pendingAction: null, pendingContext: null };
+  }
+
+  // Caso "single": sim/ok → deleta
+  if (ctx.single) {
+    if (/^(sim|s|ok|confirmar|pode|pode ser|apaga|apagar|deleta|deletar|isso|confirma)\b/.test(m)) {
+      const [id] = ctx.note_ids ?? [];
+      if (!id) return { response: "⚠️ Erro: nota não encontrada.", pendingAction: null, pendingContext: null };
+      const { error } = await supabase.from("notes").delete().eq("id", id).eq("user_id", userId);
+      if (error) return { response: "⚠️ Erro ao apagar. Tente de novo.", pendingAction: null, pendingContext: null };
+      return { response: "🗑️ *Anotação apagada!*", pendingAction: null, pendingContext: null };
+    }
+    return {
+      response: "Não entendi. Responda *sim* pra apagar ou *não* pra cancelar.",
+      pendingAction: "notes_delete_confirm",
+      pendingContext: ctx,
+    };
+  }
+
+  // Caso "múltiplas": número da lista
+  const numMatch = m.match(/^(\d+)$/);
+  if (numMatch) {
+    const idx = parseInt(numMatch[1], 10) - 1;
+    const options = (ctx.options ?? []) as Array<{ id: string; title: string; preview: string }>;
+    if (idx < 0 || idx >= options.length) {
+      return {
+        response: `Número inválido. Escolha entre 1 e ${options.length}.`,
+        pendingAction: "notes_delete_confirm",
+        pendingContext: ctx,
+      };
+    }
+    const chosen = options[idx];
+    const { error } = await supabase.from("notes").delete().eq("id", chosen.id).eq("user_id", userId);
+    if (error) return { response: "⚠️ Erro ao apagar. Tente de novo.", pendingAction: null, pendingContext: null };
+    return {
+      response: `🗑️ *Anotação apagada!*\n\n📝 ${chosen.title}`,
+      pendingAction: null,
+      pendingContext: null,
+    };
+  }
+
+  return {
+    response: `Escolha o *número* da anotação que quer apagar (1 a ${(ctx.options ?? []).length}) ou diga *cancela*.`,
+    pendingAction: "notes_delete_confirm",
     pendingContext: ctx,
   };
 }
@@ -5432,7 +5605,65 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "habit_create") {
       responseText = await handleHabitCreate(profile.id, sendPhone || replyTo, text, userTz);
     } else if (intent === "habit_checkin") {
-      responseText = await handleHabitCheckin(profile.id, text, userTz);
+      const checkinResult = await handleHabitCheckin(profile.id, text, userTz);
+      responseText = checkinResult.response;
+      pendingAction = checkinResult.pendingAction;
+      pendingContext = checkinResult.pendingContext;
+    } else if (intent === "habit_checkin_choose") {
+      // Usuário está escolhendo qual hábito concluiu (após ver a lista numerada)
+      const ctx = (session?.pending_context ?? {}) as any;
+      const options = (ctx.options ?? []) as Array<{ id: string; name: string; icon: string; current_streak: number; best_streak: number }>;
+
+      if (/^(nao|cancela|deixa|esquece|nada)/i.test(text.trim())) {
+        responseText = "✅ Ok, não registrei nada.";
+      } else {
+        // Tenta match por número OU por nome
+        let chosen: typeof options[number] | null = null;
+        const numMatch = text.trim().match(/^(\d+)$/);
+        if (numMatch) {
+          const idx = parseInt(numMatch[1], 10) - 1;
+          if (idx >= 0 && idx < options.length) chosen = options[idx];
+        } else {
+          const normalized = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          chosen = options.find(o => {
+            const nm = String(o.name).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            return normalized.includes(nm);
+          }) ?? null;
+        }
+
+        if (!chosen) {
+          responseText = `Não entendi qual hábito. Responda com o *número* (1 a ${options.length}) ou o nome do hábito.`;
+          pendingAction = "habit_checkin_choose";
+          pendingContext = ctx;
+        } else {
+          // Registra o hábito escolhido (inline — mesma lógica do handleHabitCheckin)
+          const today = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
+          const { error: insErr } = await supabase.from("habit_logs").insert({
+            habit_id: chosen.id,
+            user_id: profile.id,
+            logged_date: today,
+          });
+          if (insErr) {
+            responseText = insErr.code === "23505" ? "Ja registrado hoje! 👍" : "Erro ao registrar. Tente novamente.";
+          } else {
+            // Recalcula streak
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const yesterdayStr = yesterday.toLocaleDateString("sv-SE", { timeZone: userTz });
+            const { data: yLog } = await (supabase.from("habit_logs") as any)
+              .select("id").eq("habit_id", chosen.id).eq("logged_date", yesterdayStr).maybeSingle();
+            const newStreak = yLog ? (chosen.current_streak || 0) + 1 : 1;
+            const bestStreak = Math.max(newStreak, chosen.best_streak || 0);
+            await supabase.from("habits").update({ current_streak: newStreak, best_streak: bestStreak }).eq("id", chosen.id);
+            let motivation = "";
+            if (newStreak === 1) motivation = "\n\n💪 Primeiro dia!";
+            else if (newStreak === 7) motivation = "\n\n🔥 *1 semana seguida!*";
+            else if (newStreak === 30) motivation = "\n\n🏆 *30 dias!*";
+            else if (newStreak >= 3) motivation = `\n\n🔥 ${newStreak} dias seguidos!`;
+            responseText = `✅ *${chosen.icon ?? "✅"} ${chosen.name}* — registrado!${motivation}`;
+          }
+        }
+      }
     } else if (intent === "finance_record") {
       responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config, userTz);
     } else if (intent === "category_list") {
@@ -5519,6 +5750,16 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = notesResult.response;
       pendingAction = notesResult.pendingAction;
       pendingContext = notesResult.pendingContext;
+    } else if (intent === "notes_delete") {
+      const delResult = await handleNotesDelete(profile.id, text);
+      responseText = delResult.response;
+      pendingAction = delResult.pendingAction;
+      pendingContext = delResult.pendingContext;
+    } else if (intent === "notes_delete_confirm") {
+      const confirmResult = await handleNotesDeleteConfirm(profile.id, text, session ?? {});
+      responseText = confirmResult.response;
+      pendingAction = confirmResult.pendingAction;
+      pendingContext = confirmResult.pendingContext;
     } else if (intent === "reminder_list") {
       responseText = await handleReminderList(profile.id, language, userTz);
     } else if (intent === "reminder_cancel") {
@@ -5713,15 +5954,20 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       pendingContext = undefined;
 
     } else if (intent === "list_contacts") {
+      // Usa a coluna correta "phone" (não phone_number — schema contacts tem phone)
       const { data: allContacts } = await supabase
         .from("contacts")
-        .select("name, phone_number")
+        .select("name, phone")
         .eq("user_id", profile.id)
         .order("name", { ascending: true });
       if (!allContacts || allContacts.length === 0) {
         responseText = "Você ainda não tem contatos salvos na Maya. 📇\n\nCompartilhe um contato comigo ou diga _\"Salva o contato [Nome]: [número]\"_";
       } else {
-        const lines = allContacts.map((c: any) => `• *${c.name}*`).join("\n");
+        // Formata phone pra exibição se disponível (ex: +55 11 9xxxx-xxxx)
+        const lines = allContacts.map((c: any) => {
+          const phone = c.phone ? ` — ${c.phone}` : "";
+          return `• *${c.name}*${phone}`;
+        }).join("\n");
         responseText = `📇 *Seus contatos salvos (${allContacts.length}):*\n\n${lines}\n\nPara enviar mensagem: _"Manda pra [Nome] dizendo..."_`;
       }
 

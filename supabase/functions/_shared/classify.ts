@@ -17,6 +17,9 @@ export type Intent =
   | "recurring_create"
   | "habit_create"
   | "habit_checkin"
+  | "habit_checkin_choose"
+  | "notes_delete"
+  | "notes_delete_confirm"
   | "agenda_create"
   | "agenda_query"
   | "agenda_lookup"
@@ -200,6 +203,15 @@ export function classifyIntent(msg: string): Intent {
     /\btenho\s+(algum|algo)\s+(compromisso|evento|reuniao|consulta)\b/.test(m)
   )
     return "agenda_query";
+
+  // Deletar nota/anotação — ANTES de notes_save pra priorizar
+  // "apaga a nota sobre X", "deleta anotacao de reunião", "remove a ultima anotacao"
+  if (
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|o\s+|as\s+|os\s+)?(ultima?|ultimo|ultimas?|ultimos)\s+(nota|notas|anotacao|anotacoes)\b/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|o\s+)?(nota|anotacao)\s+(de|do|da|sobre)\s+/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(aquela|essa|esta)\s+(nota|anotacao)/.test(m)
+  )
+    return "notes_delete";
 
   // Salvar nota — cobre formas diretas, casuais e indiretas
   if (
