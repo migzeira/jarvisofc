@@ -125,10 +125,25 @@ export default function DashboardHome() {
     setOnboardingDismissed(true);
   };
 
+  // Dismiss persistente do banner "Liberado pelo admin" — tem que ser declarado AQUI
+  // (antes de qualquer early return) senão viola Rules of Hooks e quebra o dashboard.
+  // A chave é derivada do access_until pra que um novo período reapresente o banner.
+  const [adminBannerDismissed, setAdminBannerDismissed] = useState<boolean>(false);
+
   useEffect(() => {
     if (!user) return;
     loadData();
   }, [user]);
+
+  // Sincroniza adminBannerDismissed com localStorage sempre que o access_until muda.
+  // access_until vem do profile carregado em loadData — por isso depende de [profile].
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const au = profile?.access_until;
+    if (!au) { setAdminBannerDismissed(false); return; }
+    const key = `maya_admin_banner_dismissed_v1:${new Date(au).toISOString()}`;
+    setAdminBannerDismissed(!!localStorage.getItem(key));
+  }, [profile?.access_until]);
 
   const loadData = async () => {
     const now = new Date();
@@ -279,14 +294,9 @@ export default function DashboardHome() {
 
   // Dismiss persistente do banner "Liberado pelo admin" — chave inclui access_until
   // para que um novo período/renovação reapresente o banner.
+  // NOTA: o useState/useEffect deste banner está declarado no TOPO do componente
+  // (antes do early return do loading) pra não violar Rules of Hooks.
   const adminBannerKey = accessUntil ? `maya_admin_banner_dismissed_v1:${accessUntil.toISOString()}` : null;
-  const [adminBannerDismissed, setAdminBannerDismissed] = useState<boolean>(
-    () => (typeof window !== "undefined" && adminBannerKey) ? !!localStorage.getItem(adminBannerKey) : false
-  );
-  useEffect(() => {
-    if (typeof window === "undefined" || !adminBannerKey) return;
-    setAdminBannerDismissed(!!localStorage.getItem(adminBannerKey));
-  }, [adminBannerKey]);
   const dismissAdminBanner = () => {
     if (adminBannerKey) {
       localStorage.setItem(adminBannerKey, "1");
