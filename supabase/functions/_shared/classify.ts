@@ -162,6 +162,12 @@ export function classifyIntent(msg: string): Intent {
     // Formas explícitas de intenção
     /^(quero|pode|preciso que voce|por favor) (anotar|salvar|registrar|guardar)\b/.test(m) ||
     /^(pode |por favor )?(anotar|salvar|registrar|guardar) (isso|esse|essa|aqui|ai)\b/.test(m) ||
+    // "faz/faca/cria uma anotacao/nota pra mim" — imperativo com substantivo
+    /(faz|faca|faça|cria|crie|criar|fazer|me faz|me faca) (uma |a )?(anota(cao|cao|c[aã]o)|nota)\b/.test(m) ||
+    // "quero criar/fazer uma nota/anotacao"
+    /(quero|preciso) (criar|fazer|registrar) (uma )?(nota|anotacao)\b/.test(m) ||
+    // título de anotação explícito
+    /titulo (da|de|dessa?) anota(c[aã]o|cao)/.test(m) ||
     // Frases de contexto
     /para nao esquecer|pra nao esquecer|nao quero esquecer/.test(m) ||
     /preciso lembrar|lembrar de /.test(m)
