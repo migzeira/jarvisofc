@@ -448,21 +448,36 @@ Retorne SOMENTE este JSON (sem markdown):
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    console.error("[extractStatementFromImage] API error:", res.status, errText.slice(0, 200));
+    console.error("[extractStatementFromImage] API error:", res.status, errText.slice(0, 500));
     return fallback;
   }
 
   const data = await res.json();
   const text = (data.content?.[0]?.text as string) ?? "";
+  console.log("[extractStatementFromImage] raw response:", text.slice(0, 800));
+
+  // Claude às vezes envolve o JSON em ```json ... ``` ou adiciona explicação antes
+  // Extrai o primeiro bloco JSON válido do texto
+  let jsonStr = text.trim();
+  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) jsonStr = fenceMatch[1].trim();
+  // Se ainda não começar com {, tenta achar o primeiro { ... } balanceado
+  if (!jsonStr.startsWith("{")) {
+    const braceMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (braceMatch) jsonStr = braceMatch[0];
+  }
+
   try {
-    const parsed = JSON.parse(text) as StatementExtraction;
+    const parsed = JSON.parse(jsonStr) as StatementExtraction;
+    console.log(`[extractStatementFromImage] parsed: doc_type=${parsed.document_type} tx_count=${parsed.transactions?.length ?? 0}`);
     if (!parsed.document_type) return fallback;
     // Garante campos obrigatórios
     parsed.transactions = parsed.transactions ?? [];
     parsed.total_expense = parsed.total_expense ?? parsed.transactions.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
     parsed.total_income = parsed.total_income ?? parsed.transactions.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
     return parsed;
-  } catch {
+  } catch (err) {
+    console.error("[extractStatementFromImage] JSON parse failed:", err instanceof Error ? err.message : String(err), "| jsonStr:", jsonStr.slice(0, 300));
     return fallback;
   }
 }
