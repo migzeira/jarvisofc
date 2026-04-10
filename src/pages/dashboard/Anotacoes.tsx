@@ -153,6 +153,13 @@ export default function Anotacoes() {
 
   useEffect(() => { if (user) loadData(); }, [user]);
 
+  // Reload quando a aba volta ao foco (ex: nota criada pelo WhatsApp com página já aberta)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible" && user) loadData(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [user]);
+
   const { triggerLive, isLive } = useRealtimeBadge();
   useRealtimeSync(
     ["notes"],
@@ -161,12 +168,14 @@ export default function Anotacoes() {
   );
 
   const loadData = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("notes")
       .select("*")
       .eq("user_id", user!.id)
       .order("created_at", { ascending: false });
-    setNotes(data ?? []);
+    if (!error) {
+      setNotes(data ?? []);
+    }
     setLoading(false);
   };
 

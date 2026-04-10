@@ -138,7 +138,7 @@ export default function DashboardHome() {
       // Pending reminders (next 3)
       supabase.from("reminders").select("id, title, send_at, message").eq("user_id", user!.id).eq("status", "pending").gte("send_at", nowIso).order("send_at").limit(3),
       // Recent notes (last 3)
-      supabase.from("notes").select("id, title, content, created_at, category").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(3),
+      supabase.from("notes").select("id, title, content, created_at, source").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(3),
       // For activity feed
       supabase.from("transactions").select("id, description, amount, type, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(4),
       supabase.from("events").select("id, title, event_date, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(4),
