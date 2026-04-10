@@ -1119,6 +1119,193 @@ async function handleFinanceReport(
   return { text: report, chartUrl };
 }
 
+// ─────────────────────────────────────────────
+// CATEGORY LIST + FINANCE DELETE HANDLERS (Onda 2)
+// ─────────────────────────────────────────────
+
+/** Lista categorias do usuário com totais gastos neste mês */
+async function handleCategoryList(userId: string): Promise<string> {
+  const { data: cats } = await supabase
+    .from("categories")
+    .select("name, icon")
+    .eq("user_id", userId)
+    .order("name", { ascending: true });
+
+  if (!cats || cats.length === 0) {
+    return "📂 Você ainda não tem categorias cadastradas. Elas são criadas automaticamente quando você registra gastos.\n\nTente: _gastei 50 reais no mercado_";
+  }
+
+  // Totais do mês por categoria (usa BRT)
+  const now = new Date();
+  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const { data: txs } = await supabase
+    .from("transactions")
+    .select("category, amount")
+    .eq("user_id", userId)
+    .eq("type", "expense")
+    .gte("transaction_date", monthStart);
+
+  const totals: Record<string, number> = {};
+  for (const t of txs ?? []) {
+    const k = String(t.category ?? "").toLowerCase();
+    totals[k] = (totals[k] ?? 0) + Number(t.amount);
+  }
+
+  const lines = cats.map((c: any) => {
+    const icon = c.icon ?? "📂";
+    const total = totals[String(c.name).toLowerCase()] ?? 0;
+    const totalStr = total > 0
+      ? ` — R$ ${total.toFixed(2).replace(".", ",")}`
+      : "";
+    return `${icon} *${c.name}*${totalStr}`;
+  });
+
+  return `📂 *Suas categorias*\n\n${lines.join("\n")}\n\n_Totais referentes a este mês_`;
+}
+
+/** Primeira etapa: tenta achar a transação a deletar. Se há múltiplas, mostra lista pra escolher. */
+async function handleFinanceDelete(
+  userId: string,
+  message: string,
+  userTz = "America/Sao_Paulo"
+): Promise<{ response: string; pendingAction?: string; pendingContext?: any }> {
+  const m = message
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  // Extrai valor explícito: "50 reais", "R$ 200", "150.50"
+  const amountMatch = m.match(/\b(\d+(?:[.,]\d{1,2})?)\s*(reais?|r\$|rs|\$)?/);
+  const amount = amountMatch ? parseFloat(amountMatch[1].replace(",", ".")) : null;
+
+  // Detecta "última"/"ultimo"/"recente"
+  const wantsLast = /\b(ultima?|ultimo|ultimas?|ultimos|recente|mais recente)\b/.test(m);
+
+  // Busca transações do usuário
+  let query = supabase
+    .from("transactions")
+    .select("id, description, amount, type, category, transaction_date, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (amount !== null && !isNaN(amount)) {
+    // Busca por valor exato (tolerância de 1 centavo para lidar com float)
+    query = query.gte("amount", amount - 0.01).lte("amount", amount + 0.01);
+  }
+
+  const { data: txs, error } = await query;
+
+  if (error || !txs || txs.length === 0) {
+    if (amount !== null) {
+      return { response: `🔍 Não encontrei nenhuma transação de *R$ ${amount.toFixed(2).replace(".", ",")}*. Pode verificar no app e tentar de novo?` };
+    }
+    return { response: "🔍 Não encontrei transações pra apagar. Você ainda não registrou nada ou já apagou tudo." };
+  }
+
+  // Se só tem 1, ou usuário pediu "a última" → deleta direto
+  if (txs.length === 1 || (wantsLast && txs.length > 0)) {
+    const t: any = txs[0];
+    // Armazena no pending_context pra confirmar antes de deletar
+    const emoji = t.type === "expense" ? "🔴" : "🟢";
+    return {
+      response: `Quer mesmo apagar essa transação?\n\n${emoji} *${t.description}*\n💰 R$ ${Number(t.amount).toFixed(2).replace(".", ",")}\n📂 ${t.category}\n📅 ${new Date(t.transaction_date + "T12:00:00").toLocaleDateString("pt-BR")}\n\nResponda *sim* pra apagar ou *não* pra cancelar.`,
+      pendingAction: "finance_delete_confirm",
+      pendingContext: { transaction_ids: [t.id], single: true },
+    };
+  }
+
+  // Múltiplas transações → mostra lista numerada pra escolher
+  const lines = txs.slice(0, 5).map((t: any, i: number) => {
+    const emoji = t.type === "expense" ? "🔴" : "🟢";
+    const dateStr = new Date(t.transaction_date + "T12:00:00").toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
+    return `*${i + 1}.* ${emoji} ${t.description} — R$ ${Number(t.amount).toFixed(2).replace(".", ",")} (${dateStr})`;
+  });
+
+  const extraMsg = txs.length > 5 ? `\n\n_Mostrando 5 mais recentes de ${txs.length} encontradas._` : "";
+
+  return {
+    response: `🔍 Encontrei *${txs.length}* transação(ões). Qual você quer apagar?\n\n${lines.join("\n")}${extraMsg}\n\nResponda com o *número* da transação (1 a ${Math.min(5, txs.length)}).`,
+    pendingAction: "finance_delete_confirm",
+    pendingContext: {
+      transaction_ids: txs.slice(0, 5).map((t: any) => t.id),
+      options: txs.slice(0, 5).map((t: any) => ({
+        id: t.id,
+        description: t.description,
+        amount: Number(t.amount),
+        type: t.type,
+      })),
+      single: false,
+    },
+  };
+}
+
+/** Segunda etapa: confirma (sim/não) ou escolhe número da lista */
+async function handleFinanceDeleteConfirm(
+  userId: string,
+  message: string,
+  session: Record<string, unknown>
+): Promise<{ response: string; pendingAction: string | null; pendingContext: any }> {
+  const ctx = (session.pending_context ?? {}) as any;
+  const m = message.toLowerCase().trim();
+
+  // Cancelar o fluxo
+  if (/^(nao|n|cancela|cancelar|deixa|esquece|nope|nada)\b/.test(m)) {
+    return { response: "✅ Ok, não apaguei nada.", pendingAction: null, pendingContext: null };
+  }
+
+  // Caso "single": confirma com sim/ok → deleta
+  if (ctx.single) {
+    if (/^(sim|s|ok|confirmar|pode|pode ser|apaga|apagar|deleta|deletar|isso|confirma)\b/.test(m)) {
+      const [idToDelete] = ctx.transaction_ids ?? [];
+      if (!idToDelete) return { response: "⚠️ Erro: transação não encontrada.", pendingAction: null, pendingContext: null };
+      const { error } = await supabase.from("transactions").delete().eq("id", idToDelete).eq("user_id", userId);
+      if (error) return { response: "⚠️ Erro ao apagar. Tente de novo.", pendingAction: null, pendingContext: null };
+      return { response: "🗑️ *Transação apagada!*", pendingAction: null, pendingContext: null };
+    }
+    // Resposta ambígua → mantém o pending
+    return {
+      response: "Não entendi. Responda *sim* pra apagar ou *não* pra cancelar.",
+      pendingAction: "finance_delete_confirm",
+      pendingContext: ctx,
+    };
+  }
+
+  // Caso "múltiplas": usuário escolhe número
+  const numMatch = m.match(/^(\d+)$/);
+  if (numMatch) {
+    const idx = parseInt(numMatch[1], 10) - 1;
+    const options = (ctx.options ?? []) as Array<{ id: string; description: string; amount: number; type: string }>;
+    if (idx < 0 || idx >= options.length) {
+      return {
+        response: `Número inválido. Escolha entre 1 e ${options.length}.`,
+        pendingAction: "finance_delete_confirm",
+        pendingContext: ctx,
+      };
+    }
+    const chosen = options[idx];
+    const { error } = await supabase.from("transactions").delete().eq("id", chosen.id).eq("user_id", userId);
+    if (error) return { response: "⚠️ Erro ao apagar. Tente de novo.", pendingAction: null, pendingContext: null };
+    const emoji = chosen.type === "expense" ? "🔴" : "🟢";
+    return {
+      response: `🗑️ *Transação apagada!*\n\n${emoji} ${chosen.description} — R$ ${chosen.amount.toFixed(2).replace(".", ",")}`,
+      pendingAction: null,
+      pendingContext: null,
+    };
+  }
+
+  // Cancelar com texto não-numérico
+  if (/^(nao|n|cancela|cancelar|deixa|esquece)/.test(m)) {
+    return { response: "✅ Ok, não apaguei nada.", pendingAction: null, pendingContext: null };
+  }
+
+  return {
+    response: `Escolha o *número* da transação que quer apagar (1 a ${(ctx.options ?? []).length}) ou diga *cancela*.`,
+    pendingAction: "finance_delete_confirm",
+    pendingContext: ctx,
+  };
+}
+
 // Mapa de cores por tipo de evento
 const EVENT_TYPE_COLORS: Record<string, string> = {
   compromisso: "#3b82f6",
@@ -2154,22 +2341,51 @@ async function handleAgendaEdit(
       .filter((w) => w.length > 2)[0] ?? "";
 
     if (keyword) {
-      const { data: found } = await supabase
+      // Busca até 5 eventos futuros com o keyword — se há múltiplos, pede pra escolher
+      const { data: matches } = await supabase
         .from("events")
         .select("id, title, event_date, event_time, reminder_minutes_before")
         .eq("user_id", userId)
         .eq("status", "pending")
+        .gte("event_date", today) // só eventos futuros ou de hoje
         .ilike("title", `%${keyword}%`)
         .order("event_date", { ascending: true })
-        .limit(1)
-        .maybeSingle();
+        .limit(5);
 
-      if (!found) {
+      if (!matches || matches.length === 0) {
         return {
           response: `Não encontrei nenhum compromisso com "${keyword}". 🔍\n\nComo está o nome do compromisso que você quer editar?`,
         };
       }
-      // Encontrou — usa como contexto e continua para extração de edição
+
+      // Múltiplos matches → desambiguação
+      if (matches.length > 1) {
+        const lines = matches.map((ev: any, i: number) => {
+          const dateStr = new Date(ev.event_date + "T12:00:00").toLocaleDateString("pt-BR", { day: "numeric", month: "short", weekday: "short" });
+          const timeStr = ev.event_time ? ` às ${ev.event_time.slice(0, 5)}` : "";
+          return `*${i + 1}.* ${ev.title} — ${dateStr}${timeStr}`;
+        }).join("\n");
+
+        return {
+          response: `Encontrei *${matches.length}* compromissos com "${keyword}". Qual você quer editar?\n\n${lines}\n\nResponda com o *número* (1 a ${matches.length}) e depois me diga o que mudar.`,
+          pendingAction: "agenda_edit_choose",
+          pendingContext: {
+            step: "choosing_event",
+            keyword,
+            pending_edit_text: message,
+            options: matches.map((ev: any) => ({
+              id: ev.id,
+              title: ev.title,
+              event_date: ev.event_date,
+              event_time: ev.event_time,
+              reminder_minutes: ev.reminder_minutes_before,
+            })),
+          },
+        };
+      }
+
+      // Único match → usa direto
+      const found = matches[0];
       ctx.event_id = found.id;
       ctx.event_title = found.title;
       ctx.event_date = found.event_date;
@@ -5219,6 +5435,18 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = await handleHabitCheckin(profile.id, text, userTz);
     } else if (intent === "finance_record") {
       responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config);
+    } else if (intent === "category_list") {
+      responseText = await handleCategoryList(profile.id);
+    } else if (intent === "finance_delete") {
+      const delResult = await handleFinanceDelete(profile.id, text, userTz);
+      responseText = delResult.response;
+      pendingAction = delResult.pendingAction;
+      pendingContext = delResult.pendingContext;
+    } else if (intent === "finance_delete_confirm") {
+      const confirmResult = await handleFinanceDeleteConfirm(profile.id, text, session ?? {});
+      responseText = confirmResult.response;
+      pendingAction = confirmResult.pendingAction;
+      pendingContext = confirmResult.pendingContext;
     } else if (intent === "finance_report") {
       const reportResult = await handleFinanceReport(profile.id, text);
       responseText = reportResult.text;
@@ -5247,6 +5475,43 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
+    } else if (intent === "agenda_edit_choose") {
+      // Usuário escolheu um evento da lista de desambiguação
+      const ctx = (session?.pending_context ?? {}) as any;
+      const options = (ctx.options ?? []) as Array<{ id: string; title: string; event_date: string; event_time: string | null; reminder_minutes: number | null }>;
+      const numMatch = text.trim().match(/^(\d+)$/);
+      if (/^(nao|cancela|deixa|esquece|nada)/i.test(text.trim())) {
+        responseText = "✅ Ok, não editei nada.";
+      } else if (!numMatch) {
+        responseText = `Por favor responda apenas com o *número* do compromisso (1 a ${options.length}).`;
+        pendingAction = "agenda_edit_choose";
+        pendingContext = ctx;
+      } else {
+        const idx = parseInt(numMatch[1], 10) - 1;
+        if (idx < 0 || idx >= options.length) {
+          responseText = `Número inválido. Escolha entre 1 e ${options.length}.`;
+          pendingAction = "agenda_edit_choose";
+          pendingContext = ctx;
+        } else {
+          const chosen = options[idx];
+          // Continua o fluxo de edit com o evento escolhido e o texto de edição original
+          const fakeSession = {
+            pending_context: {
+              event_id: chosen.id,
+              event_title: chosen.title,
+              event_date: chosen.event_date,
+              event_time: chosen.event_time,
+              reminder_minutes: chosen.reminder_minutes,
+              step: "awaiting_change",
+            },
+          };
+          const editText = ctx.pending_edit_text || text;
+          const result = await handleAgendaEdit(profile.id, sendPhone || replyTo, editText, fakeSession, userTz);
+          responseText = result.response;
+          pendingAction = result.pendingAction;
+          pendingContext = result.pendingContext;
+        }
+      }
     } else if (intent === "agenda_delete") {
       responseText = await handleAgendaDelete(profile.id, text);
     } else if (intent === "notes_save") {

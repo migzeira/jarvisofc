@@ -569,3 +569,146 @@ Deno.test("isReminderAccept - '15 min' → false", () => {
 Deno.test("isReminderAccept - 'quero ser lembrado' → true", () => {
   assertEquals(isReminderAccept("quero ser lembrado"), true);
 });
+
+// ─────────────────────────────────────────────
+// Onda 2 — Novos intents + regex expandidos
+// ─────────────────────────────────────────────
+
+// category_list
+Deno.test("classifyIntent - category_list: 'quais categorias tenho?'", () => {
+  assertEquals(classifyIntent("quais categorias tenho?"), "category_list");
+});
+
+Deno.test("classifyIntent - category_list: 'mostra minhas categorias'", () => {
+  assertEquals(classifyIntent("mostra minhas categorias"), "category_list");
+});
+
+Deno.test("classifyIntent - category_list: 'lista de categorias'", () => {
+  assertEquals(classifyIntent("lista de categorias"), "category_list");
+});
+
+Deno.test("classifyIntent - category_list: 'minhas categorias'", () => {
+  assertEquals(classifyIntent("minhas categorias"), "category_list");
+});
+
+// finance_delete
+Deno.test("classifyIntent - finance_delete: 'apaga a última transação'", () => {
+  assertEquals(classifyIntent("apaga a ultima transacao"), "finance_delete");
+});
+
+Deno.test("classifyIntent - finance_delete: 'apaga transação de 50 reais'", () => {
+  assertEquals(classifyIntent("apaga transacao de 50 reais"), "finance_delete");
+});
+
+Deno.test("classifyIntent - finance_delete: 'deleta o gasto de mercado'", () => {
+  assertEquals(classifyIntent("deleta o gasto de mercado"), "finance_delete");
+});
+
+Deno.test("classifyIntent - finance_delete: 'remove a ultima despesa'", () => {
+  assertEquals(classifyIntent("remove a ultima despesa"), "finance_delete");
+});
+
+// finance_report expandido
+Deno.test("classifyIntent - finance_report expandido: 'quanto gastei mês passado'", () => {
+  assertEquals(classifyIntent("quanto gastei mes passado"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report expandido: 'gastos de março'", () => {
+  assertEquals(classifyIntent("gastos de marco"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report expandido: 'quantas despesas esse mes'", () => {
+  assertEquals(classifyIntent("quantas despesas esse mes"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report expandido: 'meu saldo'", () => {
+  assertEquals(classifyIntent("meu saldo"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report expandido: 'extrato'", () => {
+  assertEquals(classifyIntent("extrato"), "finance_report");
+});
+
+Deno.test("classifyIntent - finance_report expandido: 'quanto recebi ontem'", () => {
+  assertEquals(classifyIntent("quanto recebi ontem"), "finance_report");
+});
+
+// agenda_query expandido
+Deno.test("classifyIntent - agenda_query expandido: 'quais compromissos tenho amanhã?'", () => {
+  assertEquals(classifyIntent("quais compromissos tenho amanha?"), "agenda_query");
+});
+
+Deno.test("classifyIntent - agenda_query expandido: 'quantos eventos hoje?'", () => {
+  assertEquals(classifyIntent("quantos eventos hoje?"), "agenda_query");
+});
+
+Deno.test("classifyIntent - agenda_query expandido: 'qual é meu próximo compromisso?'", () => {
+  assertEquals(classifyIntent("qual e meu proximo compromisso?"), "agenda_query");
+});
+
+Deno.test("classifyIntent - agenda_query expandido: 'primeiro compromisso'", () => {
+  assertEquals(classifyIntent("primeiro compromisso"), "agenda_query");
+});
+
+Deno.test("classifyIntent - agenda_query expandido: 'tenho algum compromisso amanhã?'", () => {
+  assertEquals(classifyIntent("tenho algum compromisso amanha?"), "agenda_query");
+});
+
+// reminder_list expandido
+Deno.test("classifyIntent - reminder_list expandido: 'quantos lembretes tenho?'", () => {
+  assertEquals(classifyIntent("quantos lembretes tenho?"), "reminder_list");
+});
+
+Deno.test("classifyIntent - reminder_list expandido: 'qual é meu próximo lembrete?'", () => {
+  assertEquals(classifyIntent("qual e meu proximo lembrete?"), "reminder_list");
+});
+
+Deno.test("classifyIntent - reminder_list expandido: 'lembretes de hoje'", () => {
+  assertEquals(classifyIntent("lembretes de hoje"), "reminder_list");
+});
+
+Deno.test("classifyIntent - reminder_list expandido: 'próximo lembrete'", () => {
+  assertEquals(classifyIntent("proximo lembrete"), "reminder_list");
+});
+
+// reminder_snooze expandido
+Deno.test("classifyIntent - reminder_snooze expandido: 'snooze por 2 horas'", () => {
+  assertEquals(classifyIntent("snooze por 2 horas"), "reminder_snooze");
+});
+
+Deno.test("classifyIntent - reminder_snooze expandido: 'adia por 30 minutos'", () => {
+  assertEquals(classifyIntent("adia por 30 minutos"), "reminder_snooze");
+});
+
+// ─────────────────────────────────────────────
+// Testes de regressão — garantir que fixes não quebraram nada
+// ─────────────────────────────────────────────
+
+// finance_record ainda funciona (não colide com novos finance_report/finance_delete)
+Deno.test("classifyIntent regressão: 'gastei 50 no mercado' ainda é finance_record", () => {
+  assertEquals(classifyIntent("gastei 50 no mercado"), "finance_record");
+});
+
+Deno.test("classifyIntent regressão: 'paguei 200 no aluguel' ainda é finance_record", () => {
+  assertEquals(classifyIntent("paguei 200 no aluguel"), "finance_record");
+});
+
+// reminder_set ainda funciona (não colide com reminder_list expandido)
+Deno.test("classifyIntent regressão: 'me lembra daqui 30 min' ainda é reminder_set", () => {
+  assertEquals(classifyIntent("me lembra daqui 30 min sobre cafe"), "reminder_set");
+});
+
+// greeting ainda pega "oi"
+Deno.test("classifyIntent regressão: 'oi' ainda é greeting", () => {
+  assertEquals(classifyIntent("oi"), "greeting");
+});
+
+// agenda_create ainda pega "marcar reunião"
+Deno.test("classifyIntent regressão: 'marcar reunião amanha' ainda é agenda_create", () => {
+  assertEquals(classifyIntent("marcar reuniao amanha"), "agenda_create");
+});
+
+// budget_set ainda pega
+Deno.test("classifyIntent regressão: 'quero gastar no maximo 500 em alimentacao'", () => {
+  assertEquals(classifyIntent("quero gastar no maximo 500 em alimentacao"), "budget_set");
+});

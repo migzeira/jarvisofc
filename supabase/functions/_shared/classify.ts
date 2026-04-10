@@ -10,6 +10,8 @@ export type Intent =
   | "greeting"
   | "finance_record"
   | "finance_report"
+  | "finance_delete"
+  | "category_list"
   | "budget_set"
   | "budget_query"
   | "recurring_create"
@@ -37,6 +39,8 @@ export type Intent =
   | "contact_save_confirm"
   | "list_contacts"
   | "reminder_delegate"
+  | "finance_delete_confirm"
+  | "agenda_edit_choose"
   | "ai_chat";
 
 export function classifyIntent(msg: string): Intent {
@@ -83,11 +87,42 @@ export function classifyIntent(msg: string): Intent {
   )
     return "recurring_create";
 
-  // Relatório financeiro (antes de finance_record para evitar falso positivo)
+  // Listar categorias (antes de finance_report pra priorizar)
+  // "quais categorias tenho?" / "mostra minhas categorias" / "lista de categorias"
   if (
-    /quanto.{0,15}(gastei|ganhei|recebi|devo)|total (de |dos |das )?(gastos?|despesas?)|relat[oó]rio|resumo (de |dos )?(gastos?|financ)|meus gastos|minhas despesas/.test(
-      m
-    )
+    /\b(quais|minhas|liste?|lista(r)?|mostra(r)?|ver|veja|mostre)\s+(s[ãa]o\s+)?(minhas\s+|as\s+|de\s+|das\s+|os\s+)?categorias?\b/.test(m) ||
+    /^(categorias?|minhas categorias)\s*\??$/.test(m) ||
+    /\b(que|quais)\s+categorias?\s+(eu\s+)?(tenho|existe|temos)\b/.test(m)
+  )
+    return "category_list";
+
+  // Deletar/apagar transação (antes de finance_record pra priorizar)
+  // "apaga transação de 50 reais" / "remove o gasto de mercado" / "deleta a ultima transacao"
+  if (
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|cancela(r)?)\s+(a\s+|o\s+|as\s+|os\s+)?(ultima?|ultimo|ultimas?|ultimos)\s+(transacao|transacoes|gasto|gastos|despesa|despesas|receita|receitas|lancamento|lancamentos)\b/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|o\s+)?(transacao|gasto|despesa|receita|lancamento)\s+(de|do|da)\s+/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(aquele|aquela|esse|essa)\s+(gasto|despesa|transacao|receita|lancamento)/.test(m)
+  )
+    return "finance_delete";
+
+  // Relatório financeiro (antes de finance_record para evitar falso positivo)
+  // Expandido: inclui "quanto", "quantos", "quantas", "qual", "mes passado", "semana passada",
+  // "ano passado", "media", "gasto medio", nomes de mês, "em [categoria]", etc.
+  if (
+    /quanto.{0,15}(gastei|ganhei|recebi|devo|entrou|saiu|sobrou|restou)/.test(m) ||
+    /quant[ao]s\s+(gastos?|despesas?|receitas?|transacoes?|lancamentos?|reais)\s+/.test(m) ||
+    /total (de |dos |das )?(gastos?|despesas?|receitas?)/.test(m) ||
+    /\b(relat[oó]rio|resumo)\b.*(financ|gasto|despesa|receita|mes|semana|hoje|ontem)/.test(m) ||
+    /^(relat[oó]rio|resumo)\s*(financeiro|do mes|da semana|de hoje|de ontem)?\s*\??$/.test(m) ||
+    /\b(meus|minhas)\s+(gastos?|despesas?|receitas?|lancamentos?)\b/.test(m) ||
+    /\b(gast[oa]s?\s+)?(de\s+)?(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/.test(m) ||
+    /\b(gasto|despesa|receita)\s+(medi[oa]|total|geral)\b/.test(m) ||
+    /\b(qual|quanto|como)\s+(e|esta|foi|ficou)\s+(meu|minha)\s+(saldo|balanco|financeiro|extrato)\b/.test(m) ||
+    /\bmeu\s+(saldo|balanco|extrato)\b/.test(m) ||
+    /\bextrato\b/.test(m) ||
+    /\bgastei\s+(mais|menos|muito|pouco)\s+(com|em|de)\s+/.test(m) ||
+    // "em alimentação mês passado?" — pergunta implícita
+    /\b(em|com|de)\s+\w+\s+(mes\s+passado|semana\s+passada|ano\s+passado|anterior)\b/.test(m)
   )
     return "finance_report";
 
@@ -142,11 +177,27 @@ export function classifyIntent(msg: string): Intent {
   )
     return "agenda_create";
 
-  // Consultar agenda
+  // Consultar agenda — expandido com "quais", "quantos", "primeiro", "próximo"
   if (
-    /o que (tenho|tem) (hoje|amanha|marcado|essa semana|semana|na agenda)|minha agenda|(proximos?|pr[oó]ximos?) (eventos?|compromissos?|reunioes?)|(agenda de|agenda do|agenda da|agenda dessa|agenda desta) (hoje|amanha|semana|mes)|meus compromissos|tem algo marcado|compromissos de (hoje|amanha|semana)|agenda dessa semana|compromissos da semana|eventos? (de|da|do) (hoje|amanha|semana|mes)|o que tenho marcado/.test(
-      m
-    )
+    /o que (tenho|tem) (hoje|amanha|marcado|essa semana|semana|na agenda)/.test(m) ||
+    /minha agenda/.test(m) ||
+    /(proximos?|pr[oó]ximos?) (eventos?|compromissos?|reunioes?|consultas?)/.test(m) ||
+    /(agenda de|agenda do|agenda da|agenda dessa|agenda desta) (hoje|amanha|semana|mes)/.test(m) ||
+    /meus compromissos/.test(m) ||
+    /tem algo marcado/.test(m) ||
+    /compromissos de (hoje|amanha|semana)/.test(m) ||
+    /agenda dessa semana|compromissos da semana/.test(m) ||
+    /eventos? (de|da|do) (hoje|amanha|semana|mes)/.test(m) ||
+    /o que tenho marcado/.test(m) ||
+    // NOVO: "quais compromissos tenho amanhã?" / "quais eventos" / "quais reuniões"
+    /\bquais\s+(s[ãa]o\s+)?(meus\s+)?(compromissos?|eventos?|reunioes?|consultas?|tarefas?)\b/.test(m) ||
+    // "quantos compromissos tenho hoje?"
+    /\bquantos?\s+(compromissos?|eventos?|reunioes?|consultas?|tarefas?)\b/.test(m) ||
+    // "qual é meu próximo/primeiro compromisso?"
+    /\b(qual|quando)\s+(e|é|foi)\s+(meu|minha)\s+(proximo|proxima|pr[oó]ximo|pr[oó]xima|primeiro|primeira|ultimo|ultima)\s+(compromisso|evento|reuniao|consulta|tarefa)/.test(m) ||
+    /\b(proximo|pr[oó]ximo|primeiro)\s+(compromisso|evento|reuniao|consulta)/.test(m) ||
+    // "tenho algum compromisso amanhã?"
+    /\btenho\s+(algum|algo)\s+(compromisso|evento|reuniao|consulta)\b/.test(m)
   )
     return "agenda_query";
 
@@ -175,12 +226,14 @@ export function classifyIntent(msg: string): Intent {
     return "notes_save";
 
   // Snooze de lembrete — adiar um lembrete que JÁ foi disparado
-  // IMPORTANTE: só ativa com "de novo", "novamente", "isso", "adiar" etc.
+  // IMPORTANTE: só ativa com "de novo", "novamente", "isso", "adiar", "snooze" etc.
   // NÃO ativa com "me lembra daqui X sobre Y" (isso é reminder_set)
   if (
     /^snooze\b/.test(m) ||
+    /^snooze\s+(por|de|em)?\s*\d+\s*(min|minuto|minutos|h|hora|horas)/.test(m) ||
     m === "adiar" || m === "adia" ||
     /^adiar?\s+\d+\s*(min|minuto|hora)/.test(m) ||
+    /^(adia|adiar)\s+(por|em|de)\s*\d+/.test(m) ||
     /me lembra (de novo|novamente) (daqui|em)/.test(m) ||
     /me lembra isso (daqui|em) \d/.test(m) ||
     /me avisa (de novo|novamente) (daqui|em) \d/.test(m) ||
@@ -191,12 +244,21 @@ export function classifyIntent(msg: string): Intent {
     /daqui a pouco de novo/.test(m)
   ) return "reminder_snooze";
 
-  // Listar lembretes
+  // Listar lembretes — expandido com "quantos", "próximo", "tem algum"
   if (
     /^(quais|mostra|lista|ver|veja|mostre|me mostra)\s+(s[ãa]o\s+)?(meus\s+)?lembretes?/.test(m) ||
     /^meus lembretes?$/.test(m) ||
     /^(tem|tenho|tenho\s+algum)\s+(lembrete|lembretes)\s*(pendente|ativo|marcado)?/.test(m) ||
-    /^(lembretes?\s*(pendentes?|ativos?|marcados?))$/.test(m)
+    /^(lembretes?\s*(pendentes?|ativos?|marcados?))$/.test(m) ||
+    // NOVO: "quantos lembretes tenho?"
+    /\bquantos?\s+lembretes?\b/.test(m) ||
+    // "qual é meu próximo/primeiro lembrete?"
+    /\b(qual|quando)\s+(e|é|foi)\s+(meu|minha)\s+(proximo|proxima|pr[oó]ximo|pr[oó]xima|primeiro|primeira|ultimo|ultima)\s+lembrete/.test(m) ||
+    /\b(proximo|pr[oó]ximo|primeiro)\s+lembrete\b/.test(m) ||
+    // "quais são meus lembretes de hoje/amanhã/semana"
+    /\blembretes?\s+(de|da|do|dessa|desta)\s+(hoje|amanha|semana|mes|tarde|manha|noite)\b/.test(m) ||
+    // "lembretes de hoje"
+    /^lembretes?\s+(de|da|do|dessa|desta)?\s*(hoje|amanha|semana|mes)\s*\??$/.test(m)
   ) return "reminder_list";
 
   // Cancelar lembrete
