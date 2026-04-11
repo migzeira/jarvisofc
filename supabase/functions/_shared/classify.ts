@@ -129,11 +129,9 @@ export function classifyIntent(msg: string): Intent {
   )
     return "finance_report";
 
-  // Registro financeiro
+  // Registro financeiro — expandido
   if (
-    /gastei|comprei|paguei|recebi|ganhei|custou|vale |custa |despesa|despendi|gasei/.test(
-      m
-    )
+    /gastei|comprei|paguei|recebi|ganhei|custou|vale |custa |despesa|despendi|gasei|gasto|gasta|sai|saiu|de quanto/.test(m)
   )
     return "finance_record";
 
@@ -164,17 +162,19 @@ export function classifyIntent(msg: string): Intent {
     return "list_contacts";
 
   // Enviar mensagem para um contato salvo
-  // "manda mensagem pra cibele dizendo X" / "manda uma mensagem pro João que..."
+  // "manda mensagem pra cibele dizendo X" / "manda uma mensagem pro Joao que..."
   // "fala pra/pro X que..." / "daqui 30min manda pra X..."
   if (
-    /\b(manda(r)?|envia(r)?|fala(r)?|diz(er)?|avisa(r)?)\s+(uma?\s+)?(mensagem\s+)?(pra|para|pro|ao?)\s+\w/i.test(m) &&
-    !/\b(lembrete|reminder|me avisa|me lembra)\b/i.test(m)
+    (/\b(manda(r)?|envia(r)?|fala(r)?|diz(er)?|avisa(r)?|escreve(r)?)\s+(uma?\s+)?(mensagem|msg)?\s*(pra|para|pro|ao)\s+\w/i.test(m) ||
+    /\b(fala(r)?|diz(er)?|avisa(r)?)\s+(pra|para|pro|ao)\s+\w+\s+(que|dizendo|falando|sobre)/i.test(m) ||
+    /\b(manda(r)?|envia(r)?)\s+(pra|para|pro|ao)\s+\w+\s+(dizendo|falando|contando)/i.test(m)) &&
+    !/\b(lembrete|reminder|me avisa|me lembra|agenda|marcar)\b/i.test(m)
   )
     return "send_to_contact";
 
   // Criar agenda
   if (
-    /marca(r)?( na| uma| pra)? (agenda|reuniao|meeting|compromisso|consulta|evento)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso|medico|dentista|medica)|colocar na agenda|adicionar na agenda|criar evento|novo compromisso|nova reuniao|nova consulta|novo evento|agenda dia \d|vou ao (medico|dentista|hospital|especialista)|vou a (clinica|consulta)|preciso ir ao (medico|dentista|hospital)|marcar com o (medico|dentista|doutor|dra|dr)/.test(
+    /marca(r)?( na| uma| pra)? (agenda|reuniao|meeting|compromisso|consulta|evento)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso|medico|dentista|medica)|colocar na agenda|adicionar na agenda|criar evento|novo compromisso|nova reuniao|nova consulta|novo evento|agenda dia \d|vou ao (medico|dentista|hospital|especialista)|vou a (clinica|consulta)|preciso ir ao (medico|dentista|hospital)|marcar com o (medico|dentista|doutor|dra|dr)|marca (uma )?reuniao|agenda (uma )?consulta|tenho que ir ao/.test(
       m
     )
   )
