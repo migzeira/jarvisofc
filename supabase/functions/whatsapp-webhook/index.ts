@@ -3334,7 +3334,39 @@ async function handleReminderSet(
   }
 
   // ── Extrai intenção do lembrete com IA ──
-  const parsed = await parseReminderIntent(message, nowIso, lang);
+  // MAS PRIMEIRO: tenta detectar "daqui X minutos/horas" sem IA (mais rápido e preciso)
+  const msgNormLow = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const delayMatch = msgNormLow.match(/daqui\s+(\d+)\s*(minuto|minutos|min|hora|horas|h)\b|em\s+(\d+)\s*(minuto|minutos|min|hora|horas|h)\b/i);
+
+  let parsed = null;
+
+  if (delayMatch) {
+    // Conseguiu extrair "daqui X minutos/horas" — não precisa IA
+    const num = parseInt(delayMatch[1] || delayMatch[3]);
+    const unit = (delayMatch[2] || delayMatch[4]).toLowerCase();
+    const delayMs = (unit.startsWith("min") || unit === "min") ? num * 60000 : num * 3600000;
+    const remindAtMs = Date.now() + delayMs;
+    const remindAtDate = new Date(remindAtMs);
+    const remindAtIso = remindAtDate.toLocaleString("sv-SE", {
+      timeZone: userTz,
+      hour12: false,
+    }).replace(" ", "T") + getTzOffset(userTz);
+
+    // Extrai título do que sobrou da mensagem (remove "daqui X minutos/horas de")
+    const titlePart = message.replace(/daqui\s+\d+\s*(?:minuto|minutos|min|hora|horas|h)\s+(?:de\s+)?/i, "").trim();
+
+    parsed = {
+      title: titlePart.substring(0, 60) || "Lembrete",
+      message: `⏰ ${titlePart}`,
+      remind_at: remindAtIso,
+      recurrence: "none",
+      recurrence_value: null,
+    };
+  } else {
+    // Precisa usar IA para parsing
+    parsed = await parseReminderIntent(message, nowIso, lang);
+  }
+
 
   if (!parsed) {
     return { response: "⚠️ Não entendi o lembrete. Tente: *me lembra de ligar pro João amanhã às 14h*" };

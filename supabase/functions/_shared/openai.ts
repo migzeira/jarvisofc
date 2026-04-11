@@ -752,6 +752,9 @@ Analise o pedido de lembrete e retorne JSON com EXATAMENTE esta estrutura:
 }
 
 Regras para remind_at:
+- "daqui X minutos" / "em X minutos" / "daqui X horas" / "em X horas" → adicione esse tempo à hora atual
+  - Exemplo: se agora é 14:00 e pediu "daqui 2 minutos" → agende para 14:02
+  - Exemplo: se agora é 14:00 e pediu "daqui 1 hora" → agende para 15:00
 - ATENÇÃO: compare CUIDADOSAMENTE a hora atual com a hora mencionada. Se a hora mencionada ainda NÃO passou hoje, agende para HOJE mesmo.
 - Exemplo: se agora é 01:36 e o usuário disse "1h50", a hora 01:50 ainda não passou → agende para HOJE (não amanhã).
 - Exemplo: se agora é 14:00 e o usuário disse "10h", a hora 10:00 já passou → agende para amanhã.
