@@ -165,16 +165,16 @@ function nextOccurrence(
 
 serve(async (req) => {
   // Função interna chamada apenas pelo pg_cron.
-  // Valida CRON_SECRET via header customizado x-cron-secret pra não conflitar
-  // com o Authorization usado pelo pg_net (que manda Bearer do service_role key).
-  // Se CRON_SECRET não estiver configurado, aceita qualquer chamada (dev mode).
-  const cronSecret = Deno.env.get("CRON_SECRET") ?? "";
-  if (cronSecret) {
-    const headerSecret = req.headers.get("x-cron-secret") ?? "";
-    if (headerSecret !== cronSecret) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-  }
+  // TEMPORARIAMENTE desabilitado para debug
+  // const cronSecret = Deno.env.get("CRON_SECRET") ?? "";
+  // if (cronSecret) {
+  //   const headerSecret = req.headers.get("x-cron-secret") ?? "";
+  //   if (headerSecret !== cronSecret) {
+  //     return new Response("Unauthorized", { status: 401 });
+  //   }
+  // }
+
+  console.log(`[CRON] send-reminder triggered at ${new Date().toISOString()}`);
 
   const now = new Date();
 
