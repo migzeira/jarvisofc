@@ -50,40 +50,6 @@ function todayInTz(tz: string): string {
   return new Date().toLocaleDateString("sv-SE", { timeZone: tz });
 }
 
-/**
- * Sanitiza texto pra uso seguro em PostgREST .or() e .ilike() filters.
- * Remove caracteres que poderiam quebrar o parser do PostgREST:
- *   - vírgulas (,)  → separador de filtros
- *   - parênteses    → grupo de filtros
- *   - ponto (.)     → separador coluna.operador
- *   - asteriscos    → LIKE wildcards (só * que vira %)
- *   - aspas         → injection clássico
- *   - null bytes    → postgres quebra
- * Mantém letras, números, espaço, acentos, hífen, underscore.
- */
-function sanitizeForFilter(s: string): string {
-  if (!s) return "";
-  return String(s)
-    .replace(/[\x00]/g, "")         // null bytes
-    .replace(/[,.()"'*\\]/g, " ")   // caracteres que podem quebrar PostgREST
-    .replace(/\s+/g, " ")           // colapsa espaços
-    .trim()
-    .slice(0, 80);                  // limita tamanho pra não explodir query
-}
-
-/**
- * Normaliza phone number pra uso seguro em .or() filters.
- * Aceita somente dígitos. Retorna string vazia se input inválido.
- * Previne injection e garante que o input seja sempre digits-only.
- */
-function sanitizePhone(phone: string): string {
-  if (!phone) return "";
-  const digits = String(phone).replace(/\D/g, "");
-  // Phones válidos: 8-15 dígitos (E.164 permite até 15)
-  if (digits.length < 8 || digits.length > 15) return "";
-  return digits;
-}
-
 function langToLocale(lang: string): string {
   const map: Record<string, string> = { "pt-BR": "pt-BR", "en": "en-US", "es": "es-ES" };
   return map[lang] ?? "pt-BR";
@@ -395,11 +361,7 @@ Frase: "${message}"`;
   return `✅ *Habito criado!*\n\n${parsed.icon || "🎯"} *${parsed.name}*\n${parsed.description ? `📝 ${parsed.description}\n` : ""}⏰ Lembrete diario as ${parsed.reminder_time || "08:00"}\n\nQuando completar, responda *feito* e eu registro seu progresso!`;
 }
 
-async function handleHabitCheckin(
-  userId: string,
-  message: string,
-  userTz = "America/Sao_Paulo"
-): Promise<{ response: string; pendingAction?: string; pendingContext?: any }> {
+async function handleHabitCheckin(userId: string, message: string, userTz = "America/Sao_Paulo"): Promise<string> {
   // Usa timezone do usuario para determinar "hoje" corretamente
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
 
@@ -411,7 +373,7 @@ async function handleHabitCheckin(
     .eq("is_active", true);
 
   if (!habits?.length) {
-    return { response: "Voce nao tem habitos ativos. Crie um: *quero habito de exercicio todo dia as 7h*" };
+    return "Voce nao tem habitos ativos. Crie um: *quero habito de exercicio todo dia as 7h*";
   }
 
   // Verifica quais ainda nao foram feitos hoje
@@ -425,43 +387,11 @@ async function handleHabitCheckin(
   const pending = habits.filter((h: any) => !doneIds.has(h.id));
 
   if (pending.length === 0) {
-    return { response: "🎉 Todos os habitos de hoje ja foram registrados! Continue assim!" };
+    return "🎉 Todos os habitos de hoje ja foram registrados! Continue assim!";
   }
 
-  // Desambiguação: se múltiplos pendentes, tenta match por nome na mensagem
-  let habit: any = null;
-  if (pending.length > 1) {
-    const normalized = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const matched = pending.find((h: any) => {
-      const habitName = String(h.name).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      return normalized.includes(habitName);
-    });
-    if (matched) {
-      habit = matched;
-    } else {
-      // Sem match claro → mostra lista numerada e pede pra escolher
-      const lines = pending.slice(0, 9).map((h: any, i: number) =>
-        `*${i + 1}.* ${h.icon ?? "✅"} ${h.name}`
-      ).join("\n");
-      return {
-        response: `Qual hábito você concluiu?\n\n${lines}\n\nResponda com o *número* (1 a ${Math.min(9, pending.length)}) ou o nome do hábito.`,
-        pendingAction: "habit_checkin_choose",
-        pendingContext: {
-          options: pending.slice(0, 9).map((h: any) => ({
-            id: h.id,
-            name: h.name,
-            icon: h.icon,
-            current_streak: h.current_streak,
-            best_streak: h.best_streak,
-          })),
-          total_pending: pending.length,
-        },
-      };
-    }
-  } else {
-    // Só 1 pendente → comportamento antigo (direto)
-    habit = pending[0];
-  }
+  // Registra o primeiro habito pendente
+  const habit = pending[0] as any;
   const { error } = await supabase.from("habit_logs").insert({
     habit_id: habit.id,
     user_id: userId,
@@ -469,9 +399,9 @@ async function handleHabitCheckin(
   });
 
   if (error) {
-    if (error.code === "23505") return { response: "Ja registrado hoje! 👍" };
+    if (error.code === "23505") return "Ja registrado hoje! 👍";
     console.error("Habit checkin error:", error);
-    return { response: "Erro ao registrar. Tente novamente." };
+    return "Erro ao registrar. Tente novamente.";
   }
 
   // Verifica se o dia anterior tinha check-in para validar streak consecutivo
@@ -504,54 +434,17 @@ async function handleHabitCheckin(
   const remaining = pending.length - 1;
   const remainingText = remaining > 0 ? `\n\n📋 Ainda ${remaining === 1 ? "falta 1 habito" : `faltam ${remaining} habitos`} hoje.` : "\n\n🎉 *Todos os habitos de hoje concluidos!*";
 
-  return { response: `✅ *${habit.icon} ${habit.name}* — registrado!${motivation}${remainingText}` };
+  return `✅ *${habit.icon} ${habit.name}* — registrado!${motivation}${remainingText}`;
 }
 
 // ─────────────────────────────────────────────
 // RECURRING TRANSACTION HANDLER
 // ─────────────────────────────────────────────
 
-/**
- * Calcula a próxima ocorrência de um dia do mês a partir de uma data de referência.
- * Se o dia desejado não existe no mês (ex: 31 em fevereiro), usa o último dia do mês.
- * Garante que nunca pula um mês — corrige o bug do Math.min(day, 28).
- */
-function computeNextMonthlyDate(from: Date, dayOfMonth: number): Date {
-  // Candidato no mês atual
-  const lastDayThisMonth = new Date(from.getFullYear(), from.getMonth() + 1, 0).getDate();
-  const effectiveDayThis = Math.min(dayOfMonth, lastDayThisMonth);
-  const candidateThis = new Date(from.getFullYear(), from.getMonth(), effectiveDayThis);
-
-  // Se o candidato é estritamente futuro, usa ele
-  if (candidateThis > from) return candidateThis;
-
-  // Senão, próximo mês (com último-dia-válido como fallback)
-  const nextMonthFirstDay = new Date(from.getFullYear(), from.getMonth() + 1, 1);
-  const lastDayNext = new Date(nextMonthFirstDay.getFullYear(), nextMonthFirstDay.getMonth() + 1, 0).getDate();
-  const effectiveDayNext = Math.min(dayOfMonth, lastDayNext);
-  return new Date(nextMonthFirstDay.getFullYear(), nextMonthFirstDay.getMonth(), effectiveDayNext);
-}
-
 async function handleRecurringCreate(userId: string, message: string): Promise<string> {
-  // Busca categorias do usuário (default + custom)
-  const { data: userCatsData } = await supabase
-    .from("categories")
-    .select("name")
-    .eq("user_id", userId);
-  const userCatNames = (userCatsData ?? [])
-    .map((c: any) => String(c.name ?? "").toLowerCase().trim())
-    .filter(Boolean);
-  const DEFAULT_CATS = ["alimentacao", "transporte", "moradia", "saude", "lazer", "educacao", "trabalho", "outros"];
-  const seen = new Set<string>();
-  const allCats: string[] = [];
-  for (const c of [...userCatNames, ...DEFAULT_CATS]) {
-    if (!seen.has(c)) { seen.add(c); allCats.push(c); }
-  }
-  const catList = allCats.map(c => `"${c}"`).join("|");
-
   // Usa IA pra extrair dados da mensagem
   const prompt = `Extraia de uma frase em português os dados de uma transação financeira recorrente.
-Retorne JSON puro (sem markdown): {"description":"nome curto","amount":número,"type":"expense"|"income","category":${catList},"frequency":"daily"|"weekly"|"monthly"|"yearly","day_of_month":número|null}
+Retorne JSON puro (sem markdown): {"description":"nome curto","amount":número,"type":"expense"|"income","category":"alimentacao"|"transporte"|"moradia"|"saude"|"lazer"|"educacao"|"trabalho"|"outros","frequency":"daily"|"weekly"|"monthly"|"yearly","day_of_month":número|null}
 
 Exemplos:
 - "aluguel 1500 todo dia 5" → {"description":"Aluguel","amount":1500,"type":"expense","category":"moradia","frequency":"monthly","day_of_month":5}
@@ -574,19 +467,13 @@ Frase: "${message}"`;
     return "Não consegui identificar o valor. Exemplo: *aluguel 1500 todo dia 5*";
   }
 
-  // Safety net: se AI retornar categoria não reconhecida, usa "outros"
-  if (parsed.category && !seen.has(String(parsed.category).toLowerCase().trim())) {
-    parsed.category = "outros";
-  }
-
-  // Calcula próxima data — preserva dia 31 usando último dia do mês como fallback
+  // Calcula próxima data
   const now = new Date();
   let nextDate: string;
-  let dayOfMonthToSave: number | null = null;
-
   if (parsed.frequency === "monthly" && parsed.day_of_month) {
-    dayOfMonthToSave = parsed.day_of_month;
-    const next = computeNextMonthlyDate(now, parsed.day_of_month);
+    const day = Math.min(parsed.day_of_month, 28);
+    const month = now.getDate() > day ? now.getMonth() + 1 : now.getMonth();
+    const next = new Date(now.getFullYear(), month, day);
     nextDate = next.toISOString().split("T")[0];
   } else if (parsed.frequency === "weekly") {
     const next = new Date(now);
@@ -610,9 +497,8 @@ Frase: "${message}"`;
     category: parsed.category || "outros",
     frequency: parsed.frequency || "monthly",
     next_date: nextDate,
-    day_of_month: dayOfMonthToSave,
     active: true,
-  } as any);
+  });
 
   if (error) {
     console.error("Recurring create error:", error);
@@ -806,27 +692,16 @@ async function handleFinanceRecord(
   userId: string,
   phone: string,
   message: string,
-  config: Record<string, unknown> | null,
-  userTz = "America/Sao_Paulo"
+  config: Record<string, unknown> | null
 ): Promise<string> {
-  // Busca categorias do usuário (default + custom criadas via app)
-  // pra que a Maya reconheça categorias personalizadas como "Pet", "Criptomoedas" etc
-  const { data: userCatsData } = await supabase
-    .from("categories")
-    .select("name")
-    .eq("user_id", userId);
-  const userCategories = (userCatsData ?? [])
-    .map((c: any) => String(c.name ?? "").toLowerCase().trim())
-    .filter(Boolean);
-
-  const transactions = await extractTransactions(message, userCategories);
+  const transactions = await extractTransactions(message);
 
   if (!transactions.length) {
     return "Não consegui identificar os valores. Pode repetir? Ex: *gastei 200 reais de gasolina*";
   }
 
-  // "Hoje" no fuso do usuário (usa profile.timezone — default São Paulo como fallback)
-  const todayUserTz = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
+  // Usa data de Brasília para garantir que "hoje" na query bata com o registro
+  const todayBRT = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
 
   const inserts = transactions.map((t) => ({
     user_id: userId,
@@ -835,17 +710,18 @@ async function handleFinanceRecord(
     type: t.type,
     category: t.category,
     source: "whatsapp",
-    transaction_date: todayUserTz,
+    transaction_date: todayBRT,
   }));
 
   const { error, data: insertedRows } = await supabase.from("transactions").insert(inserts).select("id, user_id, transaction_date");
-  console.log(`[finance_record] userId=${userId} todayUserTz=${todayUserTz} tz=${userTz} inserted=${JSON.stringify(insertedRows)} error=${JSON.stringify(error)}`);
+  console.log(`[finance_record] userId=${userId} todayBRT=${todayBRT} inserted=${JSON.stringify(insertedRows)} error=${JSON.stringify(error)}`);
   if (error) throw error;
 
-  // Sync Google Sheets (fire-and-forget, sem bloquear resposta) — mesma data do registro
+  // Sync Google Sheets (fire-and-forget, sem bloquear resposta)
+  const today = new Date().toISOString().split("T")[0];
   for (const t of transactions) {
     syncGoogleSheets(userId, {
-      date: todayUserTz,
+      date: today,
       description: t.description,
       amount: t.amount,
       type: t.type,
@@ -905,7 +781,7 @@ const CATEGORY_SYNONYMS: Record<string, string[]> = {
   trabalho: ["escritorio", "escritório", "ferramenta", "equipamento", "software", "assinatura"],
 };
 
-function detectCategory(m: string, customCategories: string[] = []): string | null {
+function detectCategory(m: string): string | null {
   // Normaliza e tokeniza pra evitar falsos positivos (ex: "moto" != "moradia")
   const normalized = m
     .toLowerCase()
@@ -913,20 +789,6 @@ function detectCategory(m: string, customCategories: string[] = []): string | nu
     .replace(/[\u0300-\u036f]/g, "");
   const tokens = normalized.split(/\s+/);
 
-  // 1) Match direto com categorias custom do usuário (ex: "pet", "criptomoedas")
-  //    Prioridade sobre sinônimos hardcoded.
-  for (const cat of customCategories) {
-    const catNorm = cat.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    if (!catNorm) continue;
-    // Pula categorias que são iguais às defaults (serão cobertas pelos sinônimos)
-    if (CATEGORY_SYNONYMS[catNorm]) continue;
-    // Match por token exato ou substring multi-word
-    if (catNorm.includes(" ") ? normalized.includes(catNorm) : tokens.includes(catNorm)) {
-      return cat;
-    }
-  }
-
-  // 2) Match via sinônimos das categorias default
   for (const [cat, keywords] of Object.entries(CATEGORY_SYNONYMS)) {
     const normalizedKeywords = keywords.map((k) =>
       k.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -952,17 +814,8 @@ async function handleFinanceReport(
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
-  // Busca categorias custom do usuário para reconhecer em filtros
-  const { data: userCatsData } = await supabase
-    .from("categories")
-    .select("name")
-    .eq("user_id", userId);
-  const userCategoryNames = (userCatsData ?? [])
-    .map((c: any) => String(c.name ?? "").toLowerCase().trim())
-    .filter(Boolean);
-
   // Detecta categoria específica na pergunta
-  const filterCategory = detectCategory(m, userCategoryNames);
+  const filterCategory = detectCategory(m);
 
   // Determina período — sempre em BRT para bater com transaction_date salvo
   let startDate: string;
@@ -970,74 +823,23 @@ async function handleFinanceReport(
   let periodLabel: string;
   const now = new Date();
   const nowBRT = now.toLocaleDateString("sv-SE", { timeZone: userTz }); // YYYY-MM-DD em BRT
-  const [nowY, nowM] = nowBRT.split("-").map(Number);
 
-  // Nomes de mês → número (0-indexed quando usado com Date)
-  const MONTH_NAMES: Record<string, number> = {
-    janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6,
-    julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12,
-  };
-  const matchedMonth = Object.keys(MONTH_NAMES).find(name => m.includes(name));
-
-  const lastDayOfMonth = (y: number, monthOneIndexed: number) =>
-    new Date(y, monthOneIndexed, 0).getDate();
-
-  if (/\b(tudo|todos|total|geral|completo|completa|hist[oó]rico|sempre)\b/.test(m)) {
-    // Sem filtro — tudo desde o início
-    startDate = "1970-01-01";
-    periodLabel = "desde o início";
-  } else if (/\bhoje\b/.test(m)) {
+  if (/hoje/.test(m)) {
     startDate = nowBRT;
     endDate = nowBRT;
     periodLabel = "hoje";
-  } else if (/\b(ontem)\b/.test(m)) {
-    const y = new Date(now);
-    y.setDate(y.getDate() - 1);
-    startDate = y.toLocaleDateString("sv-SE", { timeZone: userTz });
-    endDate = startDate;
-    periodLabel = "ontem";
-  } else if (/\b(semana\s+passada|semana\s+anterior)\b/.test(m)) {
-    // Semana passada: 7-13 dias atrás
-    const start = new Date(now); start.setDate(now.getDate() - 13);
-    const end = new Date(now); end.setDate(now.getDate() - 7);
-    startDate = start.toLocaleDateString("sv-SE", { timeZone: userTz });
-    endDate = end.toLocaleDateString("sv-SE", { timeZone: userTz });
-    periodLabel = "semana passada";
-  } else if (/\bsemana\b/.test(m)) {
+  } else if (/semana/.test(m)) {
     // Início da semana atual em BRT
     const startOfWeek = new Date(now);
     const dayOfWeek = parseInt(now.toLocaleDateString("en-US", { timeZone: userTz, weekday: "numeric" as any }), 10) || now.getDay();
     startOfWeek.setDate(now.getDate() - dayOfWeek);
     startDate = startOfWeek.toLocaleDateString("sv-SE", { timeZone: userTz });
     periodLabel = "esta semana";
-  } else if (/\b(m[eê]s\s+passado|m[eê]s\s+anterior)\b/.test(m)) {
-    // Mês passado completo
-    const prevMonth = nowM === 1 ? 12 : nowM - 1;
-    const prevYear = nowM === 1 ? nowY - 1 : nowY;
-    startDate = `${prevYear}-${String(prevMonth).padStart(2, "0")}-01`;
-    endDate = `${prevYear}-${String(prevMonth).padStart(2, "0")}-${lastDayOfMonth(prevYear, prevMonth)}`;
-    periodLabel = "mês passado";
-  } else if (matchedMonth) {
-    // Mês específico por nome (ex: "em março", "gastos de abril")
-    const monthNum = MONTH_NAMES[matchedMonth];
-    const isFuture = monthNum > nowM;
-    const year = isFuture ? nowY - 1 : nowY;
-    startDate = `${year}-${String(monthNum).padStart(2, "0")}-01`;
-    endDate = `${year}-${String(monthNum).padStart(2, "0")}-${lastDayOfMonth(year, monthNum)}`;
-    periodLabel = matchedMonth.charAt(0).toUpperCase() + matchedMonth.slice(1) + (year !== nowY ? `/${year}` : "");
-  } else if (/\b(ano\s+passado|ano\s+anterior)\b/.test(m)) {
-    startDate = `${nowY - 1}-01-01`;
-    endDate = `${nowY - 1}-12-31`;
-    periodLabel = "ano passado";
-  } else if (/\b(ano|anual)\b/.test(m)) {
-    startDate = `${nowY}-01-01`;
-    periodLabel = "este ano";
-  } else if (/\b(m[eê]s)\b/.test(m)) {
+  } else if (/mes|mês/.test(m)) {
     const [year, month] = nowBRT.split("-");
     startDate = `${year}-${month}-01`;
     periodLabel = "este mês";
   } else {
-    // Default: este mês
     const [year, month] = nowBRT.split("-");
     startDate = `${year}-${month}-01`;
     periodLabel = "este mês";
@@ -1187,333 +989,6 @@ async function handleFinanceReport(
   }
 
   return { text: report, chartUrl };
-}
-
-// ─────────────────────────────────────────────
-// CATEGORY LIST + FINANCE DELETE HANDLERS (Onda 2)
-// ─────────────────────────────────────────────
-
-/** Lista categorias do usuário com totais gastos neste mês */
-async function handleCategoryList(userId: string): Promise<string> {
-  const { data: cats } = await supabase
-    .from("categories")
-    .select("name, icon")
-    .eq("user_id", userId)
-    .order("name", { ascending: true });
-
-  if (!cats || cats.length === 0) {
-    return "📂 Você ainda não tem categorias cadastradas. Elas são criadas automaticamente quando você registra gastos.\n\nTente: _gastei 50 reais no mercado_";
-  }
-
-  // Totais do mês por categoria (usa BRT)
-  const now = new Date();
-  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  const { data: txs } = await supabase
-    .from("transactions")
-    .select("category, amount")
-    .eq("user_id", userId)
-    .eq("type", "expense")
-    .gte("transaction_date", monthStart);
-
-  const totals: Record<string, number> = {};
-  for (const t of txs ?? []) {
-    const k = String(t.category ?? "").toLowerCase();
-    totals[k] = (totals[k] ?? 0) + Number(t.amount);
-  }
-
-  const lines = cats.map((c: any) => {
-    const icon = c.icon ?? "📂";
-    const total = totals[String(c.name).toLowerCase()] ?? 0;
-    const totalStr = total > 0
-      ? ` — R$ ${total.toFixed(2).replace(".", ",")}`
-      : "";
-    return `${icon} *${c.name}*${totalStr}`;
-  });
-
-  return `📂 *Suas categorias*\n\n${lines.join("\n")}\n\n_Totais referentes a este mês_`;
-}
-
-/** Primeira etapa: tenta achar a transação a deletar. Se há múltiplas, mostra lista pra escolher. */
-async function handleFinanceDelete(
-  userId: string,
-  message: string,
-  userTz = "America/Sao_Paulo"
-): Promise<{ response: string; pendingAction?: string; pendingContext?: any }> {
-  const m = message
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-
-  // Extrai valor explícito: "50 reais", "R$ 200", "150.50"
-  const amountMatch = m.match(/\b(\d+(?:[.,]\d{1,2})?)\s*(reais?|r\$|rs|\$)?/);
-  const amount = amountMatch ? parseFloat(amountMatch[1].replace(",", ".")) : null;
-
-  // Detecta "última"/"ultimo"/"recente"
-  const wantsLast = /\b(ultima?|ultimo|ultimas?|ultimos|recente|mais recente)\b/.test(m);
-
-  // Busca transações do usuário
-  let query = supabase
-    .from("transactions")
-    .select("id, description, amount, type, category, transaction_date, created_at")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(10);
-
-  if (amount !== null && !isNaN(amount)) {
-    // Busca por valor exato (tolerância de 1 centavo para lidar com float)
-    query = query.gte("amount", amount - 0.01).lte("amount", amount + 0.01);
-  }
-
-  const { data: txs, error } = await query;
-
-  if (error || !txs || txs.length === 0) {
-    if (amount !== null) {
-      return { response: `🔍 Não encontrei nenhuma transação de *R$ ${amount.toFixed(2).replace(".", ",")}*. Pode verificar no app e tentar de novo?` };
-    }
-    return { response: "🔍 Não encontrei transações pra apagar. Você ainda não registrou nada ou já apagou tudo." };
-  }
-
-  // Se só tem 1, ou usuário pediu "a última" → deleta direto
-  if (txs.length === 1 || (wantsLast && txs.length > 0)) {
-    const t: any = txs[0];
-    // Armazena no pending_context pra confirmar antes de deletar
-    const emoji = t.type === "expense" ? "🔴" : "🟢";
-    return {
-      response: `Quer mesmo apagar essa transação?\n\n${emoji} *${t.description}*\n💰 R$ ${Number(t.amount).toFixed(2).replace(".", ",")}\n📂 ${t.category}\n📅 ${new Date(t.transaction_date + "T12:00:00").toLocaleDateString("pt-BR")}\n\nResponda *sim* pra apagar ou *não* pra cancelar.`,
-      pendingAction: "finance_delete_confirm",
-      pendingContext: { transaction_ids: [t.id], single: true },
-    };
-  }
-
-  // Múltiplas transações → mostra lista numerada pra escolher
-  const lines = txs.slice(0, 5).map((t: any, i: number) => {
-    const emoji = t.type === "expense" ? "🔴" : "🟢";
-    const dateStr = new Date(t.transaction_date + "T12:00:00").toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
-    return `*${i + 1}.* ${emoji} ${t.description} — R$ ${Number(t.amount).toFixed(2).replace(".", ",")} (${dateStr})`;
-  });
-
-  const extraMsg = txs.length > 5 ? `\n\n_Mostrando 5 mais recentes de ${txs.length} encontradas._` : "";
-
-  return {
-    response: `🔍 Encontrei *${txs.length}* transação(ões). Qual você quer apagar?\n\n${lines.join("\n")}${extraMsg}\n\nResponda com o *número* da transação (1 a ${Math.min(5, txs.length)}).`,
-    pendingAction: "finance_delete_confirm",
-    pendingContext: {
-      transaction_ids: txs.slice(0, 5).map((t: any) => t.id),
-      options: txs.slice(0, 5).map((t: any) => ({
-        id: t.id,
-        description: t.description,
-        amount: Number(t.amount),
-        type: t.type,
-      })),
-      single: false,
-    },
-  };
-}
-
-/** Segunda etapa: confirma (sim/não) ou escolhe número da lista */
-async function handleFinanceDeleteConfirm(
-  userId: string,
-  message: string,
-  session: Record<string, unknown>
-): Promise<{ response: string; pendingAction: string | null; pendingContext: any }> {
-  const ctx = (session.pending_context ?? {}) as any;
-  const m = message.toLowerCase().trim();
-
-  // Cancelar o fluxo
-  if (/^(nao|n|cancela|cancelar|deixa|esquece|nope|nada)\b/.test(m)) {
-    return { response: "✅ Ok, não apaguei nada.", pendingAction: null, pendingContext: null };
-  }
-
-  // Caso "single": confirma com sim/ok → deleta
-  if (ctx.single) {
-    if (/^(sim|s|ok|confirmar|pode|pode ser|apaga|apagar|deleta|deletar|isso|confirma)\b/.test(m)) {
-      const [idToDelete] = ctx.transaction_ids ?? [];
-      if (!idToDelete) return { response: "⚠️ Erro: transação não encontrada.", pendingAction: null, pendingContext: null };
-      const { error } = await supabase.from("transactions").delete().eq("id", idToDelete).eq("user_id", userId);
-      if (error) return { response: "⚠️ Erro ao apagar. Tente de novo.", pendingAction: null, pendingContext: null };
-      return { response: "🗑️ *Transação apagada!*", pendingAction: null, pendingContext: null };
-    }
-    // Resposta ambígua → mantém o pending
-    return {
-      response: "Não entendi. Responda *sim* pra apagar ou *não* pra cancelar.",
-      pendingAction: "finance_delete_confirm",
-      pendingContext: ctx,
-    };
-  }
-
-  // Caso "múltiplas": usuário escolhe número
-  const numMatch = m.match(/^(\d+)$/);
-  if (numMatch) {
-    const idx = parseInt(numMatch[1], 10) - 1;
-    const options = (ctx.options ?? []) as Array<{ id: string; description: string; amount: number; type: string }>;
-    if (idx < 0 || idx >= options.length) {
-      return {
-        response: `Número inválido. Escolha entre 1 e ${options.length}.`,
-        pendingAction: "finance_delete_confirm",
-        pendingContext: ctx,
-      };
-    }
-    const chosen = options[idx];
-    const { error } = await supabase.from("transactions").delete().eq("id", chosen.id).eq("user_id", userId);
-    if (error) return { response: "⚠️ Erro ao apagar. Tente de novo.", pendingAction: null, pendingContext: null };
-    const emoji = chosen.type === "expense" ? "🔴" : "🟢";
-    return {
-      response: `🗑️ *Transação apagada!*\n\n${emoji} ${chosen.description} — R$ ${chosen.amount.toFixed(2).replace(".", ",")}`,
-      pendingAction: null,
-      pendingContext: null,
-    };
-  }
-
-  // Cancelar com texto não-numérico
-  if (/^(nao|n|cancela|cancelar|deixa|esquece)/.test(m)) {
-    return { response: "✅ Ok, não apaguei nada.", pendingAction: null, pendingContext: null };
-  }
-
-  return {
-    response: `Escolha o *número* da transação que quer apagar (1 a ${(ctx.options ?? []).length}) ou diga *cancela*.`,
-    pendingAction: "finance_delete_confirm",
-    pendingContext: ctx,
-  };
-}
-
-// ─────────────────────────────────────────────
-// NOTES DELETE HANDLERS (Onda 4)
-// ─────────────────────────────────────────────
-
-/** Primeira etapa: tenta achar a nota a deletar. Se há múltiplas, mostra lista. */
-async function handleNotesDelete(
-  userId: string,
-  message: string,
-): Promise<{ response: string; pendingAction?: string; pendingContext?: any }> {
-  const m = message
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-
-  // Detecta "última" pra pegar a mais recente sem ambiguidade
-  const wantsLast = /\b(ultima?|ultimo|ultimas?|ultimos|recente|mais recente)\b/.test(m);
-
-  // Extrai keyword após "sobre" ou "de" pra buscar por título/conteúdo
-  const keywordMatch = m.match(/(?:sobre|de|da|do)\s+([a-z0-9\s]+?)(?:\s*$|\s+(?:a|o|que|isso))/);
-  const keyword = keywordMatch ? keywordMatch[1].trim() : null;
-
-  let query = supabase
-    .from("notes")
-    .select("id, title, content, created_at, source")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(10);
-
-  if (keyword && keyword.length >= 2) {
-    // Busca em title OU content (sanitiza pra evitar PostgREST injection)
-    const safeKeyword = sanitizeForFilter(keyword);
-    if (safeKeyword) {
-      query = query.or(`title.ilike.%${safeKeyword}%,content.ilike.%${safeKeyword}%`);
-    }
-  }
-
-  const { data: notes, error } = await query;
-
-  if (error || !notes || notes.length === 0) {
-    if (keyword) {
-      return { response: `🔍 Não encontrei nenhuma anotação com "${keyword}". Verifique no app e tente de novo.` };
-    }
-    return { response: "🔍 Você ainda não tem anotações pra apagar." };
-  }
-
-  // Se só tem 1, ou usuário pediu "a última" → confirma direto
-  if (notes.length === 1 || (wantsLast && notes.length > 0)) {
-    const n: any = notes[0];
-    const dateStr = new Date(n.created_at).toLocaleDateString("pt-BR");
-    const preview = (n.content ?? "").slice(0, 80);
-    return {
-      response: `Quer mesmo apagar essa anotação?\n\n📝 *${n.title || "Anotação"}*\n${preview}${preview.length >= 80 ? "..." : ""}\n📅 ${dateStr}\n\nResponda *sim* pra apagar ou *não* pra cancelar.`,
-      pendingAction: "notes_delete_confirm",
-      pendingContext: { note_ids: [n.id], single: true },
-    };
-  }
-
-  // Múltiplas notas → lista numerada
-  const lines = notes.slice(0, 5).map((n: any, i: number) => {
-    const dateStr = new Date(n.created_at).toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
-    const preview = (n.title || n.content || "").slice(0, 50);
-    return `*${i + 1}.* 📝 ${preview} (${dateStr})`;
-  });
-
-  const extraMsg = notes.length > 5 ? `\n\n_Mostrando 5 de ${notes.length}._` : "";
-
-  return {
-    response: `🔍 Encontrei *${notes.length}* anotação(ões). Qual apagar?\n\n${lines.join("\n")}${extraMsg}\n\nResponda com o *número* (1 a ${Math.min(5, notes.length)}).`,
-    pendingAction: "notes_delete_confirm",
-    pendingContext: {
-      note_ids: notes.slice(0, 5).map((n: any) => n.id),
-      options: notes.slice(0, 5).map((n: any) => ({
-        id: n.id,
-        title: n.title || "Anotação",
-        preview: (n.content ?? "").slice(0, 50),
-      })),
-      single: false,
-    },
-  };
-}
-
-/** Segunda etapa: confirma (sim/não) ou escolhe número da lista */
-async function handleNotesDeleteConfirm(
-  userId: string,
-  message: string,
-  session: Record<string, unknown>,
-): Promise<{ response: string; pendingAction: string | null; pendingContext: any }> {
-  const ctx = (session.pending_context ?? {}) as any;
-  const m = message.toLowerCase().trim();
-
-  // Cancelar
-  if (/^(nao|n|cancela|cancelar|deixa|esquece|nope|nada)\b/.test(m)) {
-    return { response: "✅ Ok, não apaguei nada.", pendingAction: null, pendingContext: null };
-  }
-
-  // Caso "single": sim/ok → deleta
-  if (ctx.single) {
-    if (/^(sim|s|ok|confirmar|pode|pode ser|apaga|apagar|deleta|deletar|isso|confirma)\b/.test(m)) {
-      const [id] = ctx.note_ids ?? [];
-      if (!id) return { response: "⚠️ Erro: nota não encontrada.", pendingAction: null, pendingContext: null };
-      const { error } = await supabase.from("notes").delete().eq("id", id).eq("user_id", userId);
-      if (error) return { response: "⚠️ Erro ao apagar. Tente de novo.", pendingAction: null, pendingContext: null };
-      return { response: "🗑️ *Anotação apagada!*", pendingAction: null, pendingContext: null };
-    }
-    return {
-      response: "Não entendi. Responda *sim* pra apagar ou *não* pra cancelar.",
-      pendingAction: "notes_delete_confirm",
-      pendingContext: ctx,
-    };
-  }
-
-  // Caso "múltiplas": número da lista
-  const numMatch = m.match(/^(\d+)$/);
-  if (numMatch) {
-    const idx = parseInt(numMatch[1], 10) - 1;
-    const options = (ctx.options ?? []) as Array<{ id: string; title: string; preview: string }>;
-    if (idx < 0 || idx >= options.length) {
-      return {
-        response: `Número inválido. Escolha entre 1 e ${options.length}.`,
-        pendingAction: "notes_delete_confirm",
-        pendingContext: ctx,
-      };
-    }
-    const chosen = options[idx];
-    const { error } = await supabase.from("notes").delete().eq("id", chosen.id).eq("user_id", userId);
-    if (error) return { response: "⚠️ Erro ao apagar. Tente de novo.", pendingAction: null, pendingContext: null };
-    return {
-      response: `🗑️ *Anotação apagada!*\n\n📝 ${chosen.title}`,
-      pendingAction: null,
-      pendingContext: null,
-    };
-  }
-
-  return {
-    response: `Escolha o *número* da anotação que quer apagar (1 a ${(ctx.options ?? []).length}) ou diga *cancela*.`,
-    pendingAction: "notes_delete_confirm",
-    pendingContext: ctx,
-  };
 }
 
 // Mapa de cores por tipo de evento
@@ -2046,8 +1521,8 @@ async function createEventAndConfirm(
 
   if (error) throw error;
 
-  // Sync Google Calendar (fire-and-forget) — passa userTz pra não forçar BRT
-  syncGoogleCalendar(userId, extracted.title, extracted.date, extracted.time, extracted.end_time ?? null, null, extracted.location ?? null, userTz).catch(() => {});
+  // Sync Google Calendar (fire-and-forget)
+  syncGoogleCalendar(userId, extracted.title, extracted.date, extracted.time).catch(() => {});
 
   // Cria lembrete se solicitado (reminder_minutes >= 0 significa lembrete ativo)
   if (extracted.reminder_minutes != null && extracted.time) {
@@ -2230,14 +1705,12 @@ async function handleAgendaLookup(
     .order("event_date", { ascending: true })
     .limit(3);
 
-  // Sanitiza keyword pra evitar PostgREST injection em .or()/.ilike()
-  const safeKeyword = keyword ? sanitizeForFilter(keyword) : "";
-  if (safeKeyword && startDate && endDate) {
+  if (keyword && startDate && endDate) {
     query = query.or(
-      `title.ilike.%${safeKeyword}%,and(event_date.gte.${startDate},event_date.lte.${endDate})`
+      `title.ilike.%${keyword}%,and(event_date.gte.${startDate},event_date.lte.${endDate})`
     );
-  } else if (safeKeyword) {
-    query = query.ilike("title", `%${safeKeyword}%`);
+  } else if (keyword) {
+    query = query.ilike("title", `%${keyword}%`);
   } else if (startDate && endDate) {
     query = query.gte("event_date", startDate).lte("event_date", endDate);
   }
@@ -2390,10 +1863,10 @@ async function applyEventUpdate(
     }
   }
 
-  // 4. Sync Google Calendar (fire-and-forget) — passa userTz pra não forçar BRT
+  // 4. Sync Google Calendar (fire-and-forget)
   const gcalDate = updates.event_date ?? originalData.event_date;
   const gcalTime = updates.event_time ?? originalData.event_time;
-  syncGoogleCalendar(userId, originalData.title, gcalDate, gcalTime ?? null, updates.end_time ?? null, null, null, userTz).catch(() => {});
+  syncGoogleCalendar(userId, originalData.title, gcalDate, gcalTime ?? null).catch(() => {});
 
   // 5. Formata confirmação
   const dateStr = new Date(gcalDate + "T12:00:00").toLocaleDateString("pt-BR", {
@@ -2553,51 +2026,22 @@ async function handleAgendaEdit(
       .filter((w) => w.length > 2)[0] ?? "";
 
     if (keyword) {
-      // Busca até 5 eventos futuros com o keyword — se há múltiplos, pede pra escolher
-      const { data: matches } = await supabase
+      const { data: found } = await supabase
         .from("events")
         .select("id, title, event_date, event_time, reminder_minutes_before")
         .eq("user_id", userId)
         .eq("status", "pending")
-        .gte("event_date", today) // só eventos futuros ou de hoje
         .ilike("title", `%${keyword}%`)
         .order("event_date", { ascending: true })
-        .limit(5);
+        .limit(1)
+        .maybeSingle();
 
-      if (!matches || matches.length === 0) {
+      if (!found) {
         return {
           response: `Não encontrei nenhum compromisso com "${keyword}". 🔍\n\nComo está o nome do compromisso que você quer editar?`,
         };
       }
-
-      // Múltiplos matches → desambiguação
-      if (matches.length > 1) {
-        const lines = matches.map((ev: any, i: number) => {
-          const dateStr = new Date(ev.event_date + "T12:00:00").toLocaleDateString("pt-BR", { day: "numeric", month: "short", weekday: "short" });
-          const timeStr = ev.event_time ? ` às ${ev.event_time.slice(0, 5)}` : "";
-          return `*${i + 1}.* ${ev.title} — ${dateStr}${timeStr}`;
-        }).join("\n");
-
-        return {
-          response: `Encontrei *${matches.length}* compromissos com "${keyword}". Qual você quer editar?\n\n${lines}\n\nResponda com o *número* (1 a ${matches.length}) e depois me diga o que mudar.`,
-          pendingAction: "agenda_edit_choose",
-          pendingContext: {
-            step: "choosing_event",
-            keyword,
-            pending_edit_text: message,
-            options: matches.map((ev: any) => ({
-              id: ev.id,
-              title: ev.title,
-              event_date: ev.event_date,
-              event_time: ev.event_time,
-              reminder_minutes: ev.reminder_minutes_before,
-            })),
-          },
-        };
-      }
-
-      // Único match → usa direto
-      const found = matches[0];
+      // Encontrou — usa como contexto e continua para extração de edição
       ctx.event_id = found.id;
       ctx.event_title = found.title;
       ctx.event_date = found.event_date;
@@ -2964,7 +2408,7 @@ async function handleNotesSave(
   // Usuário respondendo "anotações" ou "lembrete" à pergunta de disambiguação
   if (step === "note_or_reminder_choice") {
     const m2 = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    const cleanContent1 = ctx.cleanContent as string;
+    const cleanContent = ctx.cleanContent as string;
     const suggestedTitle = ctx.suggestedTitle as string;
 
     const wantsReminder =
@@ -2974,11 +2418,11 @@ async function handleNotesSave(
     if (wantsReminder) {
       // Guarda o conteúdo e pede o horário
       return {
-        response: `⏰ *Certo!* Em qual momento você quer ser lembrado sobre:\n_"${cleanContent1}"_?\n\n_Ex: amanhã às 14h, sexta às 10h, daqui 2 horas_`,
+        response: `⏰ *Certo!* Em qual momento você quer ser lembrado sobre:\n_"${cleanContent}"_?\n\n_Ex: amanhã às 14h, sexta às 10h, daqui 2 horas_`,
         pendingAction: "notes_save",
         pendingContext: {
           step: "note_reminder_time_pending",
-          cleanContent: cleanContent1,
+          cleanContent,
           suggestedTitle,
         },
       };
@@ -2988,23 +2432,23 @@ async function handleNotesSave(
     const { error: noteErr } = await supabase.from("notes").insert({
       user_id: userId,
       title: suggestedTitle || null,
-      content: cleanContent1,
+      content: cleanContent,
       source: "whatsapp",
     });
     if (noteErr) throw noteErr;
-    syncNotion(userId, cleanContent1).catch(() => {});
+    syncNotion(userId, cleanContent).catch(() => {});
 
     return {
-      response: buildNoteResponse(cleanContent1),
+      response: buildNoteResponse(cleanContent),
       pendingAction: "notes_save",
-      pendingContext: { step: "note_reminder_offer", noteTitle: suggestedTitle || cleanContent1.slice(0, 40) },
+      pendingContext: { step: "note_reminder_offer", noteTitle: suggestedTitle || cleanContent.slice(0, 40) },
     };
   }
 
   // ─── STEP: note_reminder_time_pending ───
   // Usuário escolheu "lembrete" e está informando o horário
   if (step === "note_reminder_time_pending") {
-    const cleanContent2 = ctx.cleanContent as string;
+    const cleanContent = ctx.cleanContent as string;
     const suggestedTitle = ctx.suggestedTitle as string;
     const tzOff2 = getTzOffset(userTz);
     const nowIso2 = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + tzOff2;
@@ -3685,8 +3129,8 @@ async function handleReminderCancel(
   });
 
   if (!match) {
-    const listFallback = reminders.slice(0, 4).map(r => `• ${r.title || r.message.slice(0, 40)}`).join("\n");
-    return `Não encontrei esse lembrete. Seus pendentes:\n\n${listFallback}\n\nTente o nome exato.`;
+    const list = reminders.slice(0, 4).map(r => `• ${r.title || r.message.slice(0, 40)}`).join("\n");
+    return `Não encontrei esse lembrete. Seus pendentes:\n\n${list}\n\nTente o nome exato.`;
   }
 
   // Cancela este e todas as recorrências futuras com o mesmo título
@@ -4210,15 +3654,14 @@ async function resolveProfileForShadow(
   profile: { id: string; phone_number: string; timezone: string | null } | null;
   sendPhone: string;
 }> {
-  const rawPhone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
-  const phone = sanitizePhone(rawPhone);
+  const phone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
   let profile: { id: string; phone_number: string; timezone: string | null } | null = null;
 
   if (lid) {
     const { data } = await supabase.from("profiles").select("id, phone_number, timezone").eq("whatsapp_lid", lid).maybeSingle();
     profile = data;
   }
-  if (!profile && phone) {
+  if (!profile) {
     const { data } = await supabase.from("profiles").select("id, phone_number, timezone")
       .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`).maybeSingle();
     profile = data;
@@ -4807,9 +4250,9 @@ async function handleScheduleMeeting(
   const title = `Reunião com ${found.name}`;
   const description = `Reunião agendada pela ${agentName} — assistente de ${userNickname || pushName}`;
 
-  // Cria evento no Google Calendar com Google Meet — passa userTz
+  // Cria evento no Google Calendar com Google Meet
   const { eventId, meetLink } = await createCalendarEventWithMeet(
-    userId, title, extracted.date, extracted.time ?? null, null, description, null, userTz
+    userId, title, extracted.date, extracted.time ?? null, null, description
   );
 
   // Salva na tabela events
@@ -5016,9 +4459,8 @@ async function processImageMessage(
   if (isForwarded) log.push("forwarded");
   if (caption) log.push(`caption: ${caption.slice(0, 60)}`);
   try {
-    // 1. Normalize phone for profile lookup (sanitizado pra digits-only, prev\u00eam injection em .or())
-    const rawPhone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
-    const phone = sanitizePhone(rawPhone);
+    // 1. Normalize phone for profile lookup
+    const phone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
 
     // 2. Resolve full profile PRIMEIRO (antes de qualquer sendText!)
     //    Padrão multi-fallback idêntico ao processMessage — inclui resolveLidToPhone
@@ -5032,7 +4474,7 @@ async function processImageMessage(
         .maybeSingle();
       profile = data;
     }
-    if (!profile && phone) {
+    if (!profile) {
       const { data } = await supabase
         .from("profiles")
         .select("id, phone_number, account_status")
@@ -5043,8 +4485,7 @@ async function processImageMessage(
     // Fallback crítico: resolve LID → telefone real via Evolution API
     // Sem isso, sendText falha com 400 quando o usuário manda imagem via LID
     if (!profile && lid) {
-      const resolvedRaw = await resolveLidToPhone(lid);
-      const resolvedPhone = sanitizePhone(resolvedRaw ?? "");
+      const resolvedPhone = await resolveLidToPhone(lid);
       if (resolvedPhone) {
         const { data } = await supabase
           .from("profiles")
@@ -5259,51 +4700,43 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     if (!profile) {
       // Fallback: tenta por telefone (@s.whatsapp.net ou @lid → extrai dígitos)
-      // Sanitizado pra digits-only, previne PostgREST injection em .or()
-      const rawPhone = replyTo
+      const phone = replyTo
         .replace(/@s\.whatsapp\.net$/, "")
         .replace(/@lid$/, "")
         .replace(/:\d+$/, "");
-      const phone = sanitizePhone(rawPhone);
-      if (phone) {
-        const { data } = await supabase
-          .from("profiles")
-          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
-          .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
-          .maybeSingle();
-        profile = data;
-      }
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+        .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
+        .maybeSingle();
+      profile = data;
     }
 
     // Fallback adicional: busca em user_phone_numbers (múltiplos números - plano business)
     if (!profile) {
-      const rawPhoneExtra = replyTo
+      const phone = replyTo
         .replace(/@s\.whatsapp\.net$/, "")
         .replace(/@lid$/, "")
         .replace(/:\d+$/, "");
-      const phone = sanitizePhone(rawPhoneExtra);
-      if (phone) {
-        const { data: extraNum } = await supabase
-          .from("user_phone_numbers")
-          .select("user_id")
-          .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
+      const { data: extraNum } = await supabase
+        .from("user_phone_numbers")
+        .select("user_id")
+        .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
+        .maybeSingle();
+      if (extraNum?.user_id) {
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+          .eq("id", extraNum.user_id)
           .maybeSingle();
-        if (extraNum?.user_id) {
-          const { data } = await supabase
-            .from("profiles")
-            .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
-            .eq("id", extraNum.user_id)
-            .maybeSingle();
-          profile = data;
-        }
+        profile = data;
       }
     }
 
     // Fallback por resolução de LID → telefone real via Evolution API
     // Útil quando o usuário tem WhatsApp Multi-Device e ainda não vinculou o LID
     if (!profile && lid) {
-      const resolvedRaw = await resolveLidToPhone(lid);
-      const resolvedPhone = sanitizePhone(resolvedRaw ?? "");
+      const resolvedPhone = await resolveLidToPhone(lid);
       if (resolvedPhone) {
         const { data } = await supabase
           .from("profiles")
@@ -5527,23 +4960,6 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       session = sessionByUser;
     }
 
-    // 4a. TTL do pending_action — expira após 30 min de inatividade.
-    // Previne conversas travadas esperando resposta de fluxo abandonado
-    // (ex: event_followup, statement_import, shadow_*). Se usuário demorou
-    // mais de 30 min pra responder, trata nova mensagem como intent nova.
-    if (session?.pending_action && session?.last_activity) {
-      const ageMs = Date.now() - new Date(session.last_activity as string).getTime();
-      const TTL_MS = 30 * 60 * 1000; // 30 minutos
-      if (ageMs > TTL_MS) {
-        supabase.from("whatsapp_sessions")
-          .update({ pending_action: null, pending_context: null })
-          .eq("phone_number", sessionId)
-          .then(() => {}).catch(() => {});
-        session = { ...session, pending_action: null, pending_context: null };
-        log.push("pending_expired");
-      }
-    }
-
     // 4b. Verifica respostas rápidas (prioridade máxima)
     // Só dispara quando NÃO há fluxo multi-step pendente — evitar interromper agenda/nota/lembrete em andamento
     const hasPendingFlow = !!session?.pending_action;
@@ -5655,79 +5071,9 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "habit_create") {
       responseText = await handleHabitCreate(profile.id, sendPhone || replyTo, text, userTz);
     } else if (intent === "habit_checkin") {
-      const checkinResult = await handleHabitCheckin(profile.id, text, userTz);
-      responseText = checkinResult.response;
-      pendingAction = checkinResult.pendingAction;
-      pendingContext = checkinResult.pendingContext;
-    } else if (intent === "habit_checkin_choose") {
-      // Usuário está escolhendo qual hábito concluiu (após ver a lista numerada)
-      const ctx = (session?.pending_context ?? {}) as any;
-      const options = (ctx.options ?? []) as Array<{ id: string; name: string; icon: string; current_streak: number; best_streak: number }>;
-
-      if (/^(nao|cancela|deixa|esquece|nada)/i.test(text.trim())) {
-        responseText = "✅ Ok, não registrei nada.";
-      } else {
-        // Tenta match por número OU por nome
-        let chosen: typeof options[number] | null = null;
-        const numMatch = text.trim().match(/^(\d+)$/);
-        if (numMatch) {
-          const idx = parseInt(numMatch[1], 10) - 1;
-          if (idx >= 0 && idx < options.length) chosen = options[idx];
-        } else {
-          const normalized = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-          chosen = options.find(o => {
-            const nm = String(o.name).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-            return normalized.includes(nm);
-          }) ?? null;
-        }
-
-        if (!chosen) {
-          responseText = `Não entendi qual hábito. Responda com o *número* (1 a ${options.length}) ou o nome do hábito.`;
-          pendingAction = "habit_checkin_choose";
-          pendingContext = ctx;
-        } else {
-          // Registra o hábito escolhido (inline — mesma lógica do handleHabitCheckin)
-          const today = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
-          const { error: insErr } = await supabase.from("habit_logs").insert({
-            habit_id: chosen.id,
-            user_id: profile.id,
-            logged_date: today,
-          });
-          if (insErr) {
-            responseText = insErr.code === "23505" ? "Ja registrado hoje! 👍" : "Erro ao registrar. Tente novamente.";
-          } else {
-            // Recalcula streak
-            const yesterday = new Date();
-            yesterday.setDate(yesterday.getDate() - 1);
-            const yesterdayStr = yesterday.toLocaleDateString("sv-SE", { timeZone: userTz });
-            const { data: yLog } = await (supabase.from("habit_logs") as any)
-              .select("id").eq("habit_id", chosen.id).eq("logged_date", yesterdayStr).maybeSingle();
-            const newStreak = yLog ? (chosen.current_streak || 0) + 1 : 1;
-            const bestStreak = Math.max(newStreak, chosen.best_streak || 0);
-            await supabase.from("habits").update({ current_streak: newStreak, best_streak: bestStreak }).eq("id", chosen.id);
-            let motivation = "";
-            if (newStreak === 1) motivation = "\n\n💪 Primeiro dia!";
-            else if (newStreak === 7) motivation = "\n\n🔥 *1 semana seguida!*";
-            else if (newStreak === 30) motivation = "\n\n🏆 *30 dias!*";
-            else if (newStreak >= 3) motivation = `\n\n🔥 ${newStreak} dias seguidos!`;
-            responseText = `✅ *${chosen.icon ?? "✅"} ${chosen.name}* — registrado!${motivation}`;
-          }
-        }
-      }
+      responseText = await handleHabitCheckin(profile.id, text, userTz);
     } else if (intent === "finance_record") {
-      responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config, userTz);
-    } else if (intent === "category_list") {
-      responseText = await handleCategoryList(profile.id);
-    } else if (intent === "finance_delete") {
-      const delResult = await handleFinanceDelete(profile.id, text, userTz);
-      responseText = delResult.response;
-      pendingAction = delResult.pendingAction;
-      pendingContext = delResult.pendingContext;
-    } else if (intent === "finance_delete_confirm") {
-      const confirmResult = await handleFinanceDeleteConfirm(profile.id, text, session ?? {});
-      responseText = confirmResult.response;
-      pendingAction = confirmResult.pendingAction;
-      pendingContext = confirmResult.pendingContext;
+      responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config);
     } else if (intent === "finance_report") {
       const reportResult = await handleFinanceReport(profile.id, text);
       responseText = reportResult.text;
@@ -5756,43 +5102,6 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
-    } else if (intent === "agenda_edit_choose") {
-      // Usuário escolheu um evento da lista de desambiguação
-      const ctx = (session?.pending_context ?? {}) as any;
-      const options = (ctx.options ?? []) as Array<{ id: string; title: string; event_date: string; event_time: string | null; reminder_minutes: number | null }>;
-      const numMatch = text.trim().match(/^(\d+)$/);
-      if (/^(nao|cancela|deixa|esquece|nada)/i.test(text.trim())) {
-        responseText = "✅ Ok, não editei nada.";
-      } else if (!numMatch) {
-        responseText = `Por favor responda apenas com o *número* do compromisso (1 a ${options.length}).`;
-        pendingAction = "agenda_edit_choose";
-        pendingContext = ctx;
-      } else {
-        const idx = parseInt(numMatch[1], 10) - 1;
-        if (idx < 0 || idx >= options.length) {
-          responseText = `Número inválido. Escolha entre 1 e ${options.length}.`;
-          pendingAction = "agenda_edit_choose";
-          pendingContext = ctx;
-        } else {
-          const chosen = options[idx];
-          // Continua o fluxo de edit com o evento escolhido e o texto de edição original
-          const fakeSession = {
-            pending_context: {
-              event_id: chosen.id,
-              event_title: chosen.title,
-              event_date: chosen.event_date,
-              event_time: chosen.event_time,
-              reminder_minutes: chosen.reminder_minutes,
-              step: "awaiting_change",
-            },
-          };
-          const editText = ctx.pending_edit_text || text;
-          const result = await handleAgendaEdit(profile.id, sendPhone || replyTo, editText, fakeSession, userTz);
-          responseText = result.response;
-          pendingAction = result.pendingAction;
-          pendingContext = result.pendingContext;
-        }
-      }
     } else if (intent === "agenda_delete") {
       responseText = await handleAgendaDelete(profile.id, text);
     } else if (intent === "notes_save") {
@@ -5800,16 +5109,6 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = notesResult.response;
       pendingAction = notesResult.pendingAction;
       pendingContext = notesResult.pendingContext;
-    } else if (intent === "notes_delete") {
-      const delResult = await handleNotesDelete(profile.id, text);
-      responseText = delResult.response;
-      pendingAction = delResult.pendingAction;
-      pendingContext = delResult.pendingContext;
-    } else if (intent === "notes_delete_confirm") {
-      const confirmResult = await handleNotesDeleteConfirm(profile.id, text, session ?? {});
-      responseText = confirmResult.response;
-      pendingAction = confirmResult.pendingAction;
-      pendingContext = confirmResult.pendingContext;
     } else if (intent === "reminder_list") {
       responseText = await handleReminderList(profile.id, language, userTz);
     } else if (intent === "reminder_cancel") {
@@ -5872,7 +5171,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         const dateStr = ctx.date ? ` — ${ctx.date}` : "";
         const timeStr = ctx.time ? ` às ${ctx.time}` : "";
         responseText = `✅ Evento criado: *${ctx.title || "Evento encaminhado"}*${dateStr}${timeStr} [📨 encaminhado]`;
-        syncGoogleCalendar(profile.id, ctx.title as string, ctx.date as string, (ctx.time as string) ?? null, null, null, null, userTz).catch(() => {});
+        syncGoogleCalendar(profile.id, ctx.title as string, ctx.date as string, (ctx.time as string) ?? null).catch(() => {});
       } else {
         responseText = "Ok, ignorei o evento. 🗑️";
       }
@@ -6004,20 +5303,15 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       pendingContext = undefined;
 
     } else if (intent === "list_contacts") {
-      // Usa a coluna correta "phone" (não phone_number — schema contacts tem phone)
       const { data: allContacts } = await supabase
         .from("contacts")
-        .select("name, phone")
+        .select("name, phone_number")
         .eq("user_id", profile.id)
         .order("name", { ascending: true });
       if (!allContacts || allContacts.length === 0) {
         responseText = "Você ainda não tem contatos salvos na Maya. 📇\n\nCompartilhe um contato comigo ou diga _\"Salva o contato [Nome]: [número]\"_";
       } else {
-        // Formata phone pra exibição se disponível (ex: +55 11 9xxxx-xxxx)
-        const lines = allContacts.map((c: any) => {
-          const phone = c.phone ? ` — ${c.phone}` : "";
-          return `• *${c.name}*${phone}`;
-        }).join("\n");
+        const lines = allContacts.map((c: any) => `• *${c.name}*`).join("\n");
         responseText = `📇 *Seus contatos salvos (${allContacts.length}):*\n\n${lines}\n\nPara enviar mensagem: _"Manda pra [Nome] dizendo..."_`;
       }
 
@@ -6101,13 +5395,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     });
     // Registra metrica de erro se temos profile (busca por phone_number, nao por id)
     try {
-      const errPhone = sanitizePhone(replyTo.replace(/@.*$/, "").replace(/:\d+$/, ""));
-      if (errPhone) {
-        const { data: pErr } = await supabase.from("profiles").select("id")
-          .or(`phone_number.eq.${errPhone},phone_number.eq.+${errPhone}`)
-          .maybeSingle();
-        if (pErr?.id) logMetric(pErr.id, currentIntent || "unknown", Date.now() - t0, false, message.slice(0, 100)).catch(() => {});
-      }
+      const errPhone = replyTo.replace(/@.*$/, "").replace(/:\d+$/, "");
+      const { data: pErr } = await supabase.from("profiles").select("id")
+        .or(`phone_number.eq.${errPhone},phone_number.eq.+${errPhone}`)
+        .maybeSingle();
+      if (pErr?.id) logMetric(pErr.id, currentIntent || "unknown", Date.now() - t0, false, message.slice(0, 100)).catch(() => {});
     } catch { /* ignora */ }
     try {
       const humanizedError = getHumanizedError(currentIntent);
