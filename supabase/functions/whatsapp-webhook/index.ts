@@ -1,3 +1,4 @@
+// DEPLOY-TEST-MARKER-XYZ-2026-04-11-A
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendText, sendImage, sendButtons, extractPhone, downloadMediaBase64, resolveLidToPhone } from "../_shared/evolution.ts";
