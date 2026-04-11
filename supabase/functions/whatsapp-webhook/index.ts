@@ -5346,10 +5346,14 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         responseText = await translateIfNeeded(responseText, language);
       }
       try {
-        await sendText(replyTo || sendPhone, responseText);
+        // Tenta sendPhone (número normalizado) primeiro. Se falhar ou estiver vazio, usa replyTo (LID/JID)
+        const targetNumber = sendPhone || replyTo;
+        console.log(`[sendText-target] sendPhone="${sendPhone}" replyTo="${replyTo}" using="${targetNumber}"`);
+        await sendText(targetNumber, responseText);
       } catch (sendErr) {
         console.error("[processMessage] sendText failed, queuing for retry:", sendErr);
-        await queueMessage(replyTo || sendPhone, responseText, profile.id);
+        const targetNumber = sendPhone || replyTo;
+        await queueMessage(targetNumber, responseText, profile.id);
       }
     }
 
