@@ -55,7 +55,14 @@ serve(async (req) => {
 
   let sent = 0;
   for (const u of users) {
-    const name = u.display_name || "você";
+    // Prioriza user_nickname (nome que o cliente ESCOLHEU ser chamado na config do agente)
+    // Fallback pra display_name (nome do cadastro) → "você" se nenhum existir
+    const { data: agentCfg } = await supabase
+      .from("agent_configs")
+      .select("user_nickname")
+      .eq("user_id", u.id)
+      .maybeSingle();
+    const name = (agentCfg?.user_nickname as string)?.trim() || u.display_name || "você";
     const message =
       `Oi, ${name}! 👋\n\n` +
       `Já faz um tempo que não te vejo por aqui. Tudo bem?\n\n` +
