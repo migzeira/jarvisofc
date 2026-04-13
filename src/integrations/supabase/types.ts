@@ -327,6 +327,24 @@ export type Database = {
           },
         ]
       }
+      debug_logs: {
+        Row: {
+          created_at: string | null
+          id: number
+          message: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: number
+          message?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: number
+          message?: string | null
+        }
+        Relationships: []
+      }
       error_logs: {
         Row: {
           context: string
@@ -839,13 +857,54 @@ export type Database = {
           },
         ]
       }
+      pending_whatsapp_links: {
+        Row: {
+          created_at: string
+          expires_at: string
+          phone_number: string
+          push_name_hint: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          phone_number: string
+          push_name_hint?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          phone_number?: string
+          push_name_hint?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      processed_messages: {
+        Row: {
+          created_at: string
+          message_id: string
+        }
+        Insert: {
+          created_at?: string
+          message_id: string
+        }
+        Update: {
+          created_at?: string
+          message_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
+          access_source: string | null
           access_until: string | null
           account_status: string
           created_at: string
           display_name: string | null
           id: string
+          is_admin: boolean
           kirvano_subscription_id: string | null
           last_inactivity_alert_at: string | null
           link_code: string | null
@@ -855,16 +914,19 @@ export type Database = {
           phone_changes_count: number
           phone_number: string | null
           plan: string
+          subscription_cancelled_at: string | null
           timezone: string
           updated_at: string
           whatsapp_lid: string | null
         }
         Insert: {
+          access_source?: string | null
           access_until?: string | null
           account_status?: string
           created_at?: string
           display_name?: string | null
           id: string
+          is_admin?: boolean
           kirvano_subscription_id?: string | null
           last_inactivity_alert_at?: string | null
           link_code?: string | null
@@ -874,16 +936,19 @@ export type Database = {
           phone_changes_count?: number
           phone_number?: string | null
           plan?: string
+          subscription_cancelled_at?: string | null
           timezone?: string
           updated_at?: string
           whatsapp_lid?: string | null
         }
         Update: {
+          access_source?: string | null
           access_until?: string | null
           account_status?: string
           created_at?: string
           display_name?: string | null
           id?: string
+          is_admin?: boolean
           kirvano_subscription_id?: string | null
           last_inactivity_alert_at?: string | null
           link_code?: string | null
@@ -893,6 +958,7 @@ export type Database = {
           phone_changes_count?: number
           phone_number?: string | null
           plan?: string
+          subscription_cancelled_at?: string | null
           timezone?: string
           updated_at?: string
           whatsapp_lid?: string | null
@@ -964,6 +1030,7 @@ export type Database = {
           amount: number
           category: string
           created_at: string
+          day_of_month: number | null
           description: string
           frequency: string
           id: string
@@ -977,6 +1044,7 @@ export type Database = {
           amount: number
           category?: string
           created_at?: string
+          day_of_month?: number | null
           description: string
           frequency: string
           id?: string
@@ -990,6 +1058,7 @@ export type Database = {
           amount?: number
           category?: string
           created_at?: string
+          day_of_month?: number | null
           description?: string
           frequency?: string
           id?: string
@@ -1136,6 +1205,9 @@ export type Database = {
           created_at: string
           description: string
           id: string
+          installment_group: string | null
+          installment_number: number | null
+          installment_total: number | null
           source: string
           transaction_date: string
           type: string
@@ -1147,6 +1219,9 @@ export type Database = {
           created_at?: string
           description: string
           id?: string
+          installment_group?: string | null
+          installment_number?: number | null
+          installment_total?: number | null
           source?: string
           transaction_date?: string
           type?: string
@@ -1158,6 +1233,9 @@ export type Database = {
           created_at?: string
           description?: string
           id?: string
+          installment_group?: string | null
+          installment_number?: number | null
+          installment_total?: number | null
           source?: string
           transaction_date?: string
           type?: string
@@ -1281,6 +1359,7 @@ export type Database = {
         }
       }
       cleanup_old_error_logs: { Args: never; Returns: undefined }
+      expire_stale_accounts: { Args: never; Returns: undefined }
       get_admin_analytics: { Args: never; Returns: Json }
       get_inactivity_alert_candidates: {
         Args: { p_ago48h: string; p_ago7d: string; p_ago96h: string }
@@ -1292,7 +1371,7 @@ export type Database = {
       }
       get_user_id_by_email: { Args: { user_email: string }; Returns: string }
       reset_missed_streaks: { Args: never; Returns: undefined }
-      send_pending_reminders: { Args: never; Returns: undefined }
+      send_pending_reminders: { Args: never; Returns: number }
     }
     Enums: {
       [_ in never]: never
