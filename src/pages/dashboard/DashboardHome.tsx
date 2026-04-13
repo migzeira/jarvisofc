@@ -426,6 +426,28 @@ export default function DashboardHome() {
         </div>
       )}
 
+      {/* ── Alerta: agente inativo mas número cadastrado (primeira vez) ── */}
+      {/* Mostra quando: tem phone ativo + conta ativa + agente desligado + nunca usou (messages_used=0) */}
+      {/* NÃO mostra se: desativou manualmente depois de já ter usado (messages_used > 0) */}
+      {phoneSet && accountStatus === "active" && agentConfig?.is_active === false && (profile?.messages_used ?? 0) === 0 && !dismissedBanners.has("agent_inactive") && (
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200">
+          <AlertTriangle className="h-5 w-5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">Ative o agente pra conversar com a Maya</p>
+            <p className="text-xs text-amber-300/80 mt-0.5">
+              Seu número está cadastrado mas o agente está desativado. Ative o toggle abaixo pra que a Maya comece a responder no seu WhatsApp.
+            </p>
+          </div>
+          <button
+            onClick={() => dismissBanner("agent_inactive")}
+            aria-label="Fechar aviso"
+            className="shrink-0 p-1 rounded-md hover:bg-amber-500/20 text-amber-300/70 hover:text-amber-200 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* ── Onboarding banner (novos usuários) ── */}
       {showOnboarding && !onboardingDismissed && (
         <Card className="bg-gradient-to-r from-violet-500/10 to-purple-500/10 border-violet-500/20 relative">

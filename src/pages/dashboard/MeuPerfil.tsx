@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
   Save, Clock, CheckCircle, XCircle, Info, Smartphone, Lock, AlertTriangle,
-  Crown, ExternalLink, Calendar,
+  Crown, ExternalLink, Calendar, MessageSquare,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -210,6 +210,27 @@ export default function MeuPerfil() {
       // Increment change counter only when actually changing to a different number
       const newPhone = isValidLocal ? builtPhone : null;
       const isRealChange = newPhone !== storedPhone;
+
+      // Verifica se o número já está cadastrado em OUTRA conta.
+      // Não pode ter o mesmo número em 2 contas — é uma única conversa
+      // no WhatsApp com o número da Maya, não tem como distinguir.
+      if (newPhone && isRealChange) {
+        const { data: existing } = await supabase
+          .from("profiles")
+          .select("id, display_name")
+          .or(`phone_number.eq.${newPhone},phone_number.eq.+${newPhone}`)
+          .neq("id", user!.id)
+          .maybeSingle();
+
+        if (existing) {
+          toast.error(
+            `Este número já está cadastrado em outra conta da Minha Maya. ` +
+            `Cada número só pode ser usado em uma conta. Use outro número.`
+          );
+          setSaving(false);
+          return;
+        }
+      }
       const newChangesCount = isRealChange && newPhone !== null
         ? changesCount + 1
         : changesCount;
@@ -242,13 +263,10 @@ export default function MeuPerfil() {
         if (remaining <= 0) {
           toast.success("Número salvo! ⚠️ Este foi seu último ajuste permitido.");
         } else if (!storedPhone) {
-          toast.success("🎉 Número salvo!");
+          toast.success("🎉 Número salvo! Agora ative o agente na aba Início e envie uma mensagem pra Maya.");
         } else {
           toast.success(`Número atualizado! Você ainda pode alterá-lo mais ${remaining} vez${remaining === 1 ? "" : "es"}.`);
         }
-        // Dispara envio do código de vinculação automaticamente
-        // (agora temos plano ativo + phone salvo → único passo pendente é vincular o LID)
-        await sendLinkCode({ silent: false });
       } else if (!newPhone) {
         toast.success("Número removido. A Maya não responderá até você adicionar um número.");
       } else {
@@ -504,27 +522,36 @@ export default function MeuPerfil() {
             </div>
           )}
 
-          {/* Aguardando vinculação — phone salvo mas LID ainda não capturado */}
+          {/* Número ativo — instruções pra conectar com a Maya */}
           {profile.phone_number && !isPhoneLocked && !profile.whatsapp_lid && hasActivePlan && (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-200">
               <Smartphone className="h-4 w-4 shrink-0 mt-0.5" />
               <div className="flex-1">
-                <p className="font-semibold text-blue-100">Aguardando primeira mensagem</p>
+                <p className="font-semibold text-blue-100">Número ativo na plataforma!</p>
                 <p className="mt-1 text-blue-200/80">
-                  Enviamos uma mensagem no seu WhatsApp em <span className="font-mono">{formatFullPhone(profile.phone_number)}</span>.
+                  Agora ative o agente na aba <span className="font-semibold text-blue-100">Início</span> (toggle de liga/desliga) e depois envie uma mensagem pra Maya.
                 </p>
-                <p className="mt-1 text-blue-200/80">
-                  👉 Abra o WhatsApp, responda qualquer coisa (pode ser só um <span className="font-semibold text-blue-100">"oi"</span>) e a Maya vai te reconhecer automaticamente.
+                <p className="mt-2 text-blue-200/80">
+                  Número da Maya: <span className="font-mono font-semibold text-blue-100">+55 11 93619-6103</span>
                 </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-3 h-8 text-xs border-blue-500/40 text-blue-200 hover:bg-blue-500/20"
-                  onClick={() => sendLinkCode({ silent: false })}
-                  disabled={linking}
-                >
-                  {linking ? "Enviando..." : "Reenviar mensagem"}
-                </Button>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <a
+                    href="https://wa.me/5511936196103?text=Acabei%20de%20ativar%20minha%20Maya!%20%F0%9F%9A%80"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="h-8 text-xs bg-green-600 hover:bg-green-500"
+                    >
+                      <MessageSquare className="mr-1 h-3 w-3" /> Enviar mensagem pra Maya
+                    </Button>
+                  </a>
+                </div>
+                <p className="mt-2 text-blue-300/60 text-xs">
+                  Ou envie manualmente uma mensagem pro número <span className="font-mono">+55 11 93619-6103</span> no seu WhatsApp.
+                </p>
               </div>
             </div>
           )}
