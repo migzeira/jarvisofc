@@ -101,7 +101,7 @@ export default function ConfigAgente() {
               <Label>Nome do agente</Label>
               <div className="flex items-center gap-2 h-9 px-3 rounded-md border border-input bg-muted/50 text-sm text-muted-foreground select-none">
                 <span className="font-semibold text-foreground">Jarvis</span>
-                <span className="text-xs">— nome padrão da assistente</span>
+                <span className="text-xs">— nome padrão do assistente</span>
               </div>
             </div>
             <div className="space-y-2">

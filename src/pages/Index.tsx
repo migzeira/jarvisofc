@@ -713,7 +713,7 @@ export default function Index() {
 
       {/* ══ ANNOUNCEMENT BAR ══════════════════════════════════════════════ */}
       <div className="relative z-50 bg-gradient-to-r from-violet-600/30 to-purple-600/30 border-b border-violet-500/20 py-2 text-center text-[12px]">
-        <span className="text-violet-200">Menos de R$1 por dia para ter uma assistente pessoal 24h</span>
+        <span className="text-violet-200">Menos de R$1 por dia para ter um assistente pessoal 24h</span>
       </div>
 
       {/* ══ NAVBAR ════════════════════════════════════════════════════════ */}
@@ -1277,7 +1277,7 @@ export default function Index() {
                   <ChatAvatar />
                 </div>
                 <h2 className="text-[28px] sm:text-[40px] font-extrabold tracking-tight mb-4" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                  Sua assistente está<br />pronta pra te ajudar
+                  Seu assistente está<br />pronto pra te ajudar
                 </h2>
                 <p className="text-[14px] sm:text-base text-gray-400 mb-9 max-w-md mx-auto leading-relaxed">
                   Mais de 1.200 pessoas já organizam finanças, agenda e lembretes direto pelo WhatsApp. Começa agora.

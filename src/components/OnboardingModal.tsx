@@ -10,14 +10,14 @@ const SLIDES = [
   {
     emoji: "👋",
     title: "Bem-vindo ao Hey Jarvis!",
-    subtitle: "Sua assistente pessoal inteligente via WhatsApp",
+    subtitle: "Seu assistente pessoal inteligente via WhatsApp",
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
-          O Jarvis é uma IA que você controla <strong className="text-foreground">pelo WhatsApp</strong> — sem app pra instalar, sem interface complicada.
+          O Jarvis é um assistente IA que você controla <strong className="text-foreground">pelo WhatsApp</strong> — sem app pra instalar, sem interface complicada.
         </p>
         <p>
-          Fale com ela em linguagem natural, como faria com uma assistente humana. Ela entende contexto, lembra do que você disse e age de verdade.
+          Fale com ele em linguagem natural, como faria com um assistente humano. Ele entende contexto, lembra do que você disse e age de verdade.
         </p>
         <div className="bg-accent/40 rounded-lg p-3 text-xs font-mono">
           <p className="text-violet-400">Você → Jarvis:</p>
@@ -73,7 +73,7 @@ const SLIDES = [
     subtitle: "O Jarvis organiza sua agenda pelo WhatsApp",
     content: (
       <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">Fale naturalmente — ela entende datas, horários e detalhes:</p>
+        <p className="text-sm text-muted-foreground">Fale naturalmente — ele entende datas, horários e detalhes:</p>
         <div className="space-y-2">
           {[
             "\"Dentista amanhã às 14h no centro\"",
@@ -226,7 +226,7 @@ const SLIDES = [
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          Quanto mais contexto você der, mais precisa e útil ela fica.
+          Quanto mais contexto você der, mais preciso e útil ele fica.
         </p>
       </div>
     ),

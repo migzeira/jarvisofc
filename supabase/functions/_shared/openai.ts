@@ -569,7 +569,7 @@ export async function analyzeForwardedContent(
   const fallback: ShadowAnalysis = { action: "unknown", confidence: 0, data: {} };
   if (!text || text.length < 3) return fallback;
 
-  const system = "Voce classifica mensagens encaminhadas no WhatsApp para uma assistente pessoal brasileira. Responda APENAS com JSON valido, sem markdown.";
+  const system = "Voce classifica mensagens encaminhadas no WhatsApp para um assistente pessoal brasileiro. Responda APENAS com JSON valido, sem markdown.";
 
   const prompt = `Uma pessoa encaminhou esta mensagem para seu assistente pessoal Jarvis. Analise e classifique.
 

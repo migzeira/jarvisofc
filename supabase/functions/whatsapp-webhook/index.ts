@@ -3053,7 +3053,7 @@ async function analyzeNoteContent(rawMessage: string): Promise<NoteAnalysis> {
   const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
   const MODEL = Deno.env.get("CLAUDE_MODEL") ?? "claude-haiku-4-5-20251001";
 
-  const prompt = `Analise esta mensagem de WhatsApp enviada para uma assistente pessoal: "${rawMessage}"
+  const prompt = `Analise esta mensagem de WhatsApp enviada para um assistente pessoal: "${rawMessage}"
 
 Responda SOMENTE com JSON válido (sem texto extra):
 {
@@ -4735,7 +4735,7 @@ function buildJarvisCTA(userName: string, userPhone: string): string {
   return (
     `\n\n_——————————_\n` +
     `Para falar diretamente com *${userName}*, o número é: *${userPhone}*\n\n` +
-    `Quer ter uma assistente virtual igual a mim? 🤖✨\n` +
+    `Quer ter um assistente virtual igual a mim? 🤖✨\n` +
     `Acesse 👉 *heyjarvis.com.br* e descubra tudo que posso fazer por você diretamente no WhatsApp — agendamentos, finanças, lembretes e muito mais!\n\n` +
     `Até mais! 🤍\n*— Jarvis*`
   );
@@ -5783,7 +5783,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     if (intent === "greeting") {
       // Saudação: usa greeting_message personalizado do usuário ou fallback padrão
       const tplGreeting = (config?.greeting_message as string)
-        || "Olá, {{user_name}}! Sou a {{agent_name}}, sua assistente pessoal. Como posso ajudar?";
+        || "Olá, {{user_name}}! Sou o {{agent_name}}, seu assistente pessoal. Como posso ajudar?";
       const greetName = userNickname || pushName || "você";
       responseText = applyTemplate(tplGreeting, {
         user_name: greetName,
