@@ -201,6 +201,32 @@ serve(async (_req) => {
 
   for (const reminder of reminders) {
     try {
+      // ─── Guard: reminder de hábito só dispara se o hábito existir e estiver ativo ──
+      if (reminder.source === "habit" && !reminder.habit_id) {
+        // Zombie: reminder marcado como hábito mas sem habit_id (órfão de deleção antiga).
+        // Cancela pra não replicar mais.
+        await supabase
+          .from("reminders")
+          .update({ status: "cancelled" })
+          .eq("id", reminder.id);
+        continue;
+      }
+      if (reminder.habit_id) {
+        const { data: habit } = await supabase
+          .from("habits" as any)
+          .select("id, is_active")
+          .eq("id", reminder.habit_id)
+          .maybeSingle();
+        if (!habit || !(habit as any).is_active) {
+          // Hábito foi deletado ou pausado — cancela este reminder e não reagenda
+          await supabase
+            .from("reminders")
+            .update({ status: "cancelled" })
+            .eq("id", reminder.id);
+          continue;
+        }
+      }
+
       // ─── Delegação de envio: quando o lembrete é "enviar pro X..." ────────
       // Pergunta ao usuário se o Jarvis deve enviar ou se ele mesmo envia.
       const isDelegateReminder =
