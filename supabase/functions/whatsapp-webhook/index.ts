@@ -5567,7 +5567,33 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
+    // Último fallback mais agressivo: se existe EXATAMENTE 1 profile com phone
+    // cadastrado, conta ativa e SEM whatsapp_lid → linka automaticamente.
+    // Isso cobre o caso em que Evolution manda @lid e nem resolveLidToPhone nem
+    // pushName resolvem (comum em WhatsApp Multi-Device).
+    if (!profile && lid) {
+      const { data: orphans } = await supabase
+        .from("profiles")
+        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+        .eq("account_status", "active")
+        .is("whatsapp_lid", null)
+        .not("phone_number", "is", null)
+        .limit(2);
+
+      if (orphans && orphans.length === 1) {
+        profile = orphans[0];
+        supabase.from("profiles").update({ whatsapp_lid: lid }).eq("id", orphans[0].id).then(() => {}).catch(() => {});
+        log.push(`lid_linked_by_orphan: ${orphans[0].id}`);
+      }
+    }
+
     if (!profile) {
+      // Loga o que chegou pra diagnosticar casos "unknown_number"
+      try {
+        await supabase.from("debug_logs").insert({
+          message: `unknown_number lid=${lid ?? "null"} replyTo=${replyTo} fallbackPhone=${fallbackPhone} pushName=${pushName ?? "null"}`,
+        } as any);
+      } catch { /* silent */ }
       // Número/LID totalmente desconhecido — silêncio total (evita spam em bots/scanners).
       // Fluxo correto pra novos clientes:
       //   1. Cadastra phone no MeuPerfil → backend envia código JARVIS-XXXXXX via Evolution

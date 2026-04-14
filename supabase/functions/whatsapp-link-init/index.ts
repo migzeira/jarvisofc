@@ -109,6 +109,21 @@ serve(async (req) => {
     // Remove qualquer pending_link antigo
     await (supabase as any).from("pending_whatsapp_links").delete().eq("user_id", userId);
 
+    // SAFETY NET: mesmo com direct_link bem sucedido, cria pending_link de 24h.
+    // Motivo: o JID que Evolution retorna pode ser diferente do remoteJid que chega
+    // em mensagens reais (Multi-Device), então o LID match falha. Pending garante
+    // que qualquer mensagem da usuaria nas proximas 24h linka o LID correto.
+    const safetyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    await (supabase as any)
+      .from("pending_whatsapp_links")
+      .upsert({
+        user_id: userId,
+        phone_number: phone,
+        push_name_hint: profile.display_name,
+        expires_at: safetyExpires,
+        created_at: new Date().toISOString(),
+      }, { onConflict: "user_id" });
+
     // Auto-ativa o agente (garante que funcione mesmo se frontend falhou)
     await (supabase as any)
       .from("agent_configs")
@@ -161,7 +176,8 @@ serve(async (req) => {
     } as any)
     .eq("id", userId);
 
-  const pendingExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  // Janela de 24h (era 15 min) — usuario pode demorar pra responder o "oi"
+  const pendingExpires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   await (supabase as any)
     .from("pending_whatsapp_links")
     .upsert({
