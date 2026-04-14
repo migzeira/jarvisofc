@@ -26,3 +26,12 @@ verify_jwt = false
 
 [functions.monitor-health]
 verify_jwt = false
+
+[functions.admin-broadcast]
+verify_jwt = false
+
+[functions.admin-settings]
+verify_jwt = false
+
+[functions.process-scheduled-broadcasts]
+verify_jwt = false

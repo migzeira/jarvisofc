@@ -102,6 +102,9 @@ export default function AdminPanel() {
   const [broadcastMsg, setBroadcastMsg] = useState("");
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastResults, setBroadcastResults] = useState<{ sent: number; failed: number; skipped: number } | null>(null);
+  const [scheduleAt, setScheduleAt] = useState<string>("");
+  const [broadcastHistory, setBroadcastHistory] = useState<any[]>([]);
+  const [scheduledList, setScheduledList] = useState<any[]>([]);
 
   // Sparkline data
   const [dailyUsers, setDailyUsers] = useState<number[]>([]);
@@ -324,17 +327,28 @@ export default function AdminPanel() {
           Authorization: `Bearer ${session.access_token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ user_ids: Array.from(broadcastSelected), message: broadcastMsg.trim() }),
+        body: JSON.stringify({
+          user_ids: Array.from(broadcastSelected),
+          message: broadcastMsg.trim(),
+          ...(scheduleAt ? { scheduled_at: new Date(scheduleAt).toISOString() } : {}),
+        }),
       });
       const rawText = await res.text();
       let data: any = {};
       try { data = JSON.parse(rawText); } catch { /* nao é JSON */ }
       console.log("[broadcast] status:", res.status, "body:", rawText);
       if (res.ok) {
-        setBroadcastResults({ sent: data.sent, failed: data.failed, skipped: data.skipped });
+        if (data.scheduled) {
+          toast.success(`📅 Broadcast agendado para ${new Date(data.send_at).toLocaleString("pt-BR")}`);
+          setScheduleAt("");
+          loadBroadcastHistory();
+        } else {
+          setBroadcastResults({ sent: data.sent, failed: data.failed, skipped: data.skipped });
+          toast.success(`✅ ${data.sent} mensagem(ns) enviada(s)!`);
+          loadBroadcastHistory();
+        }
         setBroadcastMsg("");
         setBroadcastSelected(new Set());
-        toast.success(`✅ ${data.sent} mensagem(ns) enviada(s)!`);
       } else {
         toast.error(`[${res.status}] ${data.error ?? rawText.slice(0, 200) ?? "Erro ao enviar"}`);
       }
@@ -343,6 +357,30 @@ export default function AdminPanel() {
       toast.error("Erro de rede: " + (err instanceof Error ? err.message : String(err)));
     }
     setBroadcasting(false);
+  };
+
+  const loadBroadcastHistory = async () => {
+    const [logsRes, schedRes] = await Promise.all([
+      (supabase.from("broadcast_logs" as any) as any)
+        .select("id, message, total, sent, failed, skipped, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10),
+      (supabase.from("scheduled_broadcasts" as any) as any)
+        .select("id, message, user_ids, send_at, status")
+        .in("status", ["pending", "processing"])
+        .order("send_at", { ascending: true })
+        .limit(20),
+    ]);
+    setBroadcastHistory(logsRes.data ?? []);
+    setScheduledList(schedRes.data ?? []);
+  };
+
+  const cancelScheduled = async (id: string) => {
+    if (!confirm("Cancelar este agendamento?")) return;
+    const { error } = await (supabase.from("scheduled_broadcasts" as any) as any)
+      .update({ status: "cancelled" }).eq("id", id);
+    if (error) toast.error("Erro ao cancelar");
+    else { toast.success("Agendamento cancelado"); loadBroadcastHistory(); }
   };
 
   const filteredProfiles = profiles.filter(p => {
@@ -529,7 +567,7 @@ export default function AdminPanel() {
               </TabsTrigger>
               <TabsTrigger value="errors" onClick={() => setKirvanoLiveRefresh(false)}><AlertTriangle className="h-4 w-4 mr-1" />Erros</TabsTrigger>
               <TabsTrigger value="settings" onClick={() => setKirvanoLiveRefresh(false)}><Settings className="h-4 w-4 mr-1" />Config</TabsTrigger>
-              <TabsTrigger value="broadcast" onClick={() => { setKirvanoLiveRefresh(false); loadBroadcastUsers(); }}><Send className="h-4 w-4 mr-1" />Mensagem</TabsTrigger>
+              <TabsTrigger value="broadcast" onClick={() => { setKirvanoLiveRefresh(false); loadBroadcastUsers(); loadBroadcastHistory(); }}><Send className="h-4 w-4 mr-1" />Mensagem</TabsTrigger>
             </TabsList>
           </div>
 
@@ -1169,12 +1207,39 @@ export default function AdminPanel() {
                     </Label>
                     <textarea
                       className="w-full min-h-[180px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
-                      placeholder={"Olá! 👋\n\nAqui é o Jarvis com um recado importante..."}
+                      placeholder={"Olá {{nome}}! 👋\n\nAqui é o Jarvis com um recado..."}
                       value={broadcastMsg}
                       onChange={e => setBroadcastMsg(e.target.value)}
                       maxLength={4000}
                     />
-                    <p className="text-xs text-muted-foreground text-right mt-1">{broadcastMsg.length}/4000</p>
+                    <div className="flex items-center justify-between mt-1">
+                      <div className="flex flex-wrap gap-1">
+                        {["{{nome}}", "{{full_name}}"].map(v => (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() => setBroadcastMsg(m => m + v)}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 hover:bg-purple-200"
+                          >
+                            {v}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">{broadcastMsg.length}/4000</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-xs text-muted-foreground mb-1 block">
+                      Agendar envio (opcional — deixe vazio pra enviar agora)
+                    </Label>
+                    <input
+                      type="datetime-local"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={scheduleAt}
+                      min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+                      onChange={e => setScheduleAt(e.target.value)}
+                    />
                   </div>
 
                   {broadcastResults && (
@@ -1192,7 +1257,9 @@ export default function AdminPanel() {
                     onClick={handleBroadcast}
                   >
                     {broadcasting ? (
-                      <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Enviando...</>
+                      <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />{scheduleAt ? "Agendando..." : "Enviando..."}</>
+                    ) : scheduleAt ? (
+                      <><Send className="h-4 w-4 mr-2" />Agendar para {broadcastSelected.size || "..."} cliente(s)</>
                     ) : (
                       <><Send className="h-4 w-4 mr-2" />Enviar para {broadcastSelected.size || "..."} cliente(s)</>
                     )}
@@ -1203,6 +1270,59 @@ export default function AdminPanel() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Agendamentos pendentes */}
+            {scheduledList.length > 0 && (
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    📅 Broadcasts agendados ({scheduledList.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {scheduledList.map(s => (
+                      <div key={s.id} className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-muted-foreground">
+                            {new Date(s.send_at).toLocaleString("pt-BR")} • {Array.isArray(s.user_ids) ? s.user_ids.length : 0} destinatário(s)
+                          </div>
+                          <div className="truncate">{s.message}</div>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={() => cancelScheduled(s.id)}>Cancelar</Button>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Histórico recente */}
+            {broadcastHistory.length > 0 && (
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    📜 Histórico recente
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {broadcastHistory.map(h => (
+                      <div key={h.id} className="rounded-md border p-3 text-sm">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                          <span>{new Date(h.created_at).toLocaleString("pt-BR")}</span>
+                          <span className="text-green-600">✅ {h.sent}</span>
+                          {h.failed > 0 && <span className="text-red-500">❌ {h.failed}</span>}
+                          {h.skipped > 0 && <span className="text-yellow-600">⚠️ {h.skipped}</span>}
+                          <span className="ml-auto">total: {h.total}</span>
+                        </div>
+                        <div className="line-clamp-2 text-muted-foreground">{h.message}</div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
       </div>

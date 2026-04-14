@@ -12,17 +12,10 @@ const supabaseAdmin = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
 
-const ALLOWED_ORIGINS = [
-  "https://heyjarvis.com.br",
-  "https://www.heyjarvis.com.br",
-  "http://localhost:5173",
-  "http://localhost:3000",
-];
-
 function getCorsHeaders(req: Request) {
-  const origin = req.headers.get("Origin") ?? "";
+  const origin = req.headers.get("Origin") ?? "*";
   return {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0],
+    "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Headers": "authorization, content-type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };

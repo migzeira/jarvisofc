@@ -26,6 +26,11 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
       - name: Deploy admin-broadcast
-        run: supabase functions deploy admin-broadcast --project-ref fnilyapvhhygfzcdxqjm
+        run: supabase functions deploy admin-broadcast --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy process-scheduled-broadcasts
+        run: supabase functions deploy process-scheduled-broadcasts --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
