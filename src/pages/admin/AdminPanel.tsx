@@ -15,7 +15,7 @@ import {
   Users, MessageSquare, Settings, Shield, Search, Eye, MessageCircle,
   Clock, CheckCircle, XCircle, RefreshCw, Download, CreditCard, AlertTriangle,
   TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Webhook, ChevronDown, ChevronUp, Link2, Link2Off,
-  Activity, BarChart3, UserCheck, UserX,
+  Activity, BarChart3, UserCheck, UserX, Send,
 } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
@@ -94,6 +94,14 @@ export default function AdminPanel() {
   const [settings, setSettings] = useState<Record<string, { value: string; configured: boolean }>>({});
   const [settingsForm, setSettingsForm] = useState<Record<string, string>>({});
   const [savingSettings, setSavingSettings] = useState(false);
+
+  // Broadcast
+  const [broadcastUsers, setBroadcastUsers] = useState<any[]>([]);
+  const [broadcastLoading, setBroadcastLoading] = useState(false);
+  const [broadcastSelected, setBroadcastSelected] = useState<Set<string>>(new Set());
+  const [broadcastMsg, setBroadcastMsg] = useState("");
+  const [broadcasting, setBroadcasting] = useState(false);
+  const [broadcastResults, setBroadcastResults] = useState<{ sent: number; failed: number; skipped: number } | null>(null);
 
   // Sparkline data
   const [dailyUsers, setDailyUsers] = useState<number[]>([]);
@@ -275,6 +283,63 @@ export default function AdminPanel() {
   };
 
 
+
+  // ── Broadcast helpers ────────────────────────────────────────────────────
+  const loadBroadcastUsers = async () => {
+    setBroadcastLoading(true);
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, display_name, phone_number, account_status")
+      .eq("account_status", "active")
+      .not("phone_number", "is", null)
+      .order("display_name", { ascending: true });
+    setBroadcastUsers(data ?? []);
+    setBroadcastLoading(false);
+  };
+
+  const toggleBroadcastUser = (id: string) => {
+    setBroadcastSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (broadcastSelected.size === broadcastUsers.length) {
+      setBroadcastSelected(new Set());
+    } else {
+      setBroadcastSelected(new Set(broadcastUsers.map(u => u.id)));
+    }
+  };
+
+  const handleBroadcast = async () => {
+    if (!session || broadcastSelected.size === 0 || !broadcastMsg.trim()) return;
+    setBroadcasting(true);
+    setBroadcastResults(null);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-broadcast`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ user_ids: Array.from(broadcastSelected), message: broadcastMsg.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setBroadcastResults({ sent: data.sent, failed: data.failed, skipped: data.skipped });
+        setBroadcastMsg("");
+        setBroadcastSelected(new Set());
+        toast.success(`✅ ${data.sent} mensagem(ns) enviada(s)!`);
+      } else {
+        toast.error(data.error ?? "Erro ao enviar");
+      }
+    } catch {
+      toast.error("Erro de rede");
+    }
+    setBroadcasting(false);
+  };
 
   const filteredProfiles = profiles.filter(p => {
     const matchSearch = !userSearch || (p.display_name || "").toLowerCase().includes(userSearch.toLowerCase());
@@ -460,6 +525,7 @@ export default function AdminPanel() {
               </TabsTrigger>
               <TabsTrigger value="errors" onClick={() => setKirvanoLiveRefresh(false)}><AlertTriangle className="h-4 w-4 mr-1" />Erros</TabsTrigger>
               <TabsTrigger value="settings" onClick={() => setKirvanoLiveRefresh(false)}><Settings className="h-4 w-4 mr-1" />Config</TabsTrigger>
+              <TabsTrigger value="broadcast" onClick={() => { setKirvanoLiveRefresh(false); loadBroadcastUsers(); }}><Send className="h-4 w-4 mr-1" />Mensagem</TabsTrigger>
             </TabsList>
           </div>
 
@@ -1020,6 +1086,119 @@ export default function AdminPanel() {
                 </Button>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* BROADCAST — Enviar mensagem para clientes */}
+          <TabsContent value="broadcast">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Lista de clientes */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Destinatários
+                    {broadcastSelected.size > 0 && (
+                      <Badge className="ml-auto bg-purple-600">{broadcastSelected.size} selecionado(s)</Badge>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {broadcastLoading ? (
+                    <div className="space-y-2">
+                      {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-9 w-full" />)}
+                    </div>
+                  ) : broadcastUsers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-6">Nenhum cliente ativo com telefone cadastrado.</p>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 mb-3 pb-3 border-b">
+                        <input
+                          type="checkbox"
+                          id="select-all"
+                          className="h-4 w-4 cursor-pointer"
+                          checked={broadcastSelected.size === broadcastUsers.length && broadcastUsers.length > 0}
+                          onChange={toggleSelectAll}
+                        />
+                        <label htmlFor="select-all" className="text-sm font-medium cursor-pointer select-none">
+                          Selecionar todos ({broadcastUsers.length})
+                        </label>
+                      </div>
+                      <div className="space-y-1 max-h-80 overflow-y-auto pr-1">
+                        {broadcastUsers.map(u => (
+                          <div
+                            key={u.id}
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                              broadcastSelected.has(u.id) ? "bg-purple-50 dark:bg-purple-950/30" : "hover:bg-muted/50"
+                            }`}
+                            onClick={() => toggleBroadcastUser(u.id)}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 cursor-pointer pointer-events-none"
+                              checked={broadcastSelected.has(u.id)}
+                              readOnly
+                            />
+                            <span className="text-sm flex-1 truncate">{u.display_name || "–"}</span>
+                            <span className="text-xs text-muted-foreground font-mono">
+                              {(u.phone_number ?? "").replace(/\D/g, "").slice(-4) ? `···${(u.phone_number ?? "").replace(/\D/g, "").slice(-4)}` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Composer */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <MessageCircle className="h-4 w-4" />
+                    Mensagem
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label className="text-xs text-muted-foreground mb-1 block">
+                      Suporta *negrito*, _itálico_ e quebras de linha (estilo WhatsApp)
+                    </Label>
+                    <textarea
+                      className="w-full min-h-[180px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+                      placeholder={"Olá! 👋\n\nAqui é o Jarvis com um recado importante..."}
+                      value={broadcastMsg}
+                      onChange={e => setBroadcastMsg(e.target.value)}
+                      maxLength={4000}
+                    />
+                    <p className="text-xs text-muted-foreground text-right mt-1">{broadcastMsg.length}/4000</p>
+                  </div>
+
+                  {broadcastResults && (
+                    <div className="rounded-lg border p-3 bg-muted/40 text-sm space-y-1">
+                      <p className="font-medium">Resultado do último envio:</p>
+                      <p className="text-green-600">✅ Enviadas: {broadcastResults.sent}</p>
+                      {broadcastResults.failed > 0 && <p className="text-red-500">❌ Falhas: {broadcastResults.failed}</p>}
+                      {broadcastResults.skipped > 0 && <p className="text-yellow-600">⚠️ Sem telefone: {broadcastResults.skipped}</p>}
+                    </div>
+                  )}
+
+                  <Button
+                    className="w-full bg-purple-600 hover:bg-purple-700"
+                    disabled={broadcasting || broadcastSelected.size === 0 || !broadcastMsg.trim()}
+                    onClick={handleBroadcast}
+                  >
+                    {broadcasting ? (
+                      <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Enviando...</>
+                    ) : (
+                      <><Send className="h-4 w-4 mr-2" />Enviar para {broadcastSelected.size || "..."} cliente(s)</>
+                    )}
+                  </Button>
+                  {broadcastSelected.size === 0 && (
+                    <p className="text-xs text-muted-foreground text-center">Selecione ao menos um destinatário</p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         </Tabs>
       </div>
