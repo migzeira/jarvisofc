@@ -335,8 +335,9 @@ export default function AdminPanel() {
       } else {
         toast.error(data.error ?? "Erro ao enviar");
       }
-    } catch {
-      toast.error("Erro de rede");
+    } catch (err) {
+      console.error("[broadcast] erro:", err);
+      toast.error("Erro de rede: " + (err instanceof Error ? err.message : String(err)));
     }
     setBroadcasting(false);
   };
