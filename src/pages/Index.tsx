@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import logoEscrita from "@/assets/logo_escrita.webp";
 import logoIcon from "@/assets/logo_icon.webp";
+import logoGif from "@/assets/logo_gif.gif";
 import googleAgendaImg from "@/assets/google_agenda.png";
 import googleSheetsImg from "@/assets/google_sheets.png";
 import notionImg from "@/assets/notion_logo.png";
@@ -767,6 +768,7 @@ export default function Index() {
         <div className="max-w-6xl mx-auto">
           <div className="text-center max-w-3xl mx-auto mb-16">
             <AnimateIn delay={0}>
+              <img src={logoGif} alt="Maya logo animada" className="w-24 h-24 mx-auto mb-4" />
               <p className="text-[13px] font-semibold text-violet-400 mb-4 tracking-wide uppercase">
                 Assistente pessoal no seu WhatsApp
               </p>
