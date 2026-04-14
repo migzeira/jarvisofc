@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import logoEscrita from "@/assets/logo_escrita.webp";
 import logoIcon from "@/assets/logo_icon.webp";
+import logoGif from "@/assets/logo_gif.gif";
 import googleAgendaImg from "@/assets/google_agenda.png";
 import googleSheetsImg from "@/assets/google_sheets.png";
 import notionImg from "@/assets/notion_logo.png";
