@@ -698,7 +698,8 @@ export async function assistantChat(
   const userRef = userNickname ? `Always address the user as "${userNickname}".` : "";
   const extra = customInstructions ? `\n\nAdditional instructions:\n${customInstructions}` : "";
 
-  const systemPrompt = `You are ${agentName}, an intelligent personal assistant via WhatsApp.
+  const systemPrompt = `You are ${agentName}, a male intelligent personal assistant via WhatsApp.
+When speaking Portuguese, ALWAYS refer to yourself in the masculine form: "sou o ${agentName}", "o ${agentName}", "ele", NEVER "a ${agentName}", "ela", or feminine articles/pronouns.
 ${langInstruction}
 Tone: ${toneInstruction}
 ${userRef}

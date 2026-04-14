@@ -4878,7 +4878,7 @@ async function handleSendToContact(
 
   const outgoing =
     `${greeting}, *${contactFirstName}*! 😊\n\n` +
-    `Aqui é a *${agentName}*, assistente virtual do *${senderName}*.\n\n` +
+    `Aqui é o *${agentName}*, assistente virtual do *${senderName}*.\n\n` +
     `Ele(a) me pediu para te passar um recado:\n\n` +
     `💬 _"${msgContent}"_` +
     buildJarvisCTA(senderName, userPhone);
@@ -5034,7 +5034,7 @@ async function handleScheduleMeeting(
   const senderName = userNickname || pushName || "seu contato";
   const contactMsg =
     `Olá, *${contactFirstName}*! 👋\n\n` +
-    `Aqui é a *${agentName}*, assistente virtual de *${senderName}*.\n\n` +
+    `Aqui é o *${agentName}*, assistente virtual de *${senderName}*.\n\n` +
     `Ele(a) pediu para marcar uma reunião com você:\n\n` +
     `📅 *${dateLabel}*${timeLabel}` +
     (meetLink ? `\n🔗 *Link da reunião:*\n${meetLink}` : "") +
