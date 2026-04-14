@@ -377,6 +377,7 @@ export default function Habitos() {
 
   // Custom habit dialog
   const [customOpen, setCustomOpen] = useState(false);
+  const [savingCustom, setSavingCustom] = useState(false);
   const [editingCustom, setEditingCustom] = useState<Habit | null>(null);
   const [customForm, setCustomForm] = useState({
     name: "", description: "", reminder_time: "08:00",
@@ -660,7 +661,9 @@ export default function Habitos() {
   // ── Custom habit ──────────────────────────────
   const handleSaveCustom = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingCustom) return; // Previne double-submit
     if (!customForm.name.trim()) { toast.error("Nome obrigatório"); return; }
+    setSavingCustom(true);
 
     // Se recorrente, gera múltiplos horários via intervalo
     const isRecurring = customForm.is_recurring;
@@ -702,37 +705,49 @@ export default function Habitos() {
         status: "pending",
       }));
 
-    if (editingCustom) {
-      const { error } = await (supabase.from("habits" as any).update(payload as any).eq("id", editingCustom.id) as any);
-      if (error) { toast.error("Erro ao atualizar"); return; }
-      // Recreate reminders (delete old pending ones, insert new)
-      if (userPhone) {
-        await (supabase.from("reminders" as any) as any)
-          .delete()
-          .eq("habit_id", editingCustom.id)
-          .eq("status", "pending");
-        const reminders = buildHabitReminders(editingCustom.id);
-        if (reminders.length > 0) {
-          await (supabase.from("reminders" as any).insert(reminders as any) as any);
+    try {
+      if (editingCustom) {
+        const { error } = await (supabase.from("habits" as any).update(payload as any).eq("id", editingCustom.id) as any);
+        if (error) { toast.error("Erro ao atualizar: " + error.message); return; }
+        // Recreate reminders (delete old pending ones, insert new)
+        if (userPhone) {
+          await (supabase.from("reminders" as any) as any)
+            .delete()
+            .eq("habit_id", editingCustom.id)
+            .eq("status", "pending");
+          const reminders = buildHabitReminders(editingCustom.id);
+          if (reminders.length > 0) {
+            const { error: remErr } = await (supabase.from("reminders" as any).insert(reminders as any) as any);
+            if (remErr) {
+              console.error("[handleSaveCustom] insert reminders error:", remErr);
+              toast.error("Hábito salvo, mas lembretes falharam: " + remErr.message);
+            }
+          }
         }
-      }
-      toast.success("Hábito atualizado!");
-    } else {
-      const { data: newHabit, error } = await (supabase.from("habits" as any)
-        .insert({ ...payload, user_id: user!.id } as any).select("id").single() as any);
-      if (error) { toast.error("Erro ao criar: " + error.message); return; }
-      if (userPhone && newHabit) {
-        const reminders = buildHabitReminders(newHabit.id);
-        if (reminders.length > 0) {
-          await (supabase.from("reminders" as any).insert(reminders as any) as any);
+        toast.success("Hábito atualizado!");
+      } else {
+        const { data: newHabit, error } = await (supabase.from("habits" as any)
+          .insert({ ...payload, user_id: user!.id } as any).select("id").single() as any);
+        if (error) { toast.error("Erro ao criar: " + error.message); return; }
+        if (userPhone && newHabit) {
+          const reminders = buildHabitReminders(newHabit.id);
+          if (reminders.length > 0) {
+            const { error: remErr } = await (supabase.from("reminders" as any).insert(reminders as any) as any);
+            if (remErr) {
+              console.error("[handleSaveCustom] insert reminders error:", remErr);
+              toast.error("Hábito criado, mas lembretes falharam: " + remErr.message);
+            }
+          }
         }
+        toast.success("Hábito criado! 🎯");
       }
-      toast.success("Hábito criado! 🎯");
-    }
 
-    setCustomOpen(false);
-    setEditingCustom(null);
-    loadData();
+      setCustomOpen(false);
+      setEditingCustom(null);
+      loadData();
+    } finally {
+      setSavingCustom(false);
+    }
   };
 
   const deleteHabit = async (id: string) => {
@@ -1180,8 +1195,8 @@ export default function Habitos() {
                 ))}
               </div>
             </div>
-            <Button type="submit" className="w-full">
-              {editingCustom ? "Salvar alterações" : "Criar hábito"}
+            <Button type="submit" className="w-full" disabled={savingCustom}>
+              {savingCustom ? "Salvando..." : (editingCustom ? "Salvar alterações" : "Criar hábito")}
             </Button>
           </form>
         </DialogContent>
