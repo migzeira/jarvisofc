@@ -251,25 +251,28 @@ const COLOR_OPTIONS = ["#6366f1", "#ec4899", "#22c55e", "#f97316", "#3b82f6", "#
 /** Converts Brazil local time "HH:MM" to next UTC ISO occurrence (daily) */
 function nextDailyUTC(localTimeHHMM: string): string {
   const [lh, lm] = localTimeHHMM.split(":").map(Number);
-  const now = new Date();
+  const nowMs = Date.now();
 
   // Current Brazil date (UTC-3)
-  const brNow = new Date(now.getTime() - 3 * 3_600_000);
-  const [brYear, brMonth, brDay] = brNow.toISOString().slice(0, 10).split("-").map(Number);
+  const brNow = new Date(nowMs - 3 * 3_600_000);
+  const brYear = brNow.getUTCFullYear();
+  const brMonth = brNow.getUTCMonth(); // 0-indexed
+  const brDay = brNow.getUTCDate();
 
   // Brazil to UTC: add 3 hours
   let utcH = lh + 3;
   let dayAdd = 0;
   if (utcH >= 24) { utcH -= 24; dayAdd = 1; }
 
-  const candidate = new Date(Date.UTC(brYear, brMonth - 1, brDay + dayAdd, utcH, lm, 0));
+  let candidateMs = Date.UTC(brYear, brMonth, brDay + dayAdd, utcH, lm, 0);
 
-  // If already past, schedule for tomorrow
-  if (candidate.getTime() <= now.getTime()) {
-    candidate.setUTCDate(candidate.getUTCDate() + 1);
+  // Grace period: só empurra pra amanhã se já passou há mais de 60s.
+  // Assim, agendar "daqui a 2-3 min" funciona mesmo com pequena diferença de relógio.
+  if (candidateMs < nowMs - 60_000) {
+    candidateMs += 86_400_000; // +1 day
   }
 
-  return candidate.toISOString();
+  return new Date(candidateMs).toISOString();
 }
 
 /** Next UTC occurrence of a specific weekday + local time (weekly) */
