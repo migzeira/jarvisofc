@@ -737,14 +737,17 @@ export default function Habitos() {
 
   const deleteHabit = async (id: string) => {
     if (!confirm("Remover este hábito?")) return;
-    // Cancel all pending reminders first, then delete the habit
-    await (supabase.from("reminders" as any) as any)
-      .delete()
-      .eq("habit_id", id)
-      .eq("status", "pending");
-    await (supabase.from("habits" as any).delete().eq("id", id) as any);
-    toast.success("Hábito removido.");
-    loadData();
+    try {
+      await (supabase.from("reminders" as any) as any)
+        .delete()
+        .eq("habit_id", id)
+        .eq("status", "pending");
+      await (supabase.from("habits" as any).delete().eq("id", id) as any);
+      toast.success("Hábito removido.");
+      loadData();
+    } catch {
+      toast.error("Erro ao remover hábito.");
+    }
   };
 
   const openEditCustom = (h: Habit) => {
@@ -928,7 +931,7 @@ export default function Habitos() {
                           if (v && userPhone) {
                             const times: string[] = Array.isArray(h.reminder_times)
                               ? h.reminder_times as string[]
-                              : JSON.parse(h.reminder_times as string);
+                              : h.reminder_times ? JSON.parse(h.reminder_times as string) : [];
                             const newReminders = times.map(t => ({
                               user_id: user!.id,
                               habit_id: h.id,

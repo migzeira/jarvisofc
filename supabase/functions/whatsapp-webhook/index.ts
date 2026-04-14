@@ -3871,12 +3871,18 @@ async function handleReminderCancel(
     return `Não encontrei esse lembrete. Seus pendentes:\n\n${fmtPendingList()}\n\nTente o nome exato.`;
   }
 
-  // Cancela este e todas as recorrências futuras com o mesmo título
-  await supabase.from("reminders")
-    .update({ status: "cancelled" })
-    .eq("user_id", userId)
-    .eq("title", match.title)
-    .eq("status", "pending");
+  // Cancela este e todas as recorrências futuras com o mesmo título (ou só pelo id se título nulo)
+  if (match.title) {
+    await supabase.from("reminders")
+      .update({ status: "cancelled" })
+      .eq("user_id", userId)
+      .eq("title", match.title)
+      .eq("status", "pending");
+  } else {
+    await supabase.from("reminders")
+      .update({ status: "cancelled" })
+      .eq("id", match.id);
+  }
 
   const title = match.title || match.message.slice(0, 40);
   return lang === "en"
@@ -5008,7 +5014,7 @@ async function handleScheduleMeeting(
   }
 
   const title = `Reunião com ${found.name}`;
-  const description = `Reunião agendada pela ${agentName} — assistente de ${userNickname || pushName}`;
+  const description = `Reunião agendada pelo ${agentName} — assistente de ${userNickname || pushName}`;
 
   // Cria evento no Google Calendar com Google Meet — passa userTz
   const { eventId, meetLink } = await createCalendarEventWithMeet(
@@ -5863,8 +5869,14 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     if (intent === "greeting") {
       // Saudação: usa greeting_message personalizado do usuário ou fallback padrão
-      const tplGreeting = (config?.greeting_message as string)
+      const rawTplGreeting = (config?.greeting_message as string)
         || "Olá, {{user_name}}! Sou o {{agent_name}}, seu assistente pessoal. Como posso ajudar?";
+      // Garante gênero masculino no template
+      const tplGreeting = rawTplGreeting
+        .replace(/\ba\s+\{\{agent_name\}\}/gi, "o {{agent_name}}")
+        .replace(/\bsou\s+a\b/gi, "sou o")
+        .replace(/\bsua\s+assistente\b/gi, "seu assistente")
+        .replace(/\ba\s+assistente\b/gi, "o assistente");
       const greetName = userNickname || pushName || "você";
       responseText = applyTemplate(tplGreeting, {
         user_name: greetName,

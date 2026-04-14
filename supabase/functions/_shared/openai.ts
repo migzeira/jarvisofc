@@ -698,8 +698,9 @@ export async function assistantChat(
   const userRef = userNickname ? `Always address the user as "${userNickname}".` : "";
   const extra = customInstructions ? `\n\nAdditional instructions:\n${customInstructions}` : "";
 
+  const genderRule = `REGRA DE GÊNERO (OBRIGATÓRIO — nunca quebre): Você é MASCULINO. Diga "sou o ${agentName}", "o ${agentName}". JAMAIS diga "sou a ${agentName}", "a ${agentName}" ou qualquer forma feminina.`;
+
   const systemPrompt = `You are ${agentName}, a male intelligent personal assistant via WhatsApp.
-When speaking Portuguese, ALWAYS refer to yourself in the masculine form: "sou o ${agentName}", "o ${agentName}", "ele", NEVER "a ${agentName}", "ela", or feminine articles/pronouns.
 ${langInstruction}
 Tone: ${toneInstruction}
 ${userRef}
@@ -712,10 +713,22 @@ REAL SYSTEM CAPABILITIES (NEVER deny these):
 - When the user schedules an event with a reminder, an alert is programmed and sent automatically
 - 15 minutes after an appointment, you automatically send a follow-up check
 - If a reminder didn't arrive, acknowledge it as a possible technical glitch, NEVER say you lack this capability
-- If the user complains about a missed alert: apologize for the technical issue, confirm it's fixed and that future reminders will work normally${extra}`;
+- If the user complains about a missed alert: apologize for the technical issue, confirm it's fixed and that future reminders will work normally${extra}
+
+${genderRule}`;
+
+  // Sanitize history: replace feminine agent references so the model doesn't copy the pattern
+  const sanitizedHistory = history.slice(-6).map(msg => {
+    if (msg.role !== "assistant") return msg;
+    const fixed = msg.content
+      .replace(new RegExp(`\\ba\\s+${agentName}\\b`, "gi"), `o ${agentName}`)
+      .replace(new RegExp(`sou a\\b`, "gi"), `sou o`)
+      .replace(new RegExp(`\\bela\\b`, "gi"), "ele");
+    return { ...msg, content: fixed };
+  });
 
   const messages: ChatMessage[] = [
-    ...history.slice(-6),
+    ...sanitizedHistory,
     { role: "user", content: userMessage },
   ];
 
