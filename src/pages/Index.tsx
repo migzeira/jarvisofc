@@ -1328,7 +1328,7 @@ export default function Index() {
               <span>· Um produto da{" "}
               <a href="https://mayahub.ai" className="text-violet-400 hover:text-violet-300 transition-colors" target="_blank" rel="noreferrer">MayaHub</a></span>
             </div>
-            <div className="flex items-center gap-1.5"><Lock className="w-3 h-3" /> Dados criptografados e seguros</div>
+            <div className="flex items-center gap-1.5"><Lock className="w-3 h-3" /> Dados criptografados e seguros 🤖</div>
           </div>
         </div>
       </footer>
