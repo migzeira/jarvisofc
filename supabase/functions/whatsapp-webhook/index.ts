@@ -4849,13 +4849,27 @@ function phoneForDisplay(raw: string): string {
  *  4. Usuario recebe: "📨 Cibele respondeu: '...'"
  *  5. Relay encerrado — contato nao recebe mais respostas do bot
  */
+/**
+ * Detecta o gatilho "Responder: [mensagem]" enviado pelo contato.
+ * Retorna true se o relay foi tratado, false caso contrario.
+ *
+ * Fluxo: contato recebe mensagem com instrucao "Responder: ..."
+ * → digita "Responder: deu certo!"
+ * → Jarvis repassa ao usuario original e confirma ao contato
+ */
 async function handleIncomingRelay(
-  incomingPhone: string,   // telefone de quem esta respondendo (digitos apenas)
+  incomingPhone: string,
   text: string,
 ): Promise<boolean> {
+  // Gatilho obrigatorio: mensagem deve comecar com "Responder:"
+  if (!/^responder\s*:/i.test(text.trim())) return false;
+
+  const replyContent = text.replace(/^responder\s*:\s*/i, "").trim();
+  if (!replyContent) return false; // "Responder:" sem conteudo — ignora
+
   const now = new Date().toISOString();
 
-  // Busca relay ativo onde to_phone = incomingPhone (ainda nao expirado)
+  // Busca relay ativo para este telefone
   const { data: relay } = await supabase
     .from("relay_requests")
     .select("*")
@@ -4866,14 +4880,12 @@ async function handleIncomingRelay(
     .limit(1)
     .maybeSingle();
 
-  if (!relay) return false; // nao e relay, continua fluxo normal
+  if (!relay) return false; // nao ha relay ativo — nao trata
 
-  const sendToPhone = incomingPhone;
-  const senderName  = (relay.sender_name as string) || "seu contato";
-  const agentN      = (relay.agent_name  as string) || "Jarvis";
-  const fromPhone   = (relay.from_phone  as string);
+  const fromPhone  = (relay.from_phone  as string);
+  const senderName = (relay.sender_name as string) || "seu contato";
 
-  // Busca nome do contato nos contatos do usuario pra notificacao
+  // Busca nome do contato nos contatos do usuario (para a notificacao ao usuario)
   const { data: ctFound } = await supabase
     .from("contacts")
     .select("name")
@@ -4883,70 +4895,22 @@ async function handleIncomingRelay(
     .maybeSingle();
   const contactFirstName = ctFound?.name?.split(" ")[0] || "Seu contato";
 
-  // ── Caso A: ja pedimos a mensagem, agora coletamos ──
-  if ((relay.session_step as string | null) === "waiting_reply") {
-    const replyMsg = text.trim();
-
-    // Marca relay como completo
-    await supabase
-      .from("relay_requests")
-      .update({ status: "completed", relay_reply: replyMsg })
-      .eq("id", relay.id);
-
-    // Notifica o usuario Jarvis com a resposta do contato
-    await sendText(
-      fromPhone,
-      `📨 *${contactFirstName} respondeu:*\n\n💬 _"${replyMsg}"_`
-    ).catch(() => {});
-
-    // Agradece o contato e encerra — nao responde mais
-    await sendText(
-      sendToPhone,
-      `✅ Mensagem repassada para *${senderName}*! Obrigado. 😊`
-    ).catch(() => {});
-
-    return true;
-  }
-
-  // ── Caso B: primeira mensagem do contato ──
-  const msgNorm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-
-  // Detecta se esta perguntando se pode responder
-  const isAskingToReply =
-    /pode\s+(responder|mandar|enviar|falar|passar|dizer)|voce\s+(pode|consegue)|vc\s+(pode|consegue)|tem\s+como\s+respond|como\s+(fa[cç]o\s+pra\s+respond|respondo)|posso\s+respond|quero\s+respond/i.test(text) ||
-    /^(pode|consegue|tem como|como faco|posso|como respondo|da pra responder)[?\s]/i.test(text);
-
-  if (isAskingToReply) {
-    // Pede que envie a mensagem de resposta em uma unica msg
-    await supabase
-      .from("relay_requests")
-      .update({ session_step: "waiting_reply" })
-      .eq("id", relay.id);
-
-    await sendText(
-      sendToPhone,
-      `Pode sim! 😊\n\nMe envie em *uma única mensagem* o que quer dizer para *${senderName}*, que eu repasso imediatamente.`
-    ).catch(() => {});
-
-    return true;
-  }
-
-  // Mensagem direta (nao e pergunta) → trata como reply imediato
-  const replyMsg = text.trim();
-
+  // Marca relay como completo
   await supabase
     .from("relay_requests")
-    .update({ status: "completed", relay_reply: replyMsg })
+    .update({ status: "completed", relay_reply: replyContent })
     .eq("id", relay.id);
 
+  // Envia resposta ao usuario original (Miguel)
   await sendText(
     fromPhone,
-    `📨 *${contactFirstName} respondeu:*\n\n💬 _"${replyMsg}"_`
+    `📨 *${contactFirstName} respondeu:*\n\n💬 _"${replyContent}"_`
   ).catch(() => {});
 
+  // Confirma ao contato que a resposta foi enviada
   await sendText(
-    sendToPhone,
-    `✅ Mensagem repassada para *${senderName}*! Obrigado. 😊`
+    incomingPhone,
+    `✅ Resposta enviada para *${senderName}*!`
   ).catch(() => {});
 
   return true;
@@ -5096,7 +5060,10 @@ async function handleSendToContact(
     `Aqui é o *${agentName}*, assistente virtual do *${senderName}*.\n\n` +
     `Ele(a) me pediu para te passar um recado:\n\n` +
     `💬 _"${msgContent}"_` +
-    buildJarvisCTA(senderName, userPhone);
+    buildJarvisCTA(senderName, userPhone) +
+    `\n\n——————————————\n📩 *Para responder esta mensagem, envie:*\n` +
+    `*Responder:* [sua mensagem]\n` +
+    `_Ex: Responder: Ok, estarei lá!_`;
 
   if (scheduledAt) {
     await supabase.from("reminders").insert({
