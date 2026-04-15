@@ -101,9 +101,11 @@ function statusBadge(status: string, sendAt: string) {
   return <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px]"><Clock className="w-3 h-3 mr-1" />Pendente</Badge>;
 }
 
-// Identifica se um lembrete veio da agenda (evento ou follow-up de evento)
+// Identifica se um lembrete veio da agenda.
+// Critério definitivo: qualquer lembrete com event_id preenchido é de agenda,
+// independente do source (WhatsApp agent cria com source="whatsapp" mas seta event_id).
 function isAgendaReminder(r: Reminder) {
-  return r.source === "event" || r.source === "event_followup";
+  return r.source === "event" || r.source === "event_followup" || r.event_id !== null;
 }
 
 export default function Lembretes() {
