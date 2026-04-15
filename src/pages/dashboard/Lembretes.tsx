@@ -4,7 +4,7 @@ import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,8 +16,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Bell, Plus, Trash2, Clock, RefreshCw, CheckCircle2, XCircle, Pencil } from "lucide-react";
-import { isPast } from "date-fns";
+import {
+  Bell, Plus, Trash2, Clock, RefreshCw, CheckCircle2, XCircle,
+  Pencil, Calendar, CalendarCheck,
+} from "lucide-react";
 
 interface Reminder {
   id: string;
@@ -28,6 +30,7 @@ interface Reminder {
   recurrence: string;
   recurrence_value: number | null;
   source: string;
+  event_id: string | null;
   created_at: string;
 }
 
@@ -52,13 +55,9 @@ function formatBrasilia(isoString: string): string {
   });
 }
 
-// Retorna o grupo de data para um lembrete pendente (em BRT)
-// Margem de 2 minutos pra não mostrar "Atrasado" em lembrete que o cron
-// ainda não processou (cron roda a cada 30s, lembrete pode estar pendente
-// por até ~30s sem ser realmente "atrasado").
 function getDateGroup(sendAt: string): string {
   const now = new Date();
-  const marginMs = 2 * 60 * 1000; // 2 minutos de margem
+  const marginMs = 2 * 60 * 1000;
   if (new Date(sendAt).getTime() + marginMs < now.getTime()) return "Atrasado";
   const todayBRT = now.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
   const tomorrowBRT = new Date(now.getTime() + 86400000).toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
@@ -96,11 +95,15 @@ function recurrenceLabel(r: Reminder) {
 function statusBadge(status: string, sendAt: string) {
   if (status === "sent") return <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-[10px]"><CheckCircle2 className="w-3 h-3 mr-1" />Enviado</Badge>;
   if (status === "failed") return <Badge variant="destructive" className="text-[10px]"><XCircle className="w-3 h-3 mr-1" />Falhou</Badge>;
-  // Mostra "Atrasado" só se passou mais de 2 min do send_at (margem pro cron processar)
-  // Dentro da margem mostra "Pendente" porque o cron pode estar processando agora
+  if (status === "done") return <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[10px]"><CalendarCheck className="w-3 h-3 mr-1" />Concluído</Badge>;
   const marginMs = 2 * 60 * 1000;
   if (new Date(sendAt).getTime() + marginMs < Date.now()) return <Badge variant="secondary" className="text-[10px]">Atrasado</Badge>;
   return <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px]"><Clock className="w-3 h-3 mr-1" />Pendente</Badge>;
+}
+
+// Identifica se um lembrete veio da agenda (evento ou follow-up de evento)
+function isAgendaReminder(r: Reminder) {
+  return r.source === "event" || r.source === "event_followup";
 }
 
 export default function Lembretes() {
@@ -108,7 +111,10 @@ export default function Lembretes() {
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState<"all" | "pending" | "sent" | "recurring">("pending");
+  const [filter, setFilter] = useState<"all" | "pending" | "sent" | "recurring" | "agenda">("pending");
+
+  // Sub-filtro dentro da aba "Lembretes de Agenda"
+  const [agendaSubFilter, setAgendaSubFilter] = useState<"all" | "pending" | "sent" | "done">("all");
 
   // Form state
   const [title, setTitle] = useState("");
@@ -125,6 +131,12 @@ export default function Lembretes() {
   const [editMessage, setEditMessage] = useState("");
   const [editSaving, setEditSaving] = useState(false);
 
+  // Reagendar lembrete de agenda
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleId, setRescheduleId] = useState<string | null>(null);
+  const [rescheduleAt, setRescheduleAt] = useState("");
+  const [rescheduleSaving, setRescheduleSaving] = useState(false);
+
   useEffect(() => { if (user) load(); }, [user]);
 
   const { triggerLive, isLive } = useRealtimeBadge();
@@ -135,9 +147,6 @@ export default function Lembretes() {
   );
 
   const load = async () => {
-    // Limit defensivo de 500. Volume típico do cliente é <100 lembretes,
-    // mas sem limit um cliente com histórico de 2+ anos podia ter milhares
-    // (cada lembrete recorrente gera um reminder por ocorrência).
     const { data } = await supabase
       .from("reminders")
       .select("*")
@@ -226,7 +235,6 @@ export default function Lembretes() {
 
   const openEdit = (r: Reminder) => {
     const d = new Date(r.send_at);
-    // Format as datetime-local value (YYYY-MM-DDTHH:mm) in Brasilia time
     const brasiliaStr = d.toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(0, 16);
     setEditSendAt(brasiliaStr);
     setEditMessage(r.message);
@@ -254,50 +262,279 @@ export default function Lembretes() {
     await supabase.from("reminders")
       .delete()
       .eq("user_id", user!.id)
-      .eq("status", "sent");
+      .eq("status", "sent")
+      .in("source", ["manual", "whatsapp"]);
     toast.success("Lembretes enviados removidos!");
     load();
   };
 
-  const filtered = reminders.filter(r => {
-    if (filter === "pending") return r.status === "pending";
-    if (filter === "sent") return r.status === "sent";
-    if (filter === "recurring") return r.recurrence && r.recurrence !== "none";
-    return true;
-  });
+  // Confirmar que a reunião/evento aconteceu
+  const handleAgendaConfirm = async (r: Reminder) => {
+    const { error } = await supabase.from("reminders")
+      .update({ status: "done" })
+      .eq("id", r.id);
 
-  const pendingCount = reminders.filter(r => r.status === "pending").length;
-  const recurringCount = reminders.filter(r => r.recurrence && r.recurrence !== "none" && r.status === "pending").length;
-  const sentCount = reminders.filter(r => r.status === "sent").length;
+    if (!error && r.event_id) {
+      await supabase.from("calendar_events")
+        .update({ status: "done" })
+        .eq("id", r.event_id);
+    }
+
+    if (error) toast.error("Erro ao confirmar evento");
+    else { toast.success("Evento confirmado como realizado!"); load(); }
+  };
+
+  // Marcar evento como cancelado
+  const handleAgendaCancel = async (r: Reminder) => {
+    const { error } = await supabase.from("reminders")
+      .update({ status: "cancelled" })
+      .eq("id", r.id);
+
+    if (!error && r.event_id) {
+      await supabase.from("calendar_events")
+        .update({ status: "cancelled" })
+        .eq("id", r.event_id);
+    }
+
+    if (error) toast.error("Erro ao cancelar evento");
+    else { toast.success("Evento marcado como cancelado!"); load(); }
+  };
+
+  // Abrir dialog de reagendamento de agenda
+  const openReschedule = (r: Reminder) => {
+    const d = new Date(r.send_at);
+    const brasiliaStr = d.toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(0, 16);
+    setRescheduleAt(brasiliaStr);
+    setRescheduleId(r.id);
+    setRescheduleOpen(true);
+  };
+
+  const handleAgendaReschedule = async () => {
+    if (!rescheduleId || !rescheduleAt) return;
+    setRescheduleSaving(true);
+    const { error } = await supabase.from("reminders")
+      .update({ status: "pending", send_at: new Date(rescheduleAt).toISOString() })
+      .eq("id", rescheduleId);
+    if (error) toast.error("Erro ao reagendar");
+    else { toast.success("Lembrete de agenda reagendado!"); setRescheduleOpen(false); load(); }
+    setRescheduleSaving(false);
+  };
+
+  // Separação: lembretes da agenda vs lembretes manuais
+  const regularReminders = reminders.filter(r => !isAgendaReminder(r) && r.status !== "done");
+  const agendaReminders = reminders.filter(r => isAgendaReminder(r));
+
+  const filtered = filter === "agenda"
+    ? agendaReminders.filter(r => {
+        if (agendaSubFilter === "pending") return r.status === "pending";
+        if (agendaSubFilter === "sent") return r.status === "sent";
+        if (agendaSubFilter === "done") return r.status === "done";
+        return true;
+      })
+    : regularReminders.filter(r => {
+        if (filter === "pending") return r.status === "pending";
+        if (filter === "sent") return r.status === "sent";
+        if (filter === "recurring") return r.recurrence && r.recurrence !== "none";
+        return true;
+      });
+
+  const pendingCount = regularReminders.filter(r => r.status === "pending").length;
+  const recurringCount = regularReminders.filter(r => r.recurrence && r.recurrence !== "none" && r.status === "pending").length;
+  const sentCount = regularReminders.filter(r => r.status === "sent").length;
+  const agendaPendingCount = agendaReminders.filter(r => r.status === "pending").length;
 
   const emptyStateMessage = () => {
+    if (filter === "agenda") {
+      const labels: Record<string, { title: string; subtitle: string }> = {
+        all: { title: "Nenhum lembrete de agenda.", subtitle: "Os lembretes gerados a partir de eventos da sua agenda aparecerão aqui." },
+        pending: { title: "Nenhum lembrete de agenda pendente.", subtitle: "Lembretes próximos de eventos aparecerão aqui antes do horário." },
+        sent: { title: "Nenhum lembrete de agenda enviado.", subtitle: "Lembretes de eventos já enviados aparecerão aqui." },
+        done: { title: "Nenhum evento concluído.", subtitle: 'Clique em "Sim, aconteceu" nos lembretes enviados para confirmá-los aqui.' },
+      };
+      return labels[agendaSubFilter];
+    }
     switch (filter) {
-      case "pending":
-        return {
-          title: "Nenhum lembrete pendente.",
-          subtitle: 'Crie um acima ou mande mensagem no WhatsApp: "me lembra de X às 10h"',
-        };
-      case "sent":
-        return {
-          title: "Nenhum lembrete enviado ainda.",
-          subtitle: "Os lembretes enviados aparecerão aqui após o disparo pelo Jarvis.",
-        };
-      case "recurring":
-        return {
-          title: "Nenhum lembrete recorrente.",
-          subtitle: 'Crie lembretes com repetição diária, semanal ou mensal. Ex: "me lembra todo dia 10 de pagar aluguel"',
-        };
-      default:
-        return {
-          title: "Nenhum lembrete ainda.",
-          subtitle: 'Crie um acima ou mande mensagem no WhatsApp: "me lembra de X às 10h"',
-        };
+      case "pending": return { title: "Nenhum lembrete pendente.", subtitle: 'Crie um acima ou mande mensagem no WhatsApp: "me lembra de X às 10h"' };
+      case "sent": return { title: "Nenhum lembrete enviado ainda.", subtitle: "Os lembretes enviados aparecerão aqui após o disparo pelo Jarvis." };
+      case "recurring": return { title: "Nenhum lembrete recorrente.", subtitle: 'Crie lembretes com repetição diária, semanal ou mensal. Ex: "me lembra todo dia 10 de pagar aluguel"' };
+      default: return { title: "Nenhum lembrete ainda.", subtitle: 'Crie um acima ou mande mensagem no WhatsApp: "me lembra de X às 10h"' };
     }
   };
 
   if (loading) return <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20" />)}</div>;
 
   const empty = emptyStateMessage();
+
+  const renderRegularCard = (r: Reminder) => {
+    const rec = recurrenceLabel(r);
+    const isRecurringPending = rec && r.status === "pending";
+    return (
+      <Card key={r.id} className="bg-card border-border hover:border-primary/20 transition-colors">
+        <CardContent className="py-4 flex items-start gap-4">
+          <div className={`mt-0.5 w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center ${
+            r.status === "sent" ? "bg-green-500/10" :
+            r.status === "failed" ? "bg-red-500/10" : "bg-primary/10"
+          }`}>
+            {r.status === "sent" ? <CheckCircle2 className="h-4 w-4 text-green-500" /> :
+             r.status === "failed" ? <XCircle className="h-4 w-4 text-red-500" /> :
+             rec ? <RefreshCw className="h-4 w-4 text-primary" /> :
+             <Bell className="h-4 w-4 text-primary" />}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+              <p className="font-medium text-sm">{r.title || r.message.slice(0, 60)}</p>
+              {statusBadge(r.status, r.send_at)}
+              {rec && (
+                <Badge variant="outline" className="text-[10px] gap-1">
+                  <RefreshCw className="w-2.5 h-2.5" />{rec}
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground truncate">{r.message}</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">
+              {isRecurringPending
+                ? <span className="text-violet-400/80 mr-1">próximo disparo:</span>
+                : <span className="mr-1"></span>
+              }
+              {formatBrasilia(r.send_at)}
+              {r.source === "whatsapp" && <span className="ml-2 text-green-500/70">• via WhatsApp</span>}
+              {r.source === "manual" && <span className="ml-2 text-blue-500/70">• manual</span>}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1.5 mt-1 flex-shrink-0">
+            {(r.status === "failed" || r.status === "sent") && (
+              <button
+                onClick={() => handleRetry(r.id, r.status)}
+                title={r.status === "sent" ? "Reenviar este lembrete" : "Reagendar para daqui 1 minuto"}
+                className="text-muted-foreground hover:text-amber-400 transition-colors"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            )}
+            <button
+              onClick={() => openEdit(r)}
+              title="Editar lembrete"
+              className="text-muted-foreground hover:text-primary transition-colors"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => handleDelete(r.id)}
+              title="Excluir lembrete"
+              className="text-muted-foreground hover:text-destructive transition-colors"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  const renderAgendaCard = (r: Reminder) => {
+    const isDone = r.status === "done";
+    const isSent = r.status === "sent";
+    const isPending = r.status === "pending";
+    const isFollowUp = r.source === "event_followup";
+    const sourceLabel = r.source === "event_followup" ? "follow-up de evento" : "evento da agenda";
+
+    return (
+      <Card key={r.id} className={`border transition-colors ${
+        isDone ? "bg-emerald-950/20 border-emerald-800/30 hover:border-emerald-700/40" :
+        isSent ? "bg-amber-950/20 border-amber-800/30 hover:border-amber-700/40" :
+        "bg-card border-border hover:border-orange-500/20"
+      }`}>
+        <CardContent className="py-4 flex items-start gap-4">
+          <div className={`mt-0.5 w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center ${
+            isDone ? "bg-emerald-500/15" :
+            isSent ? "bg-amber-500/15" : "bg-orange-500/10"
+          }`}>
+            {isDone
+              ? <CalendarCheck className="h-4 w-4 text-emerald-400" />
+              : <Calendar className="h-4 w-4 text-orange-400" />
+            }
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+              <p className="font-medium text-sm">{r.title || r.message.slice(0, 60)}</p>
+              {statusBadge(r.status, r.send_at)}
+              {isFollowUp && (
+                <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30">
+                  follow-up
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground truncate">{r.message}</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">
+              {formatBrasilia(r.send_at)}
+              <span className="ml-2 text-orange-400/70">• {sourceLabel}</span>
+            </p>
+
+            {/* Ações de resposta — só quando o lembrete foi enviado ou está pendente */}
+            {!isDone && (
+              <div className="flex gap-1.5 mt-2 flex-wrap">
+                {isSent && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs gap-1.5 border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500"
+                      onClick={() => handleAgendaConfirm(r)}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Sim, aconteceu
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs gap-1.5 border-red-600/40 text-red-400 hover:bg-red-500/10 hover:border-red-500"
+                      onClick={() => handleAgendaCancel(r)}
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                      Foi cancelada
+                    </Button>
+                  </>
+                )}
+                {isPending && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1.5 border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500"
+                    onClick={() => handleAgendaConfirm(r)}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Marcar concluído
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => openReschedule(r)}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Reagendar
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 mt-1 flex-shrink-0">
+            <button
+              onClick={() => handleDelete(r.id)}
+              title="Excluir lembrete de agenda"
+              className="text-muted-foreground hover:text-destructive transition-colors"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -427,9 +664,39 @@ export default function Lembretes() {
         </DialogContent>
       </Dialog>
 
-      {/* Filtros */}
+      {/* Dialog de reagendamento de lembrete de agenda */}
+      <Dialog open={rescheduleOpen} onOpenChange={setRescheduleOpen}>
+        <DialogContent className="bg-card border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Calendar className="h-4 w-4" /> Reagendar lembrete de agenda</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="space-y-2">
+              <Label>Nova data e hora (horário de Brasília)</Label>
+              <Input
+                type="datetime-local"
+                value={rescheduleAt}
+                onChange={e => setRescheduleAt(e.target.value)}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              O lembrete será reenviado no novo horário.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setRescheduleOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={handleAgendaReschedule} disabled={rescheduleSaving} className="flex-1">
+                {rescheduleSaving ? "Reagendando..." : "Reagendar"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Filtros principais */}
       <div className="flex gap-2 flex-wrap">
-        {(["pending","recurring","all","sent"] as const).map(f => (
+        {(["pending", "recurring", "all", "sent"] as const).map(f => (
           <Button
             key={f}
             variant={filter === f ? "default" : "outline"}
@@ -442,20 +709,57 @@ export default function Lembretes() {
             {f === "sent" && <>Enviados {sentCount > 0 && <Badge className="ml-1.5 text-[10px] h-4 px-1 bg-green-600">{sentCount}</Badge>}</>}
           </Button>
         ))}
+
+        {/* Botão Lembretes de Agenda */}
+        <Button
+          variant={filter === "agenda" ? "default" : "outline"}
+          size="sm"
+          onClick={() => { setFilter("agenda"); setAgendaSubFilter("all"); }}
+          className={filter !== "agenda" ? "border-orange-500/40 text-orange-400 hover:border-orange-500 hover:text-orange-300" : ""}
+        >
+          <Calendar className="h-3.5 w-3.5 mr-1.5" />
+          Lembretes de Agenda
+          {agendaPendingCount > 0 && (
+            <Badge className="ml-1.5 text-[10px] h-4 px-1 bg-orange-500">{agendaPendingCount}</Badge>
+          )}
+        </Button>
       </div>
+
+      {/* Sub-filtros da aba Agenda */}
+      {filter === "agenda" && (
+        <div className="flex gap-2 flex-wrap pl-3 border-l-2 border-orange-500/30">
+          {(["all", "pending", "sent", "done"] as const).map(sf => (
+            <Button
+              key={sf}
+              variant={agendaSubFilter === sf ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setAgendaSubFilter(sf)}
+            >
+              {sf === "all" && "Todos"}
+              {sf === "pending" && <>Pendentes {agendaReminders.filter(r => r.status === "pending").length > 0 && <Badge className="ml-1 text-[10px] h-3.5 px-1">{agendaReminders.filter(r => r.status === "pending").length}</Badge>}</>}
+              {sf === "sent" && "Enviados"}
+              {sf === "done" && "Concluídos"}
+            </Button>
+          ))}
+        </div>
+      )}
 
       {/* Lista */}
       {filtered.length === 0 ? (
         <Card className="bg-card border-border">
           <CardContent className="py-14 text-center">
-            <Bell className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+            {filter === "agenda"
+              ? <Calendar className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+              : <Bell className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+            }
             <p className="text-muted-foreground font-medium">{empty.title}</p>
             <p className="text-sm text-muted-foreground/60 mt-1">{empty.subtitle}</p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-2">
-          {/* Limpar enviados */}
+          {/* Limpar enviados — só para lembretes regulares */}
           {filter === "sent" && filtered.length > 0 && (
             <div className="flex justify-end">
               <Button
@@ -470,107 +774,47 @@ export default function Lembretes() {
             </div>
           )}
 
-          {(() => {
-            const renderCard = (r: Reminder) => {
-              const rec = recurrenceLabel(r);
-              const isRecurringPending = rec && r.status === "pending";
-              return (
-                <Card key={r.id} className="bg-card border-border hover:border-primary/20 transition-colors">
-                  <CardContent className="py-4 flex items-start gap-4">
-                    <div className={`mt-0.5 w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center ${
-                      r.status === "sent" ? "bg-green-500/10" :
-                      r.status === "failed" ? "bg-red-500/10" : "bg-primary/10"
-                    }`}>
-                      {r.status === "sent" ? <CheckCircle2 className="h-4 w-4 text-green-500" /> :
-                       r.status === "failed" ? <XCircle className="h-4 w-4 text-red-500" /> :
-                       rec ? <RefreshCw className="h-4 w-4 text-primary" /> :
-                       <Bell className="h-4 w-4 text-primary" />}
+          {filter === "agenda" ? (
+            // Agenda: lista flat com cards especiais
+            <div className="space-y-2">
+              {filtered.map(r => renderAgendaCard(r))}
+            </div>
+          ) : (
+            <>
+              {filter === "pending" ? (
+                // Pendentes regulares: agrupados por data
+                (() => {
+                  const groups: Record<string, Reminder[]> = {};
+                  for (const r of filtered) {
+                    const g = getDateGroup(r.send_at);
+                    if (!groups[g]) groups[g] = [];
+                    groups[g].push(r);
+                  }
+                  return (
+                    <div className="space-y-6">
+                      {GROUP_ORDER.filter(g => groups[g]?.length > 0).map(groupName => (
+                        <div key={groupName} className="space-y-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                              {GROUP_ICONS[groupName]} {groupName}
+                            </span>
+                            <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+                              {groups[groupName].length}
+                            </Badge>
+                            <div className="flex-1 h-px bg-border/50" />
+                          </div>
+                          {groups[groupName].map(r => renderRegularCard(r))}
+                        </div>
+                      ))}
                     </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                        <p className="font-medium text-sm">{r.title || r.message.slice(0, 60)}</p>
-                        {statusBadge(r.status, r.send_at)}
-                        {rec && (
-                          <Badge variant="outline" className="text-[10px] gap-1">
-                            <RefreshCw className="w-2.5 h-2.5" />{rec}
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground truncate">{r.message}</p>
-                      <p className="text-xs text-muted-foreground/60 mt-1">
-                        {isRecurringPending
-                          ? <span className="text-violet-400/80 mr-1">próximo disparo:</span>
-                          : <span className="mr-1"></span>
-                        }
-                        {formatBrasilia(r.send_at)}
-                        {r.source === "whatsapp" && <span className="ml-2 text-green-500/70">• via WhatsApp</span>}
-                        {r.source === "manual" && <span className="ml-2 text-blue-500/70">• manual</span>}
-                        {r.source === "event_followup" && <span className="ml-2 text-amber-500/70">• pós-evento</span>}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 mt-1 flex-shrink-0">
-                      {(r.status === "failed" || r.status === "sent") && (
-                        <button
-                          onClick={() => handleRetry(r.id, r.status)}
-                          title={r.status === "sent" ? "Reenviar este lembrete" : "Reagendar para daqui 1 minuto"}
-                          className="text-muted-foreground hover:text-amber-400 transition-colors"
-                        >
-                          <RefreshCw className="h-4 w-4" />
-                        </button>
-                      )}
-                      <button
-                        onClick={() => openEdit(r)}
-                        title="Editar lembrete"
-                        className="text-muted-foreground hover:text-primary transition-colors"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(r.id)}
-                        title="Excluir lembrete"
-                        className="text-muted-foreground hover:text-destructive transition-colors"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            };
-
-            // Agrupamento por data — só para o filtro "pending"
-            if (filter === "pending") {
-              const groups: Record<string, Reminder[]> = {};
-              for (const r of filtered) {
-                const g = getDateGroup(r.send_at);
-                if (!groups[g]) groups[g] = [];
-                groups[g].push(r);
-              }
-              return (
-                <div className="space-y-6">
-                  {GROUP_ORDER.filter(g => groups[g]?.length > 0).map(groupName => (
-                    <div key={groupName} className="space-y-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          {GROUP_ICONS[groupName]} {groupName}
-                        </span>
-                        <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-                          {groups[groupName].length}
-                        </Badge>
-                        <div className="flex-1 h-px bg-border/50" />
-                      </div>
-                      {groups[groupName].map(r => renderCard(r))}
-                    </div>
-                  ))}
-                </div>
-              );
-            }
-
-            // Flat list para outros filtros
-            return <>{filtered.map(r => renderCard(r))}</>;
-          })()}
+                  );
+                })()
+              ) : (
+                // Flat list para outros filtros regulares
+                <>{filtered.map(r => renderRegularCard(r))}</>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
