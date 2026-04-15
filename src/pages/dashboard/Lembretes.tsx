@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
@@ -12,14 +12,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Bell, Plus, Trash2, Clock, RefreshCw, CheckCircle2, XCircle,
-  Pencil, Calendar, CalendarCheck, MessageSquare,
+  Pencil, Calendar, CalendarCheck, MessageSquare, Search, User,
 } from "lucide-react";
+
+// ── Interfaces ────────────────────────────────────────────────────────────────
 
 interface Reminder {
   id: string;
@@ -34,24 +34,45 @@ interface Reminder {
   created_at: string;
 }
 
+interface Contact {
+  id: string;
+  name: string;
+  phone: string;
+}
+
+// ── Constantes ────────────────────────────────────────────────────────────────
+
 const RECURRENCE_LABELS: Record<string, string> = {
-  none: "Único",
-  daily: "Todo dia",
-  weekly: "Toda semana",
-  monthly: "Todo mês",
-  day_of_month: "Dia do mês",
-  hourly: "A cada hora",
+  none: "Único", daily: "Todo dia", weekly: "Toda semana",
+  monthly: "Todo mês", day_of_month: "Dia do mês", hourly: "A cada hora",
 };
 
 const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
+const EVENT_TYPES = [
+  { value: "reuniao", label: "Reunião" },
+  { value: "compromisso", label: "Compromisso" },
+  { value: "consulta", label: "Consulta" },
+  { value: "evento", label: "Evento" },
+  { value: "tarefa", label: "Tarefa" },
+];
+
+const REMINDER_OPTIONS = [
+  { value: "5", label: "5 minutos antes" },
+  { value: "10", label: "10 minutos antes" },
+  { value: "15", label: "15 minutos antes" },
+  { value: "30", label: "30 minutos antes" },
+  { value: "60", label: "1 hora antes" },
+  { value: "120", label: "2 horas antes" },
+  { value: "1440", label: "1 dia antes" },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function formatBrasilia(isoString: string): string {
   return new Date(isoString).toLocaleString("pt-BR", {
     timeZone: "America/Sao_Paulo",
-    day: "2-digit",
-    month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
+    day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit",
   });
 }
 
@@ -70,20 +91,14 @@ function getDateGroup(sendAt: string): string {
 }
 
 const GROUP_ICONS: Record<string, string> = {
-  "Atrasado": "⚠️",
-  "Hoje": "📍",
-  "Amanhã": "⏰",
-  "Esta semana": "📅",
-  "Depois": "🗓",
+  "Atrasado": "⚠️", "Hoje": "📍", "Amanhã": "⏰", "Esta semana": "📅", "Depois": "🗓",
 };
 const GROUP_ORDER = ["Atrasado", "Hoje", "Amanhã", "Esta semana", "Depois"];
 
 function recurrenceLabel(r: Reminder) {
   if (r.recurrence === "none" || !r.recurrence) return null;
-  if (r.recurrence === "weekly" && r.recurrence_value != null)
-    return `Toda ${WEEKDAYS[r.recurrence_value]}`;
-  if (r.recurrence === "day_of_month" && r.recurrence_value != null)
-    return `Todo dia ${r.recurrence_value}`;
+  if (r.recurrence === "weekly" && r.recurrence_value != null) return `Toda ${WEEKDAYS[r.recurrence_value]}`;
+  if (r.recurrence === "day_of_month" && r.recurrence_value != null) return `Todo dia ${r.recurrence_value}`;
   if (r.recurrence === "hourly" && r.recurrence_value != null)
     return r.recurrence_value === 1 ? "A cada hora" : `A cada ${r.recurrence_value}h`;
   return RECURRENCE_LABELS[r.recurrence] ?? r.recurrence;
@@ -98,13 +113,17 @@ function statusBadge(status: string, sendAt: string) {
   return <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px]"><Clock className="w-3 h-3 mr-1" />Pendente</Badge>;
 }
 
-// Lembretes da agenda: source=event/event_followup ou qualquer um com event_id preenchido
-// (o WhatsApp agent cria com source="whatsapp" mas sempre seta event_id)
+function buildGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Bom dia";
+  if (h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
 function isAgendaReminder(r: Reminder) {
   return r.source === "event" || r.source === "event_followup" || r.event_id !== null;
 }
 
-// Lembretes de mensagem para contatos: source=send_to_contact
 function isMessageReminder(r: Reminder) {
   return r.source === "send_to_contact";
 }
@@ -114,18 +133,19 @@ type RegularSub = "all" | "pending" | "recurring" | "sent";
 type AgendaSub = "all" | "pending" | "sent" | "done";
 type MessageSub = "all" | "pending" | "sent";
 
+// ── Componente principal ──────────────────────────────────────────────────────
+
 export default function Lembretes() {
   const { user } = useAuth();
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Navegação em 3 abas principais + sub-filtros independentes
   const [mainTab, setMainTab] = useState<MainTab>("reminders");
   const [regularSub, setRegularSub] = useState<RegularSub>("pending");
   const [agendaSub, setAgendaSub] = useState<AgendaSub>("all");
   const [messageSub, setMessageSub] = useState<MessageSub>("all");
 
-  // Form state — criar lembrete manual
+  // ── Dialog: Lembrete regular ──
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
@@ -134,18 +154,38 @@ export default function Lembretes() {
   const [recurrenceValue, setRecurrenceValue] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
-  // Edit dialog
+  // ── Dialog: Editar lembrete regular ──
   const [editOpen, setEditOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editSendAt, setEditSendAt] = useState("");
   const [editMessage, setEditMessage] = useState("");
   const [editSaving, setEditSaving] = useState(false);
 
-  // Reagendar lembrete de agenda
+  // ── Dialog: Reagendar lembrete de agenda ──
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [rescheduleId, setRescheduleId] = useState<string | null>(null);
   const [rescheduleAt, setRescheduleAt] = useState("");
   const [rescheduleSaving, setRescheduleSaving] = useState(false);
+
+  // ── Dialog: Novo lembrete de agenda ──
+  const [agendaOpen, setAgendaOpen] = useState(false);
+  const [agendaTitle, setAgendaTitle] = useState("");
+  const [agendaDate, setAgendaDate] = useState("");
+  const [agendaTime, setAgendaTime] = useState("");
+  const [agendaEndTime, setAgendaEndTime] = useState("");
+  const [agendaEventType, setAgendaEventType] = useState("reuniao");
+  const [agendaReminderMinutes, setAgendaReminderMinutes] = useState("30");
+  const [agendaDesc, setAgendaDesc] = useState("");
+  const [agendaSaving, setAgendaSaving] = useState(false);
+
+  // ── Dialog: Novo lembrete de mensagem ──
+  const [msgOpen, setMsgOpen] = useState(false);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactSearch, setContactSearch] = useState("");
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [msgContent, setMsgContent] = useState("");
+  const [msgSendAt, setMsgSendAt] = useState("");
+  const [msgSaving, setMsgSaving] = useState(false);
 
   useEffect(() => { if (user) load(); }, [user]);
 
@@ -169,17 +209,34 @@ export default function Lembretes() {
       if (aP && bP) return new Date(a.send_at).getTime() - new Date(b.send_at).getTime();
       return new Date(b.send_at).getTime() - new Date(a.send_at).getTime();
     });
-
     setReminders(sorted);
     setLoading(false);
   };
 
-  // ── Handlers — lembretes regulares ──────────────────────────────────────────
+  const loadContacts = async () => {
+    const { data } = await supabase
+      .from("contacts")
+      .select("id, name, phone")
+      .eq("user_id", user!.id)
+      .order("name");
+    setContacts((data as any[]) ?? []);
+  };
+
+  // ── Filtros de contatos por busca ──
+  const filteredContacts = useMemo(() => {
+    if (!contactSearch.trim()) return contacts;
+    const q = contactSearch.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return contacts.filter(c =>
+      c.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q) ||
+      c.phone.includes(q)
+    );
+  }, [contacts, contactSearch]);
+
+  // ── Handlers: lembrete regular ───────────────────────────────────────────────
 
   const handleCreate = async () => {
     if (!title.trim() || !message.trim() || !sendAt) {
-      toast.error("Preencha título, mensagem e data/hora");
-      return;
+      toast.error("Preencha título, mensagem e data/hora"); return;
     }
     setSaving(true);
     const { data: profile } = await supabase.from("profiles").select("phone_number").eq("id", user!.id).single();
@@ -193,7 +250,11 @@ export default function Lembretes() {
       recurrence, recurrence_value: rv, source: "manual", status: "pending",
     });
     if (error) toast.error("Erro ao criar lembrete");
-    else { toast.success("Lembrete criado!"); setTitle(""); setMessage(""); setSendAt(""); setRecurrence("none"); setRecurrenceValue(""); setOpen(false); load(); }
+    else {
+      toast.success("Lembrete criado!");
+      setTitle(""); setMessage(""); setSendAt(""); setRecurrence("none"); setRecurrenceValue("");
+      setOpen(false); load();
+    }
     setSaving(false);
   };
 
@@ -232,18 +293,90 @@ export default function Lembretes() {
     toast.success("Lembretes enviados removidos!"); load();
   };
 
-  // ── Handlers — lembretes de agenda ──────────────────────────────────────────
+  // ── Handlers: lembrete de agenda ─────────────────────────────────────────────
+
+  const handleCreateAgenda = async () => {
+    if (!agendaTitle.trim() || !agendaDate) {
+      toast.error("Preencha o título e a data do evento"); return;
+    }
+    setAgendaSaving(true);
+
+    const { data: profile } = await supabase.from("profiles").select("phone_number").eq("id", user!.id).single();
+    const phone = profile?.phone_number ?? "";
+    if (!phone) { toast.error("Cadastre seu número de WhatsApp em Meu Perfil primeiro"); setAgendaSaving(false); return; }
+
+    // Cria o evento na agenda
+    const { data: eventData, error: eventError } = await supabase
+      .from("events")
+      .insert({
+        user_id: user!.id,
+        title: agendaTitle.trim(),
+        description: agendaDesc.trim() || null,
+        event_date: agendaDate,
+        event_time: agendaTime || null,
+        end_time: agendaEndTime || null,
+        event_type: agendaEventType || null,
+        reminder: true,
+        reminder_minutes_before: parseInt(agendaReminderMinutes),
+        source: "manual",
+        status: "pending",
+      })
+      .select()
+      .single();
+
+    if (eventError || !eventData) {
+      toast.error("Erro ao criar evento na agenda");
+      setAgendaSaving(false);
+      return;
+    }
+
+    // Calcula horário do lembrete (X minutos antes do evento)
+    const timeStr = agendaTime || "00:00";
+    const eventDateTime = new Date(`${agendaDate}T${timeStr}:00`);
+    const reminderMinutes = parseInt(agendaReminderMinutes);
+    const reminderSendAt = new Date(eventDateTime.getTime() - reminderMinutes * 60 * 1000);
+
+    // Monta mensagem do lembrete
+    const reminderMsg = agendaTime
+      ? `⏰ Lembrete: Você tem *${agendaTitle.trim()}* em ${reminderMinutes} minutos! (${agendaTime.replace(":", "h")})`
+      : `⏰ Lembrete: Você tem *${agendaTitle.trim()}* hoje!`;
+
+    // Cria o lembrete vinculado ao evento
+    const { error: reminderError } = await supabase.from("reminders").insert({
+      user_id: user!.id,
+      whatsapp_number: phone,
+      title: agendaTitle.trim(),
+      message: reminderMsg,
+      send_at: reminderSendAt.toISOString(),
+      recurrence: "none",
+      recurrence_value: null,
+      source: "event",
+      event_id: (eventData as any).id,
+      status: "pending",
+    });
+
+    if (reminderError) {
+      toast.error("Evento criado, mas houve um erro ao criar o lembrete associado");
+    } else {
+      toast.success("Evento e lembrete de agenda criados com sucesso!");
+      setAgendaTitle(""); setAgendaDate(""); setAgendaTime(""); setAgendaEndTime("");
+      setAgendaEventType("reuniao"); setAgendaReminderMinutes("30"); setAgendaDesc("");
+      setAgendaOpen(false);
+      load();
+    }
+    setAgendaSaving(false);
+  };
 
   const handleAgendaConfirm = async (r: Reminder) => {
     const { error } = await supabase.from("reminders").update({ status: "done" }).eq("id", r.id);
-    if (!error && r.event_id) await supabase.from("calendar_events").update({ status: "done" }).eq("id", r.event_id);
+    if (!error && r.event_id) await supabase.from("events").update({ status: "done" }).eq("id", r.event_id);
     if (error) toast.error("Erro ao confirmar evento");
     else { toast.success("Evento confirmado como realizado!"); load(); }
   };
 
   const handleAgendaCancel = async (r: Reminder) => {
     const { error } = await supabase.from("reminders").update({ status: "cancelled" }).eq("id", r.id);
-    if (!error && r.event_id) await supabase.from("calendar_events").update({ status: "cancelled" }).eq("id", r.event_id);
+    if (!error && r.event_id) await supabase.from("events").update({ status: "cancelled" }).eq("id", r.event_id);
     if (error) toast.error("Erro ao cancelar evento");
     else { toast.success("Evento marcado como cancelado!"); load(); }
   };
@@ -262,6 +395,60 @@ export default function Lembretes() {
     if (error) toast.error("Erro ao reagendar");
     else { toast.success("Reagendado!"); setRescheduleOpen(false); load(); }
     setRescheduleSaving(false);
+  };
+
+  // ── Handlers: lembrete de mensagem ──────────────────────────────────────────
+
+  const handleCreateMessage = async () => {
+    if (!selectedContact) { toast.error("Selecione um contato"); return; }
+    if (!msgContent.trim()) { toast.error("Escreva a mensagem a ser enviada"); return; }
+    if (!msgSendAt) { toast.error("Escolha quando enviar"); return; }
+
+    setMsgSaving(true);
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("phone_number, display_name")
+      .eq("id", user!.id)
+      .single();
+
+    const userPhone = profile?.phone_number ?? "";
+    const userName = profile?.display_name || "seu contato";
+
+    if (!userPhone) { toast.error("Cadastre seu número de WhatsApp em Meu Perfil primeiro"); setMsgSaving(false); return; }
+
+    const contactFirst = selectedContact.name.split(" ")[0];
+    const greeting = buildGreeting();
+
+    // Monta a mensagem completa no estilo Jarvis
+    const fullMessage =
+      `${greeting}, *${contactFirst}*! 👋\n\n` +
+      `Aqui é o *Jarvis*, assistente virtual de *${userName}*.\n\n` +
+      `${userName} me pediu para te passar um recado:\n\n` +
+      `💬 _"${msgContent.trim()}"_\n\n` +
+      `——————————————\n` +
+      `_Mensagem enviada via Jarvis_ 🤖`;
+
+    const { error } = await supabase.from("reminders").insert({
+      user_id: user!.id,
+      whatsapp_number: selectedContact.phone,
+      title: `Mensagem para ${selectedContact.name}`,
+      message: fullMessage,
+      send_at: new Date(msgSendAt).toISOString(),
+      recurrence: "none",
+      recurrence_value: null,
+      source: "send_to_contact",
+      event_id: null,
+      status: "pending",
+    });
+
+    if (error) toast.error("Erro ao criar lembrete de mensagem");
+    else {
+      toast.success(`Mensagem para ${selectedContact.name} agendada!`);
+      setSelectedContact(null); setContactSearch(""); setMsgContent(""); setMsgSendAt("");
+      setMsgOpen(false); load();
+    }
+    setMsgSaving(false);
   };
 
   // ── Separação dos dados ──────────────────────────────────────────────────────
@@ -290,7 +477,6 @@ export default function Lembretes() {
     return true;
   });
 
-  // Badges de contagem
   const regPending = regularReminders.filter(r => r.status === "pending").length;
   const regRecurring = regularReminders.filter(r => r.recurrence && r.recurrence !== "none" && r.status === "pending").length;
   const regSent = regularReminders.filter(r => r.status === "sent").length;
@@ -310,8 +496,7 @@ export default function Lembretes() {
           }`}>
             {r.status === "sent" ? <CheckCircle2 className="h-4 w-4 text-green-500" /> :
              r.status === "failed" ? <XCircle className="h-4 w-4 text-red-500" /> :
-             rec ? <RefreshCw className="h-4 w-4 text-primary" /> :
-             <Bell className="h-4 w-4 text-primary" />}
+             rec ? <RefreshCw className="h-4 w-4 text-primary" /> : <Bell className="h-4 w-4 text-primary" />}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-0.5">
@@ -457,6 +642,8 @@ export default function Lembretes() {
 
   if (loading) return <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20" />)}</div>;
 
+  // ── Render ────────────────────────────────────────────────────────────────────
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -470,77 +657,93 @@ export default function Lembretes() {
             O Jarvis te avisa no WhatsApp no horário certo — mesmo com o app fechado.
           </p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button className="gap-2"><Plus className="h-4 w-4" /> Novo lembrete</Button>
-          </DialogTrigger>
-          <DialogContent className="bg-card border-border max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2"><Bell className="h-4 w-4" /> Criar lembrete manual</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 pt-2">
-              <p className="text-xs text-muted-foreground bg-muted/30 rounded-md p-3 border border-border">
-                Dica: Você também pode criar lembretes diretamente no WhatsApp.<br />
-                <em>"me lembra de X amanhã às 10h"</em> ou <em>"me lembra todo dia 10 de pagar aluguel"</em>
-              </p>
+
+        {/* Botão "Novo" dinâmico por aba */}
+        {mainTab === "reminders" && (
+          <Button className="gap-2" onClick={() => setOpen(true)}>
+            <Plus className="h-4 w-4" /> Novo lembrete
+          </Button>
+        )}
+        {mainTab === "agenda" && (
+          <Button className="gap-2 bg-orange-600 hover:bg-orange-700" onClick={() => setAgendaOpen(true)}>
+            <Plus className="h-4 w-4" /> Novo evento + lembrete
+          </Button>
+        )}
+        {mainTab === "message" && (
+          <Button className="gap-2 bg-indigo-600 hover:bg-indigo-700" onClick={() => { loadContacts(); setMsgOpen(true); }}>
+            <Plus className="h-4 w-4" /> Nova mensagem agendada
+          </Button>
+        )}
+      </div>
+
+      {/* ── Dialog: Lembrete regular ─────────────────────────────────────────── */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="bg-card border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Bell className="h-4 w-4" /> Criar lembrete manual</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <p className="text-xs text-muted-foreground bg-muted/30 rounded-md p-3 border border-border">
+              Dica: Você também pode criar lembretes no WhatsApp:<br />
+              <em>"me lembra de X amanhã às 10h"</em> ou <em>"me lembra todo dia 10 de pagar aluguel"</em>
+            </p>
+            <div className="space-y-2">
+              <Label>Título</Label>
+              <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Ex: Pagar aluguel" />
+            </div>
+            <div className="space-y-2">
+              <Label>Mensagem que será enviada</Label>
+              <Textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Lembrete: Pagar aluguel!" rows={2} />
+            </div>
+            <div className="space-y-2">
+              <Label>Data e hora (horário de Brasília)</Label>
+              <Input type="datetime-local" value={sendAt} onChange={e => setSendAt(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Recorrência</Label>
+              <Select value={recurrence} onValueChange={v => { setRecurrence(v); setRecurrenceValue(""); }}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Único (não repetir)</SelectItem>
+                  <SelectItem value="hourly">A cada X horas</SelectItem>
+                  <SelectItem value="daily">Todo dia</SelectItem>
+                  <SelectItem value="weekly">Toda semana (mesmo dia)</SelectItem>
+                  <SelectItem value="monthly">Todo mês (mesmo dia)</SelectItem>
+                  <SelectItem value="day_of_month">Dia fixo do mês</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {recurrence === "hourly" && (
               <div className="space-y-2">
-                <Label>Título</Label>
-                <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Ex: Pagar aluguel" />
+                <Label>Intervalo (em horas)</Label>
+                <Input type="number" min="1" max="23" value={recurrenceValue} onChange={e => setRecurrenceValue(e.target.value)} placeholder="Ex: 5 (a cada 5 horas)" />
               </div>
+            )}
+            {recurrence === "weekly" && (
               <div className="space-y-2">
-                <Label>Mensagem que será enviada</Label>
-                <Textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Lembrete: Pagar aluguel!" rows={2} />
-              </div>
-              <div className="space-y-2">
-                <Label>Data e hora (horário de Brasília)</Label>
-                <Input type="datetime-local" value={sendAt} onChange={e => setSendAt(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Recorrência</Label>
-                <Select value={recurrence} onValueChange={v => { setRecurrence(v); setRecurrenceValue(""); }}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Label>Dia da semana</Label>
+                <Select value={recurrenceValue} onValueChange={setRecurrenceValue}>
+                  <SelectTrigger><SelectValue placeholder="Escolha o dia" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Único (não repetir)</SelectItem>
-                    <SelectItem value="hourly">A cada X horas</SelectItem>
-                    <SelectItem value="daily">Todo dia</SelectItem>
-                    <SelectItem value="weekly">Toda semana (mesmo dia)</SelectItem>
-                    <SelectItem value="monthly">Todo mês (mesmo dia)</SelectItem>
-                    <SelectItem value="day_of_month">Dia fixo do mês</SelectItem>
+                    {WEEKDAYS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
-              {recurrence === "hourly" && (
-                <div className="space-y-2">
-                  <Label>Intervalo (em horas)</Label>
-                  <Input type="number" min="1" max="23" value={recurrenceValue} onChange={e => setRecurrenceValue(e.target.value)} placeholder="Ex: 5 (a cada 5 horas)" />
-                </div>
-              )}
-              {recurrence === "weekly" && (
-                <div className="space-y-2">
-                  <Label>Dia da semana</Label>
-                  <Select value={recurrenceValue} onValueChange={setRecurrenceValue}>
-                    <SelectTrigger><SelectValue placeholder="Escolha o dia" /></SelectTrigger>
-                    <SelectContent>
-                      {WEEKDAYS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              {recurrence === "day_of_month" && (
-                <div className="space-y-2">
-                  <Label>Dia do mês (1-31)</Label>
-                  <Input type="number" min="1" max="31" value={recurrenceValue} onChange={e => setRecurrenceValue(e.target.value)} placeholder="Ex: 10" />
-                </div>
-              )}
-              <Button onClick={handleCreate} disabled={saving} className="w-full">
-                {saving ? "Criando..." : "Criar lembrete"}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </div>
+            )}
+            {recurrence === "day_of_month" && (
+              <div className="space-y-2">
+                <Label>Dia do mês (1-31)</Label>
+                <Input type="number" min="1" max="31" value={recurrenceValue} onChange={e => setRecurrenceValue(e.target.value)} placeholder="Ex: 10" />
+              </div>
+            )}
+            <Button onClick={handleCreate} disabled={saving} className="w-full">
+              {saving ? "Criando..." : "Criar lembrete"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-      {/* Edit dialog */}
+      {/* ── Dialog: Editar lembrete regular ──────────────────────────────────── */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="bg-card border-border max-w-md">
           <DialogHeader>
@@ -564,7 +767,7 @@ export default function Lembretes() {
         </DialogContent>
       </Dialog>
 
-      {/* Reagendar agenda dialog */}
+      {/* ── Dialog: Reagendar lembrete de agenda ─────────────────────────────── */}
       <Dialog open={rescheduleOpen} onOpenChange={setRescheduleOpen}>
         <DialogContent className="bg-card border-border max-w-md">
           <DialogHeader>
@@ -584,34 +787,221 @@ export default function Lembretes() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Dialog: Novo evento + lembrete de agenda ──────────────────────────── */}
+      <Dialog open={agendaOpen} onOpenChange={setAgendaOpen}>
+        <DialogContent className="bg-card border-border max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-orange-400">
+              <Calendar className="h-4 w-4" /> Novo evento + lembrete de agenda
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <p className="text-xs text-muted-foreground bg-orange-500/5 border border-orange-500/20 rounded-md p-3">
+              Cria o evento na sua agenda e um lembrete automático no WhatsApp antes do horário.
+              Se o Google Calendar estiver conectado, o link do Meet é gerado automaticamente.
+            </p>
+            <div className="space-y-2">
+              <Label>Título do evento <span className="text-destructive">*</span></Label>
+              <Input
+                value={agendaTitle}
+                onChange={e => setAgendaTitle(e.target.value)}
+                placeholder="Ex: Reunião com cliente, Consulta médica..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Tipo de evento</Label>
+              <Select value={agendaEventType} onValueChange={setAgendaEventType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {EVENT_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Data <span className="text-destructive">*</span></Label>
+                <Input type="date" value={agendaDate} onChange={e => setAgendaDate(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Horário de início</Label>
+                <Input type="time" value={agendaTime} onChange={e => setAgendaTime(e.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Horário de término (opcional)</Label>
+              <Input type="time" value={agendaEndTime} onChange={e => setAgendaEndTime(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Lembrete via WhatsApp</Label>
+              <Select value={agendaReminderMinutes} onValueChange={setAgendaReminderMinutes}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {REMINDER_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Descrição / observações (opcional)</Label>
+              <Textarea
+                value={agendaDesc}
+                onChange={e => setAgendaDesc(e.target.value)}
+                placeholder="Detalhes, pauta, endereço..."
+                rows={2}
+              />
+            </div>
+            <div className="flex items-start gap-2 bg-muted/30 rounded-md p-3 border border-border">
+              <CalendarCheck className="h-4 w-4 text-orange-400 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                <strong className="text-foreground">Google Meet:</strong> gerado automaticamente quando o Google Calendar está conectado em Integrações.
+              </p>
+            </div>
+            <Button
+              onClick={handleCreateAgenda}
+              disabled={agendaSaving}
+              className="w-full bg-orange-600 hover:bg-orange-700"
+            >
+              {agendaSaving ? "Criando..." : "Criar evento e lembrete"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Nova mensagem agendada ────────────────────────────────────── */}
+      <Dialog open={msgOpen} onOpenChange={v => { setMsgOpen(v); if (!v) { setSelectedContact(null); setContactSearch(""); } }}>
+        <DialogContent className="bg-card border-border max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-indigo-400">
+              <MessageSquare className="h-4 w-4" /> Nova mensagem agendada
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <p className="text-xs text-muted-foreground bg-indigo-500/5 border border-indigo-500/20 rounded-md p-3">
+              O Jarvis envia a mensagem para o contato no horário escolhido, com apresentação profissional automática.
+            </p>
+
+            {/* Busca de contato */}
+            <div className="space-y-2">
+              <Label>Contato destinatário <span className="text-destructive">*</span></Label>
+              {selectedContact ? (
+                <div className="flex items-center justify-between bg-indigo-500/10 border border-indigo-500/30 rounded-md px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <User className="h-4 w-4 text-indigo-400" />
+                    <div>
+                      <p className="text-sm font-medium">{selectedContact.name}</p>
+                      <p className="text-xs text-muted-foreground">{selectedContact.phone}</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() => { setSelectedContact(null); setContactSearch(""); }}
+                  >
+                    Trocar
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                      value={contactSearch}
+                      onChange={e => setContactSearch(e.target.value)}
+                      placeholder="Buscar contato por nome ou número..."
+                      className="pl-9"
+                    />
+                  </div>
+                  {contacts.length === 0 && (
+                    <p className="text-xs text-muted-foreground/60 text-center py-2">
+                      Nenhum contato encontrado. Adicione contatos no menu Contatos.
+                    </p>
+                  )}
+                  {contacts.length > 0 && filteredContacts.length === 0 && (
+                    <p className="text-xs text-muted-foreground/60 text-center py-2">
+                      Nenhum contato com "{contactSearch}"
+                    </p>
+                  )}
+                  {filteredContacts.length > 0 && (
+                    <div className="border border-border rounded-md overflow-hidden max-h-40 overflow-y-auto">
+                      {filteredContacts.map(c => (
+                        <button
+                          key={c.id}
+                          className="w-full flex items-center gap-3 px-3 py-2 hover:bg-muted/50 transition-colors text-left border-b border-border/50 last:border-0"
+                          onClick={() => { setSelectedContact(c); setContactSearch(""); }}
+                        >
+                          <div className="w-7 h-7 rounded-full bg-indigo-500/15 flex items-center justify-center flex-shrink-0">
+                            <User className="h-3.5 w-3.5 text-indigo-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{c.name}</p>
+                            <p className="text-xs text-muted-foreground">{c.phone}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Mensagem */}
+            <div className="space-y-2">
+              <Label>Mensagem <span className="text-destructive">*</span></Label>
+              <Textarea
+                value={msgContent}
+                onChange={e => setMsgContent(e.target.value)}
+                placeholder="Ex: Que amanhã estaremos online às 10h para a reunião."
+                rows={3}
+              />
+              <p className="text-xs text-muted-foreground/60">
+                O Jarvis adiciona apresentação e assinatura automaticamente.
+              </p>
+            </div>
+
+            {/* Horário de envio */}
+            <div className="space-y-2">
+              <Label>Quando enviar (horário de Brasília) <span className="text-destructive">*</span></Label>
+              <Input type="datetime-local" value={msgSendAt} onChange={e => setMsgSendAt(e.target.value)} />
+            </div>
+
+            {/* Preview da mensagem */}
+            {selectedContact && msgContent.trim() && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">Prévia da mensagem:</p>
+                <div className="bg-muted/30 border border-border rounded-md p-3 text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
+                  {`${buildGreeting()}, *${selectedContact.name.split(" ")[0]}*! 👋\n\nAqui é o *Jarvis*, assistente virtual.\n\nSeu contato me pediu para te passar um recado:\n\n💬 _"${msgContent.trim()}"_\n\n——————————————\n_Mensagem enviada via Jarvis_ 🤖`}
+                </div>
+              </div>
+            )}
+
+            <Button
+              onClick={handleCreateMessage}
+              disabled={msgSaving || !selectedContact}
+              className="w-full bg-indigo-600 hover:bg-indigo-700"
+            >
+              {msgSaving ? "Agendando..." : "Agendar mensagem"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ── 3 abas principais ─────────────────────────────────────────────────── */}
       <div className="flex gap-2 flex-wrap">
-        <Button
-          variant={mainTab === "reminders" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setMainTab("reminders")}
-          className="gap-1.5"
-        >
+        <Button variant={mainTab === "reminders" ? "default" : "outline"} size="sm" onClick={() => setMainTab("reminders")} className="gap-1.5">
           <Bell className="h-3.5 w-3.5" />
           Lembretes
           {regPending > 0 && <Badge className="ml-0.5 text-[10px] h-4 px-1">{regPending}</Badge>}
         </Button>
-
         <Button
-          variant={mainTab === "agenda" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setMainTab("agenda")}
+          variant={mainTab === "agenda" ? "default" : "outline"} size="sm" onClick={() => setMainTab("agenda")}
           className={`gap-1.5 ${mainTab !== "agenda" ? "border-orange-500/40 text-orange-400 hover:border-orange-500 hover:text-orange-300" : ""}`}
         >
           <Calendar className="h-3.5 w-3.5" />
           Lembretes de Agenda
           {agendaPending > 0 && <Badge className="ml-0.5 text-[10px] h-4 px-1 bg-orange-500">{agendaPending}</Badge>}
         </Button>
-
         <Button
-          variant={mainTab === "message" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setMainTab("message")}
+          variant={mainTab === "message" ? "default" : "outline"} size="sm" onClick={() => setMainTab("message")}
           className={`gap-1.5 ${mainTab !== "message" ? "border-indigo-500/40 text-indigo-400 hover:border-indigo-500 hover:text-indigo-300" : ""}`}
         >
           <MessageSquare className="h-3.5 w-3.5" />
@@ -620,7 +1010,7 @@ export default function Lembretes() {
         </Button>
       </div>
 
-      {/* ── Sub-abas: Lembretes regulares ─────────────────────────────────────── */}
+      {/* ── Sub-abas ──────────────────────────────────────────────────────────── */}
       {mainTab === "reminders" && (
         <div className="flex gap-2 flex-wrap pl-3 border-l-2 border-primary/30">
           {(["pending", "recurring", "all", "sent"] as RegularSub[]).map(sf => (
@@ -633,8 +1023,6 @@ export default function Lembretes() {
           ))}
         </div>
       )}
-
-      {/* ── Sub-abas: Lembretes de Agenda ─────────────────────────────────────── */}
       {mainTab === "agenda" && (
         <div className="flex gap-2 flex-wrap pl-3 border-l-2 border-orange-500/30">
           {(["pending", "done", "all", "sent"] as AgendaSub[]).map(sf => (
@@ -647,8 +1035,6 @@ export default function Lembretes() {
           ))}
         </div>
       )}
-
-      {/* ── Sub-abas: Lembretes de Mensagem ───────────────────────────────────── */}
       {mainTab === "message" && (
         <div className="flex gap-2 flex-wrap pl-3 border-l-2 border-indigo-500/30">
           {(["pending", "all", "sent"] as MessageSub[]).map(sf => (
@@ -669,10 +1055,10 @@ export default function Lembretes() {
               regularSub === "pending" ? "Nenhum lembrete pendente." :
               regularSub === "sent" ? "Nenhum lembrete enviado ainda." :
               regularSub === "recurring" ? "Nenhum lembrete recorrente." : "Nenhum lembrete ainda.",
-              regularSub === "pending" ? 'Crie um acima ou mande mensagem no WhatsApp: "me lembra de X às 10h"' :
+              regularSub === "pending" ? 'Crie um acima ou mande no WhatsApp: "me lembra de X às 10h"' :
               regularSub === "sent" ? "Os lembretes enviados aparecerão aqui após o disparo pelo Jarvis." :
               regularSub === "recurring" ? 'Ex: "me lembra todo dia 10 de pagar aluguel"' :
-              'Crie um acima ou mande mensagem no WhatsApp: "me lembra de X às 10h"'
+              'Crie um acima ou mande no WhatsApp: "me lembra de X às 10h"'
             )
           : (
             <div className="space-y-2">
@@ -736,7 +1122,7 @@ export default function Lembretes() {
               <MessageSquare className="h-10 w-10" />,
               messageSub === "pending" ? "Nenhuma mensagem agendada pendente." :
               messageSub === "sent" ? "Nenhuma mensagem enviada ainda." : "Nenhum lembrete de mensagem.",
-              'Peça ao Jarvis no WhatsApp: "manda uma mensagem pra Cibele dizendo que a reunião foi confirmada"'
+              'Clique em "Nova mensagem agendada" para agendar uma mensagem para um contato.'
             )
           : <div className="space-y-2">{filteredMessage.map(r => renderMessageCard(r))}</div>
       )}
