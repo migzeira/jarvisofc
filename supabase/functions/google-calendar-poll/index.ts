@@ -234,7 +234,7 @@ async function syncUser(integration: any): Promise<{
     // Existe?
     const { data: existing } = await supabase
       .from("events")
-      .select("id, title, event_date, event_time, end_time, location, status, source")
+      .select("id, title, event_date, event_time, end_time, location, meeting_url, status, source")
       .eq("user_id", integration.user_id)
       .eq("google_event_id", row.google_event_id)
       .maybeSingle();
