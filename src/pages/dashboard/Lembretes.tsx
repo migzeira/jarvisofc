@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
@@ -121,6 +121,7 @@ function buildGreeting(): string {
 }
 
 function isAgendaReminder(r: Reminder) {
+  if (r.source === "send_to_contact") return false; // mensagem para contato nunca é agenda
   return r.source === "event" || r.source === "event_followup" || r.event_id !== null;
 }
 
@@ -331,8 +332,10 @@ export default function Lembretes() {
     }
 
     // Calcula horário do lembrete (X minutos antes do evento)
+    // Interpreta a data/hora como horário de Brasília (BRT = UTC-3) para armazenar UTC correto
     const timeStr = agendaTime || "00:00";
-    const eventDateTime = new Date(`${agendaDate}T${timeStr}:00`);
+    const brtDateString = `${agendaDate}T${timeStr}:00-03:00`; // força offset BRT
+    const eventDateTime = new Date(brtDateString);
     const reminderMinutes = parseInt(agendaReminderMinutes);
     const reminderSendAt = new Date(eventDateTime.getTime() - reminderMinutes * 60 * 1000);
 
@@ -630,7 +633,7 @@ export default function Lembretes() {
     </Card>
   );
 
-  const renderEmptyState = (icon: React.ReactNode, title: string, subtitle: string) => (
+  const renderEmptyState = (icon: ReactNode, title: string, subtitle: string) => (
     <Card className="bg-card border-border">
       <CardContent className="py-14 text-center">
         <div className="flex justify-center mb-3 text-muted-foreground/30">{icon}</div>
@@ -788,7 +791,13 @@ export default function Lembretes() {
       </Dialog>
 
       {/* ── Dialog: Novo evento + lembrete de agenda ──────────────────────────── */}
-      <Dialog open={agendaOpen} onOpenChange={setAgendaOpen}>
+      <Dialog open={agendaOpen} onOpenChange={v => {
+        setAgendaOpen(v);
+        if (!v) {
+          setAgendaTitle(""); setAgendaDate(""); setAgendaTime(""); setAgendaEndTime("");
+          setAgendaEventType("reuniao"); setAgendaReminderMinutes("30"); setAgendaDesc("");
+        }
+      }}>
         <DialogContent className="bg-card border-border max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-orange-400">
@@ -867,7 +876,13 @@ export default function Lembretes() {
       </Dialog>
 
       {/* ── Dialog: Nova mensagem agendada ────────────────────────────────────── */}
-      <Dialog open={msgOpen} onOpenChange={v => { setMsgOpen(v); if (!v) { setSelectedContact(null); setContactSearch(""); } }}>
+      <Dialog open={msgOpen} onOpenChange={v => {
+        setMsgOpen(v);
+        if (!v) {
+          setSelectedContact(null); setContactSearch("");
+          setMsgContent(""); setMsgSendAt("");
+        }
+      }}>
         <DialogContent className="bg-card border-border max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-indigo-400">
