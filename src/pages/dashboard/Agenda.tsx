@@ -47,6 +47,7 @@ import {
   MessageCircle,
   Bell,
   AlertCircle,
+  Link as LinkIcon,
 } from "lucide-react";
 import {
   format,
@@ -93,6 +94,7 @@ interface CalendarEvent {
   event_time: string | null;
   end_time: string | null;
   location: string | null;
+  meeting_url: string | null;
   event_type: EventType | null;
   priority: Priority | null;
   color: string | null;
@@ -1433,6 +1435,25 @@ export default function Agenda() {
                 <div className="flex items-center gap-2 text-sm">
                   <MapPin className="h-4 w-4 text-muted-foreground" />
                   <span>{detailEvent.location}</span>
+                </div>
+              )}
+              {detailEvent.meeting_url && (
+                <div className="flex items-center gap-2 text-sm">
+                  <LinkIcon className="h-4 w-4 text-muted-foreground" />
+                  <a
+                    href={detailEvent.meeting_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 hover:text-blue-300 underline truncate"
+                  >
+                    {detailEvent.meeting_url.includes("meet.google.com")
+                      ? "Abrir Google Meet"
+                      : detailEvent.meeting_url.includes("zoom.us")
+                        ? "Abrir Zoom"
+                        : detailEvent.meeting_url.includes("teams")
+                          ? "Abrir Teams"
+                          : "Abrir reunião"}
+                  </a>
                 </div>
               )}
               {detailEvent.reminder && (

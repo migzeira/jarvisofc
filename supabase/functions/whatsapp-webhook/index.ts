@@ -2206,8 +2206,56 @@ async function createEventAndConfirm(
 
   if (error) throw error;
 
-  // Sync Google Calendar (fire-and-forget) — passa userTz pra não forçar BRT
-  syncGoogleCalendar(userId, extracted.title, extracted.date, extracted.time, extracted.end_time ?? null, null, extracted.location ?? null, userTz).catch(() => {});
+  // Sync Google Calendar — await pra capturar google_event_id, meeting_url e logar erros
+  // Pra reuniao com horário, cria com Google Meet automaticamente
+  let createdMeetLink: string | null = null;
+  const shouldCreateMeet = (extracted.event_type === "reuniao" || extracted.event_type === "meeting" || extracted.event_type === "call") && !!extracted.time;
+  try {
+    if (shouldCreateMeet) {
+      const { eventId: googleEventId, meetLink } = await createCalendarEventWithMeet(
+        userId,
+        extracted.title,
+        extracted.date,
+        extracted.time,
+        extracted.end_time ?? null,
+        null,
+        null,
+        userTz,
+      );
+      if (googleEventId) {
+        await supabase
+          .from("events")
+          .update({ google_event_id: googleEventId, meeting_url: meetLink })
+          .eq("id", event.id);
+        createdMeetLink = meetLink;
+        console.log("[gcal-sync] reuniao com Meet criada:", { event_id: event.id, google_event_id: googleEventId, meet: meetLink });
+      } else {
+        console.warn("[gcal-sync] Meet create returned null — integration not connected ou API error. user_id:", userId);
+      }
+    } else {
+      const googleEventId = await syncGoogleCalendar(
+        userId,
+        extracted.title,
+        extracted.date,
+        extracted.time,
+        extracted.end_time ?? null,
+        null,
+        extracted.location ?? null,
+        userTz,
+      );
+      if (googleEventId) {
+        await supabase
+          .from("events")
+          .update({ google_event_id: googleEventId })
+          .eq("id", event.id);
+        console.log("[gcal-sync] event synced to Google Calendar:", { event_id: event.id, google_event_id: googleEventId });
+      } else {
+        console.warn("[gcal-sync] returned null — integration not connected, token expired, or API error. user_id:", userId);
+      }
+    }
+  } catch (gcalErr) {
+    console.error("[gcal-sync] threw exception:", gcalErr);
+  }
 
   // Cria lembrete se solicitado (reminder_minutes >= 0 significa lembrete ativo)
   if (extracted.reminder_minutes != null && extracted.time) {
@@ -2310,6 +2358,7 @@ async function createEventAndConfirm(
   if (extracted.time) response += `\n⏰ ${extracted.time}`;
   if (extracted.end_time) response += ` - ${extracted.end_time}`;
   if (extracted.location) response += `\n📍 ${extracted.location}`;
+  if (createdMeetLink) response += `\n🔗 *Google Meet:*\n${createdMeetLink}`;
   if (extracted.reminder_minutes === 0) {
     response += `\n🔔 Te aviso na hora do evento`;
   } else if (extracted.reminder_minutes != null && extracted.reminder_minutes > 0) {
