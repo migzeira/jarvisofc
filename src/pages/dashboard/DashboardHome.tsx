@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "react-router-dom";
 import {
   Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2,
-  TrendingDown, BookOpen, Bell, BellRing, Plus, ChevronRight,
+  TrendingDown, Bell, BellRing, Plus, ChevronRight,
   MessageSquare, Clock, Zap, Smartphone, AlertTriangle, XCircle, ExternalLink,
   X, Lock, CheckCircle,
 } from "lucide-react";
@@ -17,7 +16,6 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { toast } from "sonner";
 import { format, subDays, startOfMonth, endOfMonth, endOfWeek, isToday, isTomorrow, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { OnboardingModal } from "@/components/OnboardingModal";
 
 // ─────────────────────────────────────────────
 // Quick actions
@@ -110,7 +108,7 @@ export default function DashboardHome() {
   const [recentNotes, setRecentNotes] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [onboardingOpen, setOnboardingOpen] = useState(false);
+
 
   // Banner dismiss state (session-only — reset no reload)
   const [dismissedBanners, setDismissedBanners] = useState<Set<string>>(new Set());
@@ -505,22 +503,6 @@ export default function DashboardHome() {
         </Card>
       )}
 
-      {/* ── Mobile header portal: "Como usar o Jarvis" button ── */}
-      {typeof document !== "undefined" && document.getElementById("dashboard-header-actions") &&
-        createPortal(
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setOnboardingOpen(true)}
-            className="sm:hidden gap-1.5 border-violet-500/40 text-violet-400 hover:bg-violet-500/10 hover:text-violet-300 text-xs h-8"
-          >
-            <BookOpen className="h-3.5 w-3.5" />
-            Como usar o Jarvis
-          </Button>,
-          document.getElementById("dashboard-header-actions")!
-        )
-      }
-
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
@@ -561,18 +543,6 @@ export default function DashboardHome() {
           </div>
         </div>
 
-        {/* Desktop: Como usar o Jarvis button */}
-        <div className="hidden sm:flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setOnboardingOpen(true)}
-            className="gap-2 border-violet-500/40 text-violet-400 hover:bg-violet-500/10 hover:text-violet-300"
-          >
-            <BookOpen className="h-4 w-4" />
-            Como usar o Jarvis
-          </Button>
-        </div>
       </div>
 
       {/* ── Stats (4 cards) ── */}
@@ -836,7 +806,6 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      <OnboardingModal open={onboardingOpen} onClose={() => setOnboardingOpen(false)} />
     </div>
   );
 }
