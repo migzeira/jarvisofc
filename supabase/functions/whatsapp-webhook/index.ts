@@ -3541,18 +3541,7 @@ serve(async (req) => {
   const data = (Array.isArray(rawData) ? rawData[0] : rawData) as Record<string, unknown>;
   const key = data?.key as Record<string, unknown>;
 
-  // DEBUG TEMPORÁRIO: loga TUDO que chega
-  const _debugText = ((data?.message as Record<string, unknown>)?.conversation as string) ??
-    (((data?.message as Record<string, unknown>)?.extendedTextMessage as Record<string, unknown>)?.text as string) ?? "";
-  const _debugMsgType = data?.messageType ?? "unknown";
-  const _debugKeyJid = key?.remoteJid ?? "null";
-  const _debugFromMe = key?.fromMe ? "true" : "false";
-  await supabase.from("debug_logs").insert({
-    message: `[webhook-in] jid=${_debugKeyJid} fromMe=${_debugFromMe} type=${_debugMsgType} text="${_debugText.slice(0, 60)}"`,
-  } as any).then(undefined, () => {});
-
   if (key?.fromMe) {
-    await supabase.from("debug_logs").insert({ message: `[webhook-in] STOPPED fromMe=true` } as any).then(undefined, () => {});
     return new Response("OK");
   }
 
@@ -7137,17 +7126,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
       const msgLow = text.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-      // DEBUG: loga o texto exato e match pra diagnosticar
-      await supabase.from("debug_logs").insert({
-        message: `[order_confirm] text="${text}" msgLow="${msgLow}" len=${msgLow.length} codes=[${msgLow.split("").map(c => c.charCodeAt(0)).join(",")}]`,
-      } as any).then(undefined, () => {});
-
       const yes = /\b(sim|s|ok|okay|confirma(r|do)?|pode|claro|envia(r)?|manda(r)?|vai|yes|yep|bora|confirmo|positivo|aprovo|beleza|blz|isso|perfeito|certo|pode ser)\b/i.test(msgLow);
       const no  = /\b(nao|n|cancela(r)?|deixa|esquece|nope|cancelar|negativo|desisto|deixa pra la)\b/i.test(msgLow);
-
-      await supabase.from("debug_logs").insert({
-        message: `[order_confirm] yes=${yes} no=${no} hasBiz=${!!ctx.business_name}`,
-      } as any).then(undefined, () => {});
 
       if (yes && ctx.business_name) {
         if (ctx.scheduled_at) {
