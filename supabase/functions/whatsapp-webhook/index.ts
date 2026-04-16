@@ -5081,12 +5081,15 @@ async function handleOrderUserRelay(
  * Ex: "pizza de calabresa", "2 hambúrgueres com bacon" → detalhado.
  */
 function isVagueOrder(orderContent: string): boolean {
-  const words = orderContent.trim().split(/\s+/).filter(Boolean);
+  const clean = orderContent.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const words = clean.split(/\s+/).filter(Boolean);
   // Menos de 3 palavras E sem número/quantidade → vago
   if (words.length <= 2 && !/\d/.test(orderContent)) return true;
   // Só palavras genéricas de categoria → vago
   const generic = /^(um[a]?\s+)?(pizza|lanche|hamburguer|sushi|acai|comida|pedido|delivery|remedio|medicamento|produto|item|coisa|algo)$/i;
-  if (generic.test(orderContent.trim())) return true;
+  if (generic.test(clean)) return true;
+  // Frases que indicam que o usuario ainda não disse O QUE quer
+  if (/^(fazer?\s+(um\s+)?pedido|um\s+pedido|pedido|quero\s+pedir|quero\s+fazer)$/i.test(clean)) return true;
   return false;
 }
 
@@ -5115,12 +5118,10 @@ function buildOrderConfirmMsg(
   addressLine: string,
   payment: string,
 ): string {
-  const drinksLine = drinks && !/^(nao|não|n|nope|no|sem|nada)$/i.test(drinks.trim())
-    ? `🥤 *Bebidas/extras:* ${drinks}\n`
-    : "";
-  const obsLine = obs && !/^(nao|não|n|nope|no|sem|nada|nenhum[a]?)$/i.test(obs.trim())
-    ? `📌 *Observações:* ${obs}\n`
-    : "";
+  const isEmptyDrinks = !drinks || /^(nao|não|n|nope|no|sem|nada|\(já incluído no pedido\))$/i.test(drinks.trim());
+  const isEmptyObs    = !obs    || /^(nao|não|n|nope|no|sem|nada|nenhum[a]?|\(já incluído no pedido\))$/i.test(obs.trim());
+  const drinksLine = isEmptyDrinks ? "" : `🥤 *Bebidas/extras:* ${drinks}\n`;
+  const obsLine    = isEmptyObs    ? "" : `📌 *Observações:* ${obs}\n`;
 
   return (
     `🛵 Confirma o pedido?\n\n` +
@@ -5727,8 +5728,8 @@ async function executeOrder(
   const drinks = (ctx.drinks as string) ?? "";
   const obs    = (ctx.obs    as string) ?? "";
 
-  const drinksHaValue = drinks && !/^(nao|não|n|nope|no|sem|nada)$/i.test(drinks.trim());
-  const obsHasValue   = obs    && !/^(nao|não|n|nope|no|sem|nada|nenhum[a]?)$/i.test(obs.trim());
+  const drinksHaValue = drinks && !/^(nao|não|n|nope|no|sem|nada|\(já incluído no pedido\))$/i.test(drinks.trim());
+  const obsHasValue   = obs    && !/^(nao|não|n|nope|no|sem|nada|nenhum[a]?|\(já incluído no pedido\))$/i.test(obs.trim());
 
   const outgoing =
     `Olá! Meu nome é *${agentName}*, assistente virtual do *${senderName}*.\n\n` +
