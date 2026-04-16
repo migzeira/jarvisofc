@@ -5003,13 +5003,26 @@ async function handleActiveOrderSession(
 
   const userPhone    = session.user_phone as string;
   const businessName = session.business_name as string;
+  const textLow      = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-  // Sempre repassa a mensagem do estabelecimento pro usuario — simples e confiável.
-  // O usuario decide o que responder, e o Jarvis repassa de volta.
-  await sendText(
-    userPhone,
-    `📞 *${businessName}* disse:\n\n_"${text}"_\n\n💬 O que eu respondo? Manda aqui e eu repasso.\n\n_Quando o pedido chegar, me avisa (ex: "já chegou", "recebi o pedido") que eu encerro._`
-  );
+  // Detecta se a pizzaria disse que o pedido foi entregue/enviado/saiu
+  const isDeliveryMsg = /\b(pedido\s*(enviado|entregue|saiu|a caminho|despachado)|ja\s*saiu|entregador|motoboy|saiu\s*(pra|para)\s*entrega|estamos\s*entregando|delivery\s*saiu|a\s*caminho|pedido\s*em\s*rota)\b/i.test(textLow);
+
+  if (isDeliveryMsg) {
+    // Mensagem especial: confirma entrega com o usuário
+    await sendText(
+      userPhone,
+      `🛵 *${businessName}* disse:\n\n_"${text}"_\n\n` +
+      `Parece que seu pedido está a caminho! Já chegou? Posso encerrar o atendimento?\n\n` +
+      `_Me avisa quando chegar (ex: "já chegou", "recebi o pedido")_`
+    );
+  } else {
+    // Mensagem normal: repassa e pede resposta
+    await sendText(
+      userPhone,
+      `📞 *${businessName}* disse:\n\n_"${text}"_\n\n💬 O que eu respondo? Manda aqui e eu repasso.\n\n_Quando o pedido chegar, me avisa (ex: "já chegou", "recebi o pedido") que eu encerro._`
+    );
+  }
 
   await supabase.from("order_sessions")
     .update({ status: "waiting_user" } as any)
@@ -5649,6 +5662,21 @@ async function executeOrder(
     payment_preference: payment,
     status:             "active",
     expires_at:         expiresAt,
+  } as any).catch(() => {});
+
+  // Follow-up automático: após 1h30, Jarvis pergunta se o pedido chegou
+  const followupAt = new Date(Date.now() + 90 * 60 * 1000).toISOString();
+  const firstName = senderName.split(" ")[0] || "você";
+  await supabase.from("reminders").insert({
+    user_id:          userId,
+    whatsapp_number:  userPhone,
+    title:            `Follow-up pedido ${businessName}`,
+    message:          `Oi ${firstName}! 🍕 Seu pedido na *${businessName}* já chegou?\n\nSe sim, me avisa (ex: _"já chegou"_, _"recebi o pedido"_) que eu encerro o atendimento com eles!`,
+    send_at:          followupAt,
+    recurrence:       "none",
+    recurrence_value: null,
+    source:           "order_followup",
+    status:           "pending",
   } as any).catch(() => {});
 
   return (
