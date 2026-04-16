@@ -5384,13 +5384,68 @@ async function handleOrderOnBehalf(
     } catch (_) { /* falhou — envia imediatamente */ }
   }
 
-  // Extrai conteudo do pedido da mensagem do usuario
-  const orderMatch = text.match(
-    /(?:pede?|fa[zç]|encomienda?|comanda?r?)\s+(?:um[a]?\s+)?(.+?)(?:\s+n[ao]\s+\w|\s+pra\s+\w|$)/i
-  );
-  const rawOrder = orderMatch
-    ? orderMatch[1].trim()
-    : text.replace(/^.*(pede?|fa[zç])\s+/i, "").trim();
+  // Extrai conteudo do pedido — remove o prefixo (verbo + nome do estabelecimento) e pega o resto
+  // Abordagem: remove tudo antes de "quero/pede/faz pedido" + nome do estabelecimento
+  const matchedNameNorm = matched.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const matchedNameWords = matchedNameNorm.split(/\s+/);
+  let rawOrder = text;
+
+  // Remove prefixo: "jarvis faz um pedido na pizzaria maya" → foca no conteúdo
+  // Tenta encontrar o nome do estabelecimento no texto e pegar tudo DEPOIS (ou ANTES se veio invertido)
+  const textNormOrder = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  // Encontra a posição do nome do estabelecimento no texto
+  let bizEndIdx = -1;
+  for (const w of matchedNameWords) {
+    if (w.length <= 3) continue;
+    const wIdx = textNormOrder.indexOf(w);
+    if (wIdx >= 0 && wIdx + w.length > bizEndIdx) {
+      bizEndIdx = wIdx + w.length;
+    }
+  }
+
+  if (bizEndIdx > 0) {
+    // Pega tudo depois do nome do estabelecimento
+    const afterBiz = text.slice(bizEndIdx).replace(/^[\s,.:]+/, "").trim();
+    // Também pega tudo antes do verbo de pedido (caso o conteúdo veio antes do nome)
+    const beforeVerb = text.match(/^.*?(?:quero|pede|pedir|faz(?:er)?(?:\s+um)?\s+pedido)/i);
+    const contentAfterVerb = afterBiz
+      .replace(/^(quero|eu quero|pra mim|por favor|pede|pedir)\s*/i, "")
+      .trim();
+
+    if (contentAfterVerb.length > 5) {
+      rawOrder = contentAfterVerb;
+    } else {
+      // O conteúdo está antes do "na pizzaria X" — ex: "quero 1 pizza de calabresa na pizzaria maya"
+      const contentBeforeBiz = text.slice(0, Math.max(0, bizEndIdx - matchedNameNorm.length - 5))
+        .replace(/^.*?(quero|pede|pedir|faz(?:er)?(?:\s+um)?\s+pedido)\s*/i, "")
+        .replace(/\s*(n[ao]|na|pra|para|por favor)\s*$/i, "")
+        .trim();
+      if (contentBeforeBiz.length > 5) {
+        rawOrder = contentBeforeBiz;
+      }
+    }
+  } else {
+    // Fallback: remove verbo de pedido e tenta pegar o resto
+    rawOrder = text
+      .replace(/^.*?(quero|pede|pedir|faz(?:er)?(?:\s+um)?\s+pedido)\s*/i, "")
+      .replace(/\s*(n[ao]|na|pra|para)\s+.*(pizzaria|restaurante|farmacia|mercado|lanchonete)\s+\S+.*$/i, "")
+      .trim();
+  }
+
+  // Limpa prefixos residuais
+  rawOrder = rawOrder
+    .replace(/^(um pedido de|um pedido|pedido de|pedido)\s*/i, "")
+    .replace(/^(quero|eu quero|pra mim|por favor)\s*/i, "")
+    .replace(/\s*(por favor|pra mim)\s*$/i, "")
+    .trim();
+
+  // Detecta negação explícita de extras/obs no texto original
+  const textLowFull = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const explicitNoExtras = /\b(nao quero|sem|nenhum)\s*(itens?\s*)?extras?/i.test(textLowFull) ||
+    /\b(nao quero|sem)\s*(nada\s*)?(a\s*)?mais\b/i.test(textLowFull) ||
+    /\b(so\s*isso|e\s*so)\b/i.test(textLowFull);
+  const explicitNoObs = /\b(nao quero|sem)\s*(nenhuma?\s*)?(observa[çc][aã]o|obs)\b/i.test(textLowFull) ||
+    explicitNoExtras; // "não quero nada mais" cobre obs também
 
   // Se o pedido é vago → inicia coleta de detalhes (step: what)
   if (isVagueOrder(rawOrder)) {
@@ -5412,8 +5467,8 @@ async function handleOrderOnBehalf(
   }
 
   // Pedido já tem detalhes → analisa o que já foi mencionado e só pergunta o que falta
-  const alreadyHasDrinks = hasDrinksInOrder(rawOrder);
-  const alreadyHasObs    = hasObsInOrder(rawOrder);
+  const alreadyHasDrinks = hasDrinksInOrder(rawOrder) || hasDrinksInOrder(text);
+  const alreadyHasObs    = hasObsInOrder(rawOrder)    || hasObsInOrder(text);
 
   const baseCtxFull = {
     business_name:      matched.name,
@@ -5429,8 +5484,8 @@ async function handleOrderOnBehalf(
     scheduled_at:       scheduledAt,
   };
 
-  // Já tem tudo → direto pra confirmação
-  if (alreadyHasDrinks && alreadyHasObs) {
+  // Já tem tudo (bebida + obs mencionados OU negados explicitamente) → direto pra confirmação
+  if ((alreadyHasDrinks || explicitNoExtras) && (alreadyHasObs || explicitNoObs)) {
     const confirmMsg = buildOrderConfirmMsg(matched.name, rawOrder, "", "", addressLine!, payment);
     return {
       response: confirmMsg,
@@ -5439,8 +5494,8 @@ async function handleOrderOnBehalf(
     };
   }
 
-  // Falta bebida → pergunta bebida
-  if (!alreadyHasDrinks) {
+  // Falta bebida (e não negou explicitamente) → pergunta bebida
+  if (!alreadyHasDrinks && !explicitNoExtras) {
     return {
       response: `Anotado: *${rawOrder}* na *${matched.name}*! 🍕\n\nVai querer bebida ou algum extra junto? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
       pendingAction: "order_collecting",
@@ -5448,11 +5503,21 @@ async function handleOrderOnBehalf(
     };
   }
 
-  // Tem bebida mas falta obs → pergunta obs
+  // Tem bebida (ou negou extras), falta obs (e não negou) → pergunta obs
+  if (!alreadyHasObs && !explicitNoObs) {
+    return {
+      response: `Anotado: *${rawOrder}* na *${matched.name}*! 🍕\n\nTem alguma observação especial? (ex: borda recheada, sem cebola, ponto da carne...)\n\nSe não, responda *não*.`,
+      pendingAction: "order_collecting",
+      pendingContext: { ...baseCtxFull, step: "obs" },
+    };
+  }
+
+  // Fallback: direto pra confirmação
+  const confirmMsg = buildOrderConfirmMsg(matched.name, rawOrder, "", "", addressLine!, payment);
   return {
-    response: `Anotado: *${rawOrder}* na *${matched.name}*! 🍕\n\nTem alguma observação especial? (ex: borda recheada, sem cebola, ponto da carne...)\n\nSe não, responda *não*.`,
-    pendingAction: "order_collecting",
-    pendingContext: { ...baseCtxFull, step: "obs" },
+    response: confirmMsg,
+    pendingAction: "order_confirm",
+    pendingContext: { ...baseCtxFull, drinks: "", obs: "" },
   };
 }
 
