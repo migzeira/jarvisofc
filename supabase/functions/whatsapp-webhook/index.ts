@@ -5398,48 +5398,66 @@ async function handleOrderOnBehalf(
     const extractionResult = await chat([
       {
         role: "system",
-        content: `Você extrai pedidos de mensagens de voz transcritas. O estabelecimento é "${matched.name}".
+        content: `Você extrai pedidos de delivery de mensagens de voz transcritas.
+O estabelecimento é "${matched.name}".
 
-Retorne APENAS JSON válido:
-{
-  "items": "lista limpa dos itens (ex: '1 pizza de calabresa com requeijão, 1 Coca-Cola 2 litros')",
-  "has_drinks": true/false,
-  "has_obs": true/false,
-  "no_extras": true/false
-}
+Retorne APENAS um JSON (sem markdown, sem crases, sem explicação):
+{"items":"lista dos itens","has_drinks":true,"has_obs":false,"no_extras":true}
 
-Regras ESTRITAS:
-- "items": APENAS os itens do pedido. Remova: nome do estabelecimento, "Jarvis", saudações, "tá bom?", "por favor", "pra mim", horários, instruções de envio.
-- Use "${matched.name}" como nome correto (ignore erros de transcrição como "Maia" por "Maya").
-- "has_drinks": true se mencionou qualquer bebida.
-- "has_obs": true se mencionou observação (borda recheada, sem cebola, bem passado etc.)
-- "no_extras": true se disse que NÃO quer extras/nada mais/só isso/sem borda/sem nada adicional.
+Campo "items": APENAS os itens do pedido, limpos e formatados.
+Exemplos de entrada → saída:
+- "Jarvis quero fazer um pedido na pizzaria Maia quero uma pizza de calabresa com requeijão e uma Coca-Cola 2 litros eu não quero borda recheada nem algo a mais" → "1 pizza de calabresa com requeijão, 1 Coca-Cola 2 litros"
+- "pede pra mim uma pizza de 4 queijos e uma de frango com borda de catupiry" → "1 pizza de 4 queijos, 1 pizza de frango, borda de catupiry"
 
-JSON puro, sem markdown.`,
+REMOVA do items: nome do assistente, nome do estabelecimento, "pra mim", "por favor", "tá bom", horários, saudações.
+has_drinks: true se mencionou bebida (coca, suco, cerveja, água, etc.)
+has_obs: true se mencionou observação (borda recheada, sem cebola, etc.)
+no_extras: true se disse que NÃO quer extras/nada mais/só isso`,
       },
       { role: "user", content: text },
     ]);
-    const parsed = JSON.parse(extractionResult ?? "{}");
-    if (parsed.items && parsed.items.length > 3) rawOrder = parsed.items;
+
+    // Parse robusto — remove markdown/crases se a IA incluiu
+    const cleanJson = (extractionResult ?? "")
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+    const parsed = JSON.parse(cleanJson || "{}");
+    if (parsed.items && typeof parsed.items === "string" && parsed.items.length > 3) {
+      rawOrder = parsed.items;
+    }
     if (parsed.has_drinks) aiExtractedDrinks = true;
     if (parsed.has_obs) aiExtractedObs = true;
     if (parsed.no_extras) { explicitNoExtras = true; explicitNoObs = true; }
-  } catch { /* fallback abaixo */ }
+  } catch (aiErr) {
+    console.error("[order-extract] AI extraction failed:", aiErr);
+  }
 
-  // Fallback: extração simples se IA falhou
+  // Fallback: extração por regex se IA falhou
   if (!rawOrder) {
-    rawOrder = text
+    // Remove o nome do estabelecimento e verbos de pedido
+    const bizNameNorm = matched.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const bizWords = bizNameNorm.split(/\s+/).filter((w: string) => w.length > 3);
+    let fallbackText = text;
+    // Remove nome do estabelecimento (todas as variações)
+    for (const bw of bizWords) {
+      fallbackText = fallbackText.replace(new RegExp(bw, "gi"), "");
+    }
+    rawOrder = fallbackText
       .replace(/^.*?(quero|pede|pedir|faz(?:er)?(?:\s+um)?\s+pedido)\s*/i, "")
-      .replace(/\s*(n[ao]|na|pra|para)\s+.*(pizzaria|restaurante|farmacia|mercado|lanchonete)\s+\S+.*$/i, "")
+      .replace(/\s*(n[ao]|na|pra|para)\s+(pizzaria|restaurante|farmacia|mercado|lanchonete)\s*/i, "")
       .replace(/^(um pedido de|um pedido|pedido de|pedido)\s*/i, "")
-      .replace(/^(quero|eu quero|pra mim|por favor)\s*/i, "")
-      .replace(/\s*(por favor|pra mim|ta bom|tá bom|ok)\s*[\?\.]?\s*$/i, "")
+      .replace(/^(quero|eu quero|pra mim|por favor|jarvis)\s*/i, "")
+      .replace(/\s*(por favor|pra mim|ta bom|tá bom|ok|ne|né)\s*[\?\.]?\s*$/i, "")
+      .replace(/\s+/g, " ")
       .trim();
+
     // Detecção por regex como fallback
     const textLowFull = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     if (!explicitNoExtras) {
       explicitNoExtras = /\b(nao quero|sem|nenhum)\s*(itens?\s*)?extras?/i.test(textLowFull) ||
         /\b(nao quero|sem)\s*(nada\s*)?(a\s*)?mais\b/i.test(textLowFull) ||
+        /\b(nao quero|nem)\s*(algo|nada)\s*(a\s*)?mais\b/i.test(textLowFull) ||
         /\b(so\s*isso|e\s*so)\b/i.test(textLowFull);
     }
     if (!explicitNoObs) explicitNoObs = explicitNoExtras;
