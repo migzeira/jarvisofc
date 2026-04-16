@@ -5100,6 +5100,58 @@ function buildOrderConfirmMsg(
 }
 
 /**
+ * Normaliza variações comuns de transcrição de áudio (Whisper) em português.
+ * Maya↔Maia, Kadalora↔Cadalora, etc.
+ */
+function phoneticNorm(s: string): string {
+  return s
+    .replace(/y/g, "i")       // maya → maia
+    .replace(/w/g, "u")       // william → uilliam
+    .replace(/ph/g, "f")      // pharmacy → farmacia
+    .replace(/th/g, "t")      // thomas → tomas
+    .replace(/ck/g, "k")      // nick → nik
+    .replace(/sh/g, "x")      // sushi → suxi
+    .replace(/ch/g, "x")      // churrasco → xurrasco
+    .replace(/ss/g, "s")      // pizzaria transcrita
+    .replace(/zz/g, "z")      // pizza → piza
+    .replace(/ll/g, "l")      // mozzarella → mozarela
+    .replace(/rr/g, "r")      // barra → bara
+    .replace(/([aeiou])\1/g, "$1"); // aa→a, ee→e
+}
+
+/**
+ * Compara duas palavras com tolerância a variações de transcrição.
+ * Retorna true se são iguais, foneticamente iguais, ou Levenshtein ≤ 1.
+ */
+function fuzzyWordMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  // Comparação fonética
+  if (phoneticNorm(a) === phoneticNorm(b)) return true;
+  // Levenshtein ≤ 1 para palavras de tamanho similar
+  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a.length === b.length) {
+    let diffs = 0;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) diffs++;
+      if (diffs > 1) return false;
+    }
+    return true;
+  }
+  // Comprimentos diferem por 1 — checa inserção/deleção
+  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
+  let diffs = 0, si = 0;
+  for (let li = 0; li < longer.length; li++) {
+    if (si < shorter.length && shorter[si] === longer[li]) {
+      si++;
+    } else {
+      diffs++;
+      if (diffs > 1) return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Processa pedido do usuario em um estabelecimento.
  * Se o pedido for vago, inicia coleta multi-etapa (o que? → bebidas? → obs?).
  * Só confirma quando tem detalhes suficientes.
@@ -5138,22 +5190,24 @@ async function handleOrderOnBehalf(
   ]);
 
   // Tenta identificar qual estabelecimento o usuario mencionou
-  // Usa sistema de pontuação: palavras distintas valem mais que palavras de categoria
+  // Usa sistema de pontuação com matching fuzzy para tolerar variações de áudio
   const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const textLower = norm(text);
+  const textWords = textLower.split(/\s+/).filter(w => w.length > 1);
 
   let bestMatch: Record<string, any> | null = null;
   let bestScore = 0;
 
   for (const b of businesses) {
     const bName = norm(b.name as string);
-    const words = bName.split(/\s+/).filter((w: string) => w.length > 2);
+    const bWords = bName.split(/\s+/).filter((w: string) => w.length > 2);
 
     let score = 0;
-    for (const w of words) {
-      if (textLower.includes(w)) {
-        // Palavra distinta (nome próprio) vale 10 pontos; categoria vale 1
-        score += categoryWords.has(w) ? 1 : 10;
+    for (const bw of bWords) {
+      // Checa se alguma palavra do texto bate (exata, fonética ou Levenshtein ≤1)
+      const matched = textWords.some(tw => fuzzyWordMatch(tw, bw));
+      if (matched) {
+        score += categoryWords.has(bw) ? 1 : 10;
       }
     }
     if (score > bestScore) {
@@ -5327,18 +5381,20 @@ async function handleOrderDisambiguate(
     return { response: `Ok, pedido cancelado! 👍`, pendingAction: undefined, pendingContext: undefined };
   }
 
-  // Busca o candidato que melhor bate com a resposta do usuario
+  // Busca o candidato que melhor bate com a resposta do usuario (com fuzzy matching)
   let chosen: { name: string; phone: string } | null = null;
   let bestScore = 0;
+  const inputWords = inputNorm.split(/\s+/).filter(w => w.length > 1);
+
   for (const c of candidates) {
     const cNorm = norm(c.name);
-    // Match exato do nome
-    if (inputNorm === cNorm) { chosen = c; break; }
-    // Palavras do input que batem no nome do candidato
-    const inputWords = inputNorm.split(/\s+/).filter(w => w.length > 1);
+    const cWords = cNorm.split(/\s+/).filter(w => w.length > 1);
+    // Match exato do nome completo
+    if (inputNorm === cNorm) { chosen = c; bestScore = 999; break; }
+    // Match fuzzy: cada palavra do candidato que bate com alguma do input
     let score = 0;
-    for (const w of inputWords) {
-      if (cNorm.includes(w)) score += 10;
+    for (const cw of cWords) {
+      if (inputWords.some(iw => fuzzyWordMatch(iw, cw))) score += 10;
     }
     if (score > bestScore) { bestScore = score; chosen = c; }
   }
