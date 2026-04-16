@@ -3653,17 +3653,36 @@ serve(async (req) => {
     if (senderDigits.length >= 10) phoneCandidates.add(senderDigits);
 
     // Se veio como @lid, resolve pra telefone real via tabela conversations
-    if (remoteJid.endsWith("@lid") && senderDigits) {
+    // remoteJid pode ser "177945360519187@lid" ou "177945360519187:42@lid"
+    if (remoteJid.endsWith("@lid")) {
+      // Extrai apenas os dígitos base do LID (antes do : se houver)
+      const lidBase = remoteJid.replace(/@lid$/, "").replace(/:.*$/, "");
+
+      // Busca por LIKE pra cobrir variações do lid salvo
       const { data: convLid } = await supabase
         .from("conversations")
         .select("phone_number")
-        .eq("whatsapp_lid", remoteJid)
+        .like("whatsapp_lid", `${lidBase}%`)
         .limit(1)
         .maybeSingle();
       if (convLid?.phone_number) {
         const resolved = (convLid.phone_number as string).replace(/\D/g, "");
         if (resolved) phoneCandidates.add(resolved);
       }
+
+      // Busca em contacts também (estabelecimentos salvos pelo usuário)
+      const { data: contactMatch } = await supabase
+        .from("contacts")
+        .select("phone")
+        .eq("type", "business")
+        .like("phone", `%${lidBase.slice(-8)}%`)
+        .limit(1)
+        .maybeSingle();
+      if (contactMatch?.phone) {
+        const resolved = (contactMatch.phone as string).replace(/\D/g, "");
+        if (resolved) phoneCandidates.add(resolved);
+      }
+
       // Fallback: resolve via Evolution API
       const resolvedRaw = await resolveLidToPhone(remoteJid).catch(() => null);
       const resolvedClean = sanitizePhone(resolvedRaw ?? "");
