@@ -3568,12 +3568,6 @@ serve(async (req) => {
 
   const remoteJid = key?.remoteJid as string;
 
-  // DEBUG TEMPORÁRIO — salva info de TODA mensagem pra diagnosticar order_session
-  try {
-    const _dt = ((data?.message as any)?.conversation ?? (data?.message as any)?.extendedTextMessage?.text ?? "").toString().slice(0, 60);
-    await supabase.from("debug_logs").insert({ message: `[RAW] jid=${remoteJid} fm=${!!key?.fromMe} t="${_dt}"` });
-  } catch {}
-
   if (!remoteJid || remoteJid.endsWith("@g.us")) {
     return new Response("OK");
   }
@@ -3659,27 +3653,22 @@ serve(async (req) => {
       const senderDigits = senderRaw.replace(/[:\D]/g, "");
       let resolvedPhone = senderDigits;
 
-      // Se veio como @lid, resolve pra telefone real
+      // Se veio como @lid, resolve pra telefone real via conversations
       if (remoteJid.endsWith("@lid")) {
         const lidBase = senderRaw.replace(/:.*$/, "");
-        await supabase.from("debug_logs").insert({ message: `[order-top] resolving lid=${lidBase}` });
-        const { data: convRow, error: convErr } = await supabase
+        const { data: convRow } = await supabase
           .from("conversations")
           .select("phone_number")
           .like("whatsapp_lid", `${lidBase}%`)
           .limit(1)
           .maybeSingle();
-        await supabase.from("debug_logs").insert({ message: `[order-top] conv result=${convRow?.phone_number ?? "null"} err=${convErr?.message ?? "none"}` });
         if (convRow?.phone_number) {
           resolvedPhone = (convRow.phone_number as string).replace(/\D/g, "");
         }
       }
 
-      await supabase.from("debug_logs").insert({ message: `[order-top] resolvedPhone=${resolvedPhone} calling handleActiveOrderSession` });
-
       if (resolvedPhone.length >= 10) {
         const orderHandled = await handleActiveOrderSession(resolvedPhone, text.trim());
-        await supabase.from("debug_logs").insert({ message: `[order-top] handleActiveOrderSession returned=${orderHandled}` });
         if (orderHandled) {
           return new Response(JSON.stringify({ ok: true, order_session: true }), {
             headers: { "Content-Type": "application/json" },
@@ -3687,7 +3676,6 @@ serve(async (req) => {
         }
       }
     } catch (e) {
-      await supabase.from("debug_logs").insert({ message: `[order-top] CAUGHT ERROR: ${(e as Error).message}` }).catch(() => {});
       console.error("[order-toplevel] error:", e);
     }
   }
