@@ -5761,11 +5761,17 @@ async function executeOrder(
     `——————————————\n` +
     `Para falar diretamente com *${senderName}*, o número é: *${userPhone}*`;
 
-  await sendText(businessPhone, outgoing).catch(() => {});
+  // 1. Envia mensagem pro estabelecimento
+  try {
+    await sendText(businessPhone, outgoing);
+  } catch (sendErr) {
+    console.error("[executeOrder] sendText failed:", sendErr);
+    return `⚠️ Não consegui enviar o pedido para *${businessName}*. Tente de novo em instantes.`;
+  }
 
-  // Cria order_session de 3h (pizza pode demorar + entrega)
+  // 2. Cria order_session de 3h
   const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
-  await supabase.from("order_sessions").insert({
+  const { error: sessionErr } = await supabase.from("order_sessions").insert({
     user_id:            userId,
     user_phone:         userPhone,
     business_phone:     businessPhone,
@@ -5775,9 +5781,10 @@ async function executeOrder(
     payment_preference: payment,
     status:             "active",
     expires_at:         expiresAt,
-  } as any).catch(() => {});
+  } as any);
+  if (sessionErr) console.error("[executeOrder] order_session insert failed:", sessionErr);
 
-  // Follow-up automático: após 1h30, Jarvis pergunta se o pedido chegou
+  // 3. Follow-up automático: após 1h30, Jarvis pergunta se o pedido chegou
   const followupAt = new Date(Date.now() + 90 * 60 * 1000).toISOString();
   const firstName = senderName.split(" ")[0] || "você";
   await supabase.from("reminders").insert({
@@ -5792,6 +5799,7 @@ async function executeOrder(
     status:           "pending",
   } as any).catch(() => {});
 
+  // 4. Confirmação pro usuário
   return (
     `✅ Pedido enviado para *${businessName}*!\n\n` +
     `Vou te avisar assim que eles responderem. Se falar algo que eu não souber responder, repasso pra você na hora. 🍕`
