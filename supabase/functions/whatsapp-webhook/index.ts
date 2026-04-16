@@ -3567,6 +3567,13 @@ serve(async (req) => {
   }
 
   const remoteJid = key?.remoteJid as string;
+
+  // DEBUG TEMPORÁRIO — salva info de TODA mensagem pra diagnosticar order_session
+  try {
+    const _dt = ((data?.message as any)?.conversation ?? (data?.message as any)?.extendedTextMessage?.text ?? "").toString().slice(0, 60);
+    await supabase.from("debug_logs").insert({ message: `[RAW] jid=${remoteJid} fm=${!!key?.fromMe} t="${_dt}"` });
+  } catch {}
+
   if (!remoteJid || remoteJid.endsWith("@g.us")) {
     return new Response("OK");
   }
@@ -3644,106 +3651,44 @@ serve(async (req) => {
     ((quotedMsg?.extendedTextMessage as Record<string, unknown>)?.text as string) ??
     "";
   // ── ORDER SESSION CHECK (top-level) — intercepta QUALQUER mensagem de estabelecimento ──
-  // Roda ANTES de tudo (isCrossJarvisReply, shadow, processMessage, unknown_number)
-  // porque o estabelecimento NÃO é cliente Jarvis e seria descartado.
-  // Resolve LID→telefone e também busca por LID direto na order_sessions.
+  // Roda ANTES de tudo porque o estabelecimento NÃO é cliente Jarvis.
+  // Resolve LID→telefone via conversations e tenta o match.
   if (text?.trim()) {
-    const senderRaw = remoteJid.replace(/@.*$/, "");
-    const senderDigits = senderRaw.replace(/[:\D]/g, "");
-    const phoneCandidates = new Set<string>();
-    if (senderDigits.length >= 10) phoneCandidates.add(senderDigits);
+    try {
+      const senderRaw = remoteJid.replace(/@.*$/, "");
+      const senderDigits = senderRaw.replace(/[:\D]/g, "");
+      let resolvedPhone = senderDigits;
 
-    // Resolve LID → telefone real por múltiplas vias
-    if (remoteJid.endsWith("@lid")) {
-      const lidBase = senderRaw.replace(/:.*$/, "");
-
-      // Via conversations (whatsapp_lid)
-      try {
-        const { data: convLid } = await supabase
+      // Se veio como @lid, resolve pra telefone real
+      if (remoteJid.endsWith("@lid")) {
+        const lidBase = senderRaw.replace(/:.*$/, "");
+        await supabase.from("debug_logs").insert({ message: `[order-top] resolving lid=${lidBase}` });
+        const { data: convRow, error: convErr } = await supabase
           .from("conversations")
           .select("phone_number")
           .like("whatsapp_lid", `${lidBase}%`)
           .limit(1)
           .maybeSingle();
-        if (convLid?.phone_number) {
-          phoneCandidates.add((convLid.phone_number as string).replace(/\D/g, ""));
+        await supabase.from("debug_logs").insert({ message: `[order-top] conv result=${convRow?.phone_number ?? "null"} err=${convErr?.message ?? "none"}` });
+        if (convRow?.phone_number) {
+          resolvedPhone = (convRow.phone_number as string).replace(/\D/g, "");
         }
-      } catch {}
+      }
 
-      // Via contacts (business, últimos dígitos do phone)
-      try {
-        const { data: contactMatch } = await supabase
-          .from("contacts")
-          .select("phone")
-          .eq("type", "business")
-          .limit(50);
-        if (contactMatch) {
-          for (const c of contactMatch) {
-            const cPhone = (c.phone as string).replace(/\D/g, "");
-            if (cPhone) phoneCandidates.add(cPhone);
-          }
-        }
-      } catch {}
+      await supabase.from("debug_logs").insert({ message: `[order-top] resolvedPhone=${resolvedPhone} calling handleActiveOrderSession` });
 
-      // Via Evolution API
-      try {
-        const resolvedRaw = await resolveLidToPhone(remoteJid);
-        const resolvedClean = sanitizePhone(resolvedRaw ?? "");
-        if (resolvedClean) phoneCandidates.add(resolvedClean);
-      } catch {}
-    }
-
-    // Tenta CADA candidato contra order_sessions ativas
-    for (const phone of phoneCandidates) {
-      try {
-        const orderHandled = await handleActiveOrderSession(phone, text.trim());
+      if (resolvedPhone.length >= 10) {
+        const orderHandled = await handleActiveOrderSession(resolvedPhone, text.trim());
+        await supabase.from("debug_logs").insert({ message: `[order-top] handleActiveOrderSession returned=${orderHandled}` });
         if (orderHandled) {
           return new Response(JSON.stringify({ ok: true, order_session: true }), {
             headers: { "Content-Type": "application/json" },
           });
         }
-      } catch (e) {
-        console.error("[order-toplevel] error:", e);
       }
-    }
-
-    // Fallback final: busca QUALQUER order_session ativa e checa se o LID bate
-    // com algum business_phone salvo (para casos onde a resolução acima falhou)
-    if (remoteJid.endsWith("@lid") && phoneCandidates.size <= 1) {
-      try {
-        const now = new Date().toISOString();
-        const { data: activeSessions } = await supabase
-          .from("order_sessions")
-          .select("id, business_phone, user_phone, business_name, order_summary, payment_preference")
-          .eq("status", "active")
-          .gt("expires_at", now)
-          .limit(10);
-        if (activeSessions?.length) {
-          // Tenta resolver o LID pra cada business_phone ativo
-          for (const sess of activeSessions) {
-            const bp = (sess.business_phone as string).replace(/\D/g, "");
-            // Checa se esse business_phone está nos contacts com o LID que mandou
-            const { data: matchConv } = await supabase
-              .from("conversations")
-              .select("whatsapp_lid")
-              .eq("phone_number", bp)
-              .limit(1)
-              .maybeSingle();
-            const savedLid = (matchConv?.whatsapp_lid as string ?? "").replace(/@lid$/, "").replace(/:.*$/, "");
-            const incomingLid = senderRaw.replace(/:.*$/, "");
-            if (savedLid && savedLid === incomingLid) {
-              const orderHandled = await handleActiveOrderSession(bp, text.trim());
-              if (orderHandled) {
-                return new Response(JSON.stringify({ ok: true, order_session: true }), {
-                  headers: { "Content-Type": "application/json" },
-                });
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.error("[order-toplevel-fallback] error:", e);
-      }
+    } catch (e) {
+      await supabase.from("debug_logs").insert({ message: `[order-top] CAUGHT ERROR: ${(e as Error).message}` }).catch(() => {});
+      console.error("[order-toplevel] error:", e);
     }
   }
 
@@ -5060,7 +5005,7 @@ async function handleActiveOrderSession(
     .from("order_sessions")
     .select("*")
     .or(orFilter)
-    .eq("status", "active")
+    .in("status", ["active", "waiting_user"])
     .gt("expires_at", now)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -5070,57 +5015,17 @@ async function handleActiveOrderSession(
 
   const userPhone    = session.user_phone as string;
   const businessName = session.business_name as string;
-  const orderSummary = session.order_summary as string;
-  const payment      = session.payment_preference as string;
 
-  // Usa IA pra classificar se e uma resposta padrao que Jarvis pode tratar sozinho
-  const aiDecision = await chat([
-    {
-      role: "system",
-      content:
-        `Você é o Jarvis, assistente virtual. Você fez um pedido em nome do usuário em "${businessName}".
-Pedido: "${orderSummary}". Pagamento preferido: ${payment}.
+  // Sempre repassa a mensagem do estabelecimento pro usuario — simples e confiável.
+  // O usuario decide o que responder, e o Jarvis repassa de volta.
+  await sendText(
+    userPhone,
+    `📞 *${businessName}* disse:\n\n_"${text}"_\n\n💬 O que eu respondo? Manda aqui e eu repasso.\n\n_Se o pedido já chegou, manda *chegou* pra encerrar._`
+  );
 
-Uma mensagem chegou do estabelecimento. Siga estas regras ESTRITAMENTE:
-
-PODE responder sozinho APENAS se a mensagem for:
-- Confirmação de recebimento do pedido (ex: "recebemos seu pedido", "pedido confirmado")
-- Informação de valor total (ex: "vai ficar R$45,00")
-- Informação de tempo de entrega (ex: "em 40 minutos chega")
-- Confirmação de forma de pagamento aceita
-
-Se for qualquer outra coisa — item indisponível, troca de sabor, pergunta, problema, observação — responda EXATAMENTE com: ESCALAR: [mensagem original]
-
-PROIBIDO: inventar status de entrega, confirmar que pedido saiu, criar informações que não estão na mensagem do estabelecimento.
-
-Responda APENAS com a resposta curta para o estabelecimento (máximo 1 linha) OU com ESCALAR: [mensagem].`,
-    },
-    { role: "user", content: text },
-  ]).catch(() => null);
-
-  const aiText = aiDecision ?? "";
-
-  if (aiText.startsWith("ESCALAR:")) {
-    // Repassa pro usuario imediatamente
-    const escalatedMsg = aiText.replace(/^ESCALAR:\s*/i, "").trim() || text;
-    await sendText(
-      userPhone,
-      `📞 *${businessName}* disse:\n\n_"${escalatedMsg}"_\n\n💬 O que eu respondo? Manda aqui e eu repasso.\n\n_Se o pedido já chegou, manda *chegou* pra encerrar._`
-    ).catch(() => {});
-    // Salva contexto na sessao para o proximo turno do usuario
-    await supabase.from("order_sessions")
-      .update({ status: "waiting_user" } as any)
-      .eq("id", session.id)
-      .catch(() => {});
-  } else if (aiText.trim()) {
-    // Jarvis responde autonomamente ao estabelecimento
-    await sendText(businessPhone, aiText.trim()).catch(() => {});
-    // Notifica usuario do que aconteceu
-    await sendText(
-      userPhone,
-      `✅ *${businessName}* disse: _"${text}"_\n\nRespondi: _"${aiText.trim()}"_\n\n_Quando o pedido chegar, manda *chegou* pra encerrar._`
-    ).catch(() => {});
-  }
+  await supabase.from("order_sessions")
+    .update({ status: "waiting_user" } as any)
+    .eq("id", session.id);
 
   return true;
 }
