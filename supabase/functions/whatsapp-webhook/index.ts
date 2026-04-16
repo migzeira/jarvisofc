@@ -3646,11 +3646,33 @@ serve(async (req) => {
   // ── ORDER SESSION CHECK (top-level) — intercepta QUALQUER mensagem de estabelecimento ──
   // Roda ANTES de tudo (isCrossJarvisReply, shadow, processMessage, unknown_number)
   // porque o estabelecimento NÃO é cliente Jarvis e seria descartado.
+  // WhatsApp Multi-Device envia @lid em vez do telefone real — precisamos resolver.
   if (text?.trim()) {
     const senderDigits = remoteJid.replace(/@.*$/, "").replace(/[:\D]/g, "");
-    if (senderDigits.length >= 10) {
+    const phoneCandidates = new Set<string>();
+    if (senderDigits.length >= 10) phoneCandidates.add(senderDigits);
+
+    // Se veio como @lid, resolve pra telefone real via tabela conversations
+    if (remoteJid.endsWith("@lid") && senderDigits) {
+      const { data: convLid } = await supabase
+        .from("conversations")
+        .select("phone_number")
+        .eq("whatsapp_lid", remoteJid)
+        .limit(1)
+        .maybeSingle();
+      if (convLid?.phone_number) {
+        const resolved = (convLid.phone_number as string).replace(/\D/g, "");
+        if (resolved) phoneCandidates.add(resolved);
+      }
+      // Fallback: resolve via Evolution API
+      const resolvedRaw = await resolveLidToPhone(remoteJid).catch(() => null);
+      const resolvedClean = sanitizePhone(resolvedRaw ?? "");
+      if (resolvedClean) phoneCandidates.add(resolvedClean);
+    }
+
+    for (const phone of phoneCandidates) {
       try {
-        const orderHandled = await handleActiveOrderSession(senderDigits, text.trim());
+        const orderHandled = await handleActiveOrderSession(phone, text.trim());
         if (orderHandled) {
           return new Response(JSON.stringify({ ok: true, order_session: true }), {
             headers: { "Content-Type": "application/json" },
