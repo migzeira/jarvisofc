@@ -285,6 +285,13 @@ serve(async (_req) => {
                 agent_name:   agentName,
                 expires_at:   new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
               }).then(() => {}).catch(() => {}); // fire-and-forget
+
+              // Confirma pro usuario que a mensagem agendada foi enviada
+              const contactName = reminder.title?.replace(/^Mensagem para /i, "") || "o contato";
+              sendText(
+                fromPhone,
+                `✅ Mensagem enviada para *${contactName}*! 📨`
+              ).catch(() => {}); // fire-and-forget
             }
           } catch (_relayErr) { /* nao quebra o fluxo de envio */ }
         }
