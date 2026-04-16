@@ -5203,10 +5203,16 @@ async function handleOrderOnBehalf(
     const bWords = bName.split(/\s+/).filter((w: string) => w.length > 2);
 
     let score = 0;
+    const textPhonetic = phoneticNorm(textLower);
     for (const bw of bWords) {
-      // Checa se alguma palavra do texto bate (exata, fonética ou Levenshtein ≤1)
-      const matched = textWords.some(tw => fuzzyWordMatch(tw, bw));
-      if (matched) {
+      // Camada 1: matching fuzzy palavra-a-palavra (exata, fonética ou Levenshtein ≤1)
+      const wordMatch = textWords.some(tw => fuzzyWordMatch(tw, bw));
+      // Camada 2: fallback substring fonético (pega variações mesmo se tokenização diferir)
+      const substringMatch = !wordMatch && textPhonetic.includes(phoneticNorm(bw));
+      // Camada 3: substring exato no texto original (caso mais simples)
+      const exactSubstring = !wordMatch && !substringMatch && textLower.includes(bw);
+
+      if (wordMatch || substringMatch || exactSubstring) {
         score += categoryWords.has(bw) ? 1 : 10;
       }
     }

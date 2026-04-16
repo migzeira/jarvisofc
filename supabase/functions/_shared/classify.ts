@@ -182,14 +182,24 @@ export function classifyIntent(msg: string): Intent {
 
   // Fazer pedido em nome do usuario em um estabelecimento
   // "pede uma pizza de calabresa na pizzaria kadalora"
-  // "faz um pedido no restaurante X"
-  // "pede um remedio na farmacia"
+  // "faz um pedido no restaurante X" / "pizzaria maya faz um pedido"
+  // "pede um remedio na farmacia" / "pede uma pizza pra mim"
   // Deve vir ANTES de send_to_contact para nao ser confundido
   if (
+    // verbo ANTES do lugar: "faz um pedido na pizzaria X"
     /\b(ped(e|ir|ido)|faz(er)?\s+um\s+pedido|encomend(a|ar)|comand(a|ar))\b.{0,60}?\b(n[ao]\s+|n[ao]\s+)(pizzaria|restaurante|farmacia|mercado|padaria|lanchonete|sushi|hamburguer|acai|loja|estabelecimento)/i.test(m) ||
+    // lugar ANTES do verbo: "pizzaria maya faz um pedido"
+    /\b(pizzaria|restaurante|farmacia|mercado|padaria|lanchonete|hamburgueria|acai|loja|estabelecimento)\b.{0,40}?\b(ped(e|ir|ido)|faz(er)?\s+(um\s+)?pedido|encomend(a|ar))\b/i.test(m) ||
+    // "pede pizza/lanche/etc" genérico
     /\b(ped(e|ir))\b.{0,40}?\b(pizza|hamburguer|lanche|sushi|comida|remedio|medicamento|acai|delivery)\b/i.test(m) ||
+    // "pedir uma X na Y"
     /\b(pedir|pecar|encomendar)\s+(uma?|um)\s+\w.{0,60}?\b(n[ao]\s+|n[ao]\s+)\w/i.test(m) ||
-    /\bfaz(er)?\s+(um\s+)?(pedido|order)\b.{0,60}?\b(n[ao]|para|pra)\b/i.test(m)
+    // "faz pedido na/para/pra"
+    /\bfaz(er)?\s+(um\s+)?(pedido|order)\b.{0,60}?\b(n[ao]|para|pra)\b/i.test(m) ||
+    // "faz um pedido" sem preposição (intent claro pelo contexto)
+    /\bfaz(er)?\s+um\s+pedido\b/i.test(m) ||
+    // "pede pra mim na pizzaria" / "pede pra mim por favor"
+    /\b(ped(e|ir))\b.{0,20}?\b(pra mim|para mim)\b.{0,40}?\b(n[ao]|na|por favor)\b/i.test(m)
   )
     return "order_on_behalf";
 
