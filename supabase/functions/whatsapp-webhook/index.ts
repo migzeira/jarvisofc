@@ -4966,11 +4966,19 @@ async function handleActiveOrderSession(
         `Você é o Jarvis, assistente virtual. Você fez um pedido em nome do usuário em "${businessName}".
 Pedido: "${orderSummary}". Pagamento preferido: ${payment}.
 
-Uma mensagem chegou do estabelecimento. Decida:
-- Se for confirmação de valor, forma de pagamento ou tempo de entrega → responda autonomamente de forma educada e curta (máximo 2 linhas).
-- Se for qualquer outra coisa (item indisponível, pergunta fora do script, problema) → responda EXATAMENTE com: ESCALAR: [mensagem original]
+Uma mensagem chegou do estabelecimento. Siga estas regras ESTRITAMENTE:
 
-Responda APENAS com a resposta para o estabelecimento OU com ESCALAR: [mensagem].`,
+PODE responder sozinho APENAS se a mensagem for:
+- Confirmação de recebimento do pedido (ex: "recebemos seu pedido", "pedido confirmado")
+- Informação de valor total (ex: "vai ficar R$45,00")
+- Informação de tempo de entrega (ex: "em 40 minutos chega")
+- Confirmação de forma de pagamento aceita
+
+Se for qualquer outra coisa — item indisponível, troca de sabor, pergunta, problema, observação — responda EXATAMENTE com: ESCALAR: [mensagem original]
+
+PROIBIDO: inventar status de entrega, confirmar que pedido saiu, criar informações que não estão na mensagem do estabelecimento.
+
+Responda APENAS com a resposta curta para o estabelecimento (máximo 1 linha) OU com ESCALAR: [mensagem].`,
     },
     { role: "user", content: text },
   ]).catch(() => null);
@@ -5047,9 +5055,54 @@ async function handleOrderUserRelay(
 }
 
 /**
+ * Detecta se o conteúdo do pedido é vago (só uma categoria, sem detalhes).
+ * Ex: "pizza", "um lanche", "comida" → vago.
+ * Ex: "pizza de calabresa", "2 hambúrgueres com bacon" → detalhado.
+ */
+function isVagueOrder(orderContent: string): boolean {
+  const words = orderContent.trim().split(/\s+/).filter(Boolean);
+  // Menos de 3 palavras E sem número/quantidade → vago
+  if (words.length <= 2 && !/\d/.test(orderContent)) return true;
+  // Só palavras genéricas de categoria → vago
+  const generic = /^(um[a]?\s+)?(pizza|lanche|hamburguer|sushi|acai|comida|pedido|delivery|remedio|medicamento|produto|item|coisa|algo)$/i;
+  if (generic.test(orderContent.trim())) return true;
+  return false;
+}
+
+/**
+ * Monta a mensagem de confirmação final antes de enviar ao estabelecimento.
+ */
+function buildOrderConfirmMsg(
+  businessName: string,
+  orderContent: string,
+  drinks: string,
+  obs: string,
+  addressLine: string,
+  payment: string,
+): string {
+  const drinksLine = drinks && !/^(nao|não|n|nope|no|sem|nada)$/i.test(drinks.trim())
+    ? `🥤 *Bebidas/extras:* ${drinks}\n`
+    : "";
+  const obsLine = obs && !/^(nao|não|n|nope|no|sem|nada|nenhum[a]?)$/i.test(obs.trim())
+    ? `📌 *Observações:* ${obs}\n`
+    : "";
+
+  return (
+    `🛵 Confirma o pedido?\n\n` +
+    `🏪 *${businessName}*\n` +
+    `📝 *Pedido:* ${orderContent}\n` +
+    `${drinksLine}` +
+    `${obsLine}` +
+    `📍 *Entrega:* ${addressLine}\n` +
+    `💳 *Pagamento:* ${payment}\n\n` +
+    `Responda *sim* para eu enviar ou *não* para cancelar.`
+  );
+}
+
+/**
  * Processa pedido do usuario em um estabelecimento.
- * Busca contato do tipo "business", pega dados de entrega do perfil,
- * confirma com o usuario e envia mensagem profissional ao estabelecimento.
+ * Se o pedido for vago, inicia coleta multi-etapa (o que? → bebidas? → obs?).
+ * Só confirma quando tem detalhes suficientes.
  */
 async function handleOrderOnBehalf(
   userId: string,
@@ -5075,25 +5128,79 @@ async function handleOrderOnBehalf(
     };
   }
 
+  // Palavras genéricas de categoria — NÃO servem para distinguir entre estabelecimentos
+  const categoryWords = new Set([
+    "pizzaria", "restaurante", "farmacia", "mercado", "padaria", "lanchonete",
+    "hamburgueria", "sushi", "acai", "loja", "bar", "cafe", "sorveteria",
+    "doceria", "churrascaria", "pastelaria", "petshop", "supermercado",
+    "academia", "clinica", "hospital", "laboratorio", "oficina", "barbearia",
+    "delivery", "express", "gourmet", "house", "food", "burger",
+  ]);
+
   // Tenta identificar qual estabelecimento o usuario mencionou
-  const textLower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  let found: Record<string, any> | null = null;
+  // Usa sistema de pontuação: palavras distintas valem mais que palavras de categoria
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const textLower = norm(text);
+
+  let bestMatch: Record<string, any> | null = null;
+  let bestScore = 0;
+
   for (const b of businesses) {
-    const bName = (b.name as string).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    // Verifica se alguma palavra do nome do estabelecimento aparece no texto
-    const words = bName.split(/\s+/).filter((w: string) => w.length > 3);
-    if (words.some((w: string) => textLower.includes(w))) {
-      found = b as Record<string, any>;
-      break;
+    const bName = norm(b.name as string);
+    const words = bName.split(/\s+/).filter((w: string) => w.length > 2);
+
+    let score = 0;
+    for (const w of words) {
+      if (textLower.includes(w)) {
+        // Palavra distinta (nome próprio) vale 10 pontos; categoria vale 1
+        score += categoryWords.has(w) ? 1 : 10;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = b as Record<string, any>;
     }
   }
 
+  // Exige ao menos 1 palavra distinta (10pts) OU nome inteiro da categoria (ex: "padaria")
+  // Se só matchou palavras de categoria, é ambíguo → pede pra especificar
+  const found = bestScore >= 10 ? bestMatch : null;
+
+  // Se só matchou categoria (ex: "pizzaria" sem nome), mostra opções filtradas
   if (!found) {
+    // Tenta filtrar por categoria mencionada
+    const matchedByCategory = businesses.filter((b: any) => {
+      const bWords = norm(b.name as string).split(/\s+/);
+      return bWords.some((w: string) => categoryWords.has(w) && textLower.includes(w));
+    });
+
+    if (matchedByCategory.length === 1) {
+      // Só tem 1 estabelecimento dessa categoria → usa ele
+      (bestMatch as any) = matchedByCategory[0];
+    } else if (matchedByCategory.length > 1) {
+      const lista = matchedByCategory.map((b: any) => `• ${b.name}`).join("\n");
+      return {
+        response:
+          `Encontrei mais de um estabelecimento desse tipo:\n\n${lista}\n\n` +
+          `Qual deles? Me diz o nome completo.`,
+      };
+    } else {
+      const lista = businesses.map((b: any) => `• ${b.name}`).join("\n");
+      return {
+        response:
+          `Não identifiquei o estabelecimento no seu pedido. Seus estabelecimentos salvos:\n\n${lista}\n\n` +
+          `Tente ser mais específico, ex: _"Jarvis, pede uma pizza de calabresa na ${businesses[0]?.name}"_`,
+      };
+    }
+  }
+
+  const matched = found || bestMatch as Record<string, any>;
+  if (!matched) {
     const lista = businesses.map((b: any) => `• ${b.name}`).join("\n");
     return {
       response:
-        `Não identifiquei o estabelecimento no seu pedido. Seus estabelecimentos salvos:\n\n${lista}\n\n` +
-        `Tente ser mais específico, ex: _"Jarvis, pede uma pizza de calabresa na ${businesses[0]?.name}"_`,
+        `Não identifiquei o estabelecimento. Seus estabelecimentos salvos:\n\n${lista}\n\n` +
+        `Diga o nome completo do lugar.`,
     };
   }
 
@@ -5106,7 +5213,6 @@ async function handleOrderOnBehalf(
 
   const senderName = userNickname || profileData?.display_name || pushName || "seu usuário";
 
-  // Monta endereco de entrega
   const street       = profileData?.delivery_street ?? "";
   const number       = profileData?.delivery_number ?? "";
   const complement   = profileData?.delivery_complement ?? "";
@@ -5120,46 +5226,126 @@ async function handleOrderOnBehalf(
     ? `${street}, ${number}${complement ? `, ${complement}` : ""}${neighborhood ? ` — ${neighborhood}` : ""}${city ? `, ${city}` : ""}${reference ? ` (${reference})` : ""}`
     : null;
 
-  // Extrai conteudo do pedido (tudo depois de palavras-chave)
-  const orderMatch = text.match(
-    /(?:pede?|fa[zç]|encomienda?|comanda?r?)\s+(?:um[a]?\s+)?(.+?)(?:\s+n[ao]\s+\w|\s+pra\s+\w|$)/i
-  );
-  const orderContent = orderMatch
-    ? orderMatch[1].trim()
-    : text.replace(/^.*(pede?|fa[zç])\s+/i, "").trim();
-
-  // Se nao tem endereco cadastrado, pede antes de confirmar
   if (!hasAddress) {
     return {
       response:
-        `Antes de fazer o pedido na *${found.name}*, preciso do seu endereço de entrega.\n\n` +
+        `Antes de fazer o pedido na *${matched.name}*, preciso do seu endereço de entrega.\n\n` +
         `Você ainda não cadastrou. Acesse *Meu Perfil → Dados de Entrega* e salve seu endereço. 📍\n\n` +
         `Depois é só repetir o pedido e eu envio direto!`,
     };
   }
 
-  // Monta confirmacao para o usuario
-  const confirmMsg =
-    `🛵 Confirma o pedido?\n\n` +
-    `🏪 *${found.name}*\n` +
-    `📝 *Pedido:* ${orderContent}\n` +
-    `📍 *Entrega:* ${addressLine}\n` +
-    `💳 *Pagamento:* ${payment}\n\n` +
-    `Responda *sim* para eu enviar agora.`;
+  // Extrai conteudo do pedido da mensagem do usuario
+  const orderMatch = text.match(
+    /(?:pede?|fa[zç]|encomienda?|comanda?r?)\s+(?:um[a]?\s+)?(.+?)(?:\s+n[ao]\s+\w|\s+pra\s+\w|$)/i
+  );
+  const rawOrder = orderMatch
+    ? orderMatch[1].trim()
+    : text.replace(/^.*(pede?|fa[zç])\s+/i, "").trim();
 
-  return {
-    response: confirmMsg,
-    pendingAction: "order_confirm",
-    pendingContext: {
-      business_name:      found.name,
-      business_phone:     (found.phone as string).replace(/\D/g, ""),
-      order_content:      orderContent,
+  // Se o pedido é vago → inicia coleta de detalhes (step: what)
+  if (isVagueOrder(rawOrder)) {
+    const baseCtx = {
+      business_name:      matched.name,
+      business_phone:     (matched.phone as string).replace(/\D/g, ""),
       delivery_address:   addressLine,
       payment_preference: payment,
       sender_name:        senderName,
       agent_name:         agentName,
       user_phone:         userPhone,
-    },
+    };
+    return {
+      response: `Claro! O que você quer pedir na *${matched.name}*? 🍽️\n\nMe conta os itens com sabores, quantidades e qualquer detalhe.`,
+      pendingAction: "order_collecting",
+      pendingContext: { ...baseCtx, step: "what", order_content: "", drinks: "", obs: "" },
+    };
+  }
+
+  // Pedido já tem detalhes → pula a etapa "what" e vai pra "drinks"
+  // (um atendente real sempre pergunta sobre bebidas e observações)
+  const baseCtxFull = {
+    business_name:      matched.name,
+    business_phone:     (matched.phone as string).replace(/\D/g, ""),
+    order_content:      rawOrder,
+    drinks:             "",
+    obs:                "",
+    delivery_address:   addressLine,
+    payment_preference: payment,
+    sender_name:        senderName,
+    agent_name:         agentName,
+    user_phone:         userPhone,
+  };
+  return {
+    response: `Anotado: *${rawOrder}* na *${matched.name}*! 🍕\n\nVai querer bebida ou algum extra junto? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
+    pendingAction: "order_collecting",
+    pendingContext: { ...baseCtxFull, step: "drinks" },
+  };
+}
+
+/**
+ * Gerencia as etapas de coleta do pedido.
+ * Etapas: what → drinks → obs → confirmação
+ * Em qualquer etapa, "cancela/esquece/não quero mais" aborta o fluxo.
+ */
+async function handleOrderCollecting(
+  ctx: Record<string, unknown>,
+  text: string,
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  const step         = ctx.step as string;
+  const businessName = ctx.business_name as string;
+  const addressLine  = ctx.delivery_address as string;
+  const payment      = ctx.payment_preference as string;
+
+  // Cancelamento em qualquer etapa
+  const isCanceled = /^(cancela(r)?|esquece|deixa|não quero mais|desiste|para|stop)\b/i.test(text.trim());
+  if (isCanceled) {
+    return {
+      response: `Ok, pedido cancelado! Pode pedir de novo quando quiser. 👍`,
+      pendingAction: undefined,
+      pendingContext: undefined,
+    };
+  }
+
+  const updatedCtx = { ...ctx };
+
+  if (step === "what") {
+    updatedCtx.order_content = text.trim();
+    updatedCtx.step = "drinks";
+    return {
+      response: `Anotado! 🍕\n\nVai querer bebida ou algum extra? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
+      pendingAction: "order_collecting",
+      pendingContext: updatedCtx,
+    };
+  }
+
+  if (step === "drinks") {
+    updatedCtx.drinks = text.trim();
+    updatedCtx.step = "obs";
+    return {
+      response: `Beleza! Tem alguma observação especial? (ex: borda recheada, sem cebola, ponto da carne...)\n\nSe não, responda *não*.`,
+      pendingAction: "order_collecting",
+      pendingContext: updatedCtx,
+    };
+  }
+
+  if (step === "obs") {
+    const orderContent = updatedCtx.order_content as string;
+    const drinks       = updatedCtx.drinks as string;
+    const obs          = text.trim();
+
+    const confirmMsg = buildOrderConfirmMsg(businessName, orderContent, drinks, obs, addressLine, payment);
+    return {
+      response: confirmMsg,
+      pendingAction: "order_confirm",
+      pendingContext: { ...updatedCtx, step: undefined, obs },
+    };
+  }
+
+  // Estado inesperado → recomeça
+  return {
+    response: `Não entendi. Me conta o que você quer pedir na *${businessName}*? 🍽️`,
+    pendingAction: "order_collecting",
+    pendingContext: { ...ctx, step: "what", order_content: "", drinks: "", obs: "" },
   };
 }
 
@@ -5180,13 +5366,21 @@ async function executeOrder(
   const senderName      = ctx.sender_name      as string;
   const agentName       = (ctx.agent_name as string) || "Jarvis";
 
+  const drinks = (ctx.drinks as string) ?? "";
+  const obs    = (ctx.obs    as string) ?? "";
+
+  const drinksHaValue = drinks && !/^(nao|não|n|nope|no|sem|nada)$/i.test(drinks.trim());
+  const obsHasValue   = obs    && !/^(nao|não|n|nope|no|sem|nada|nenhum[a]?)$/i.test(obs.trim());
+
   const outgoing =
     `Olá! Meu nome é *${agentName}*, assistente virtual do *${senderName}*.\n\n` +
     `Gostaria de fazer um pedido:\n\n` +
     `📝 *Pedido:* ${orderContent}\n` +
+    (drinksHaValue ? `🥤 *Extras/Bebidas:* ${drinks}\n` : "") +
+    (obsHasValue   ? `📌 *Observações:* ${obs}\n`        : "") +
     `📍 *Endereço de entrega:* ${deliveryAddress}\n` +
     `💳 *Pagamento:* ${payment}\n\n` +
-    `Pode confirmar o valor e o tempo estimado de entrega?\n\n` +
+    `Pode confirmar o recebimento, o valor total e o tempo estimado de entrega?\n\n` +
     `——————————————\n` +
     `Para falar diretamente com *${senderName}*, o número é: *${userPhone}*`;
 
@@ -6691,6 +6885,14 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         }, { onConflict: "phone_number" });
         responseText = ""; // botão já enviado
       }
+
+    } else if (session?.pending_action === "order_collecting") {
+      // Usuário está no fluxo de coleta de detalhes do pedido (what → drinks → obs → confirm)
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const result = await handleOrderCollecting(ctx, text);
+      responseText   = result.response;
+      pendingAction  = result.pendingAction;
+      pendingContext = result.pendingContext;
 
     } else if (intent === "order_confirm" || session?.pending_action === "order_confirm") {
       // Usuario confirmou (ou negou) o pedido ao estabelecimento
