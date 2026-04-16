@@ -307,40 +307,47 @@ serve(async (_req) => {
               const userId     = ctx.user_id        as string;
               const senderName = (ctx.sender_name as string) || "seu usuário";
 
-              // 1. Cria order_session de 3h
+              // 1. Cria order_session de 3h (CRÍTICO: sem .catch() direto no supabase)
               const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
-              await supabase.from("order_sessions").insert({
-                user_id:            userId,
-                user_phone:         userPhone,
-                business_phone:     bizPhone,
-                business_name:      bizName,
-                order_summary:      ctx.order_summary,
-                delivery_address:   ctx.delivery_address,
-                payment_preference: ctx.payment_preference,
-                status:             "active",
-                expires_at:         expiresAt,
-              } as any).catch(() => {});
+              try {
+                const { error: sessErr } = await supabase.from("order_sessions").insert({
+                  user_id:            userId,
+                  user_phone:         userPhone,
+                  business_phone:     bizPhone,
+                  business_name:      bizName,
+                  order_summary:      ctx.order_summary,
+                  delivery_address:   ctx.delivery_address,
+                  payment_preference: ctx.payment_preference,
+                  status:             "active",
+                  expires_at:         expiresAt,
+                } as any);
+                if (sessErr) console.error("[send-reminder] order_session insert:", sessErr);
+              } catch (e) { console.error("[send-reminder] order_session exception:", e); }
 
               // 2. Cria follow-up de 1h30
               const followupAt = new Date(Date.now() + 90 * 60 * 1000).toISOString();
               const firstName = senderName.split(" ")[0] || "você";
-              await supabase.from("reminders").insert({
-                user_id:          userId,
-                whatsapp_number:  userPhone,
-                title:            `Follow-up pedido ${bizName}`,
-                message:          `Oi ${firstName}! 🍕 Seu pedido na *${bizName}* já chegou?\n\nSe sim, me avisa (ex: _"já chegou"_, _"recebi o pedido"_) que eu encerro o atendimento com eles!`,
-                send_at:          followupAt,
-                recurrence:       "none",
-                recurrence_value: null,
-                source:           "order_followup",
-                status:           "pending",
-              } as any).catch(() => {});
+              try {
+                await supabase.from("reminders").insert({
+                  user_id:          userId,
+                  whatsapp_number:  userPhone,
+                  title:            `Follow-up pedido ${bizName}`,
+                  message:          `Oi ${firstName}! 🍕 Seu pedido na *${bizName}* já chegou?\n\nSe sim, me avisa (ex: _"já chegou"_, _"recebi o pedido"_) que eu encerro o atendimento com eles!`,
+                  send_at:          followupAt,
+                  recurrence:       "none",
+                  recurrence_value: null,
+                  source:           "order_followup",
+                  status:           "pending",
+                } as any);
+              } catch (e) { console.error("[send-reminder] followup insert exception:", e); }
 
-              // 3. Notifica o usuario que o pedido foi enviado
-              await sendText(
-                userPhone,
-                `✅ Seu pedido agendado na *${bizName}* acabou de ser enviado! 🍕\n\nVou te avisar assim que eles responderem.`
-              ).catch(() => {});
+              // 3. Notifica o usuario que o pedido foi enviado (sendText retorna Promise — .catch aqui é seguro)
+              try {
+                await sendText(
+                  userPhone,
+                  `✅ Seu pedido agendado na *${bizName}* acabou de ser enviado! 🍕\n\nVou te avisar assim que eles responderem.`
+                );
+              } catch (e) { console.error("[send-reminder] sendText user confirm exception:", e); }
             }
           } catch (_orderErr) {
             console.error("[send-reminder] scheduled_order error:", _orderErr);
