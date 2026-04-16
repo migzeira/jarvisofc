@@ -5031,49 +5031,8 @@ async function handleActiveOrderSession(
   return true;
 }
 
-/**
- * Intercepta resposta do usuario para repassar ao estabelecimento
- * quando a sessao esta em estado "waiting_user".
- */
-async function handleOrderUserRelay(
-  userPhone: string,
-  text: string,
-): Promise<boolean> {
-  const now = new Date().toISOString();
-  const rawDigits = userPhone.replace(/\D/g, "");
-  const phone55   = rawDigits.startsWith("55") ? rawDigits : `55${rawDigits}`;
-  const phoneNo55 = rawDigits.startsWith("55") ? rawDigits.slice(2) : rawDigits;
-
-  const { data: session } = await supabase
-    .from("order_sessions")
-    .select("*")
-    .or(`user_phone.eq.${phone55},user_phone.eq.${phoneNo55}`)
-    .eq("status", "waiting_user")
-    .gt("expires_at", now)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!session) return false;
-
-  const businessPhone = session.business_phone as string;
-  const businessName  = session.business_name  as string;
-
-  // Repassa resposta do usuario pro estabelecimento
-  await sendText(businessPhone, text).catch(() => {});
-  // Volta sessao pra "active" para continuar capturando respostas
-  await supabase.from("order_sessions")
-    .update({ status: "active" } as any)
-    .eq("id", session.id)
-    .catch(() => {});
-  // Confirma pro usuario
-  await sendText(
-    userPhone,
-    `✅ Repassei para *${businessName}*: _"${text}"_`
-  ).catch(() => {});
-
-  return true;
-}
+// handleOrderUserRelay REMOVIDA — relay do usuário é 100% tratado pela Seção 4c
+// (antes do classify), eliminando duplicação e race conditions.
 
 /**
  * Detecta se o conteúdo do pedido é vago (só uma categoria, sem detalhes).
@@ -5761,15 +5720,18 @@ async function executeOrder(
     `——————————————\n` +
     `Para falar diretamente com *${senderName}*, o número é: *${userPhone}*`;
 
-  // 1. Envia mensagem pro estabelecimento
-  try {
-    await sendText(businessPhone, outgoing);
-  } catch (sendErr) {
-    console.error("[executeOrder] sendText failed:", sendErr);
-    return `⚠️ Não consegui enviar o pedido para *${businessName}*. Tente de novo em instantes.`;
-  }
+  // 1. Limpa pending_action PRIMEIRO — evita re-execução se der timeout
+  await supabase.from("whatsapp_sessions")
+    .update({ pending_action: null, pending_context: null } as any)
+    .eq("user_id", userId)
+    .catch(() => {});
 
-  // 2. Cria order_session de 3h
+  // 2. Confirmação pro usuário — envia ANTES da pizzaria pra garantir que chega
+  await sendText(userPhone,
+    `✅ Pedido enviado para *${businessName}*!\n\nVou te avisar assim que eles responderem. 🍕`
+  ).catch(() => {});
+
+  // 3. Cria order_session de 3h
   const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
   const { error: sessionErr } = await supabase.from("order_sessions").insert({
     user_id:            userId,
@@ -5782,9 +5744,17 @@ async function executeOrder(
     status:             "active",
     expires_at:         expiresAt,
   } as any);
-  if (sessionErr) console.error("[executeOrder] order_session insert failed:", sessionErr);
+  if (sessionErr) console.error("[executeOrder] order_session insert error:", sessionErr);
 
-  // 3. Follow-up automático: após 1h30, Jarvis pergunta se o pedido chegou
+  // 4. Envia pedido pro estabelecimento
+  try {
+    await sendText(businessPhone, outgoing);
+  } catch (sendErr) {
+    console.error("[executeOrder] sendText to business failed:", sendErr);
+    await sendText(userPhone, `⚠️ O pedido não chegou na *${businessName}*. Tente de novo.`).catch(() => {});
+  }
+
+  // 5. Follow-up automático (1h30)
   const followupAt = new Date(Date.now() + 90 * 60 * 1000).toISOString();
   const firstName = senderName.split(" ")[0] || "você";
   await supabase.from("reminders").insert({
@@ -5799,20 +5769,7 @@ async function executeOrder(
     status:           "pending",
   } as any).catch(() => {});
 
-  // 4. Limpa pending_action IMEDIATAMENTE pra evitar re-execução
-  // (se a Edge Function der timeout depois, pelo menos o pedido não é duplicado)
-  await supabase.from("whatsapp_sessions")
-    .update({ pending_action: null, pending_context: null } as any)
-    .eq("user_id", userId)
-    .catch(() => {});
-
-  // 5. Confirmação pro usuário — envia direto aqui pra garantir que chega
-  const confirmMsg =
-    `✅ Pedido enviado para *${businessName}*!\n\n` +
-    `Vou te avisar assim que eles responderem. Se falar algo que eu não souber responder, repasso pra você na hora. 🍕`;
-  await sendText(userPhone, confirmMsg).catch(() => {});
-
-  return ""; // vazio pra não duplicar mensagem
+  return ""; // vazio — confirmação já enviada acima
 }
 
 /**
@@ -7043,7 +7000,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         const businessName  = waitingSession.business_name  as string;
 
         // Comandos de encerramento do pedido
-        const isClose = /\b(encerra(r)?|finaliza(r)?|fechar?\s*(pedido|atendimento)?|pode\s*encerrar|ja\s*(chegou|recebi|entregaram|entregue)|pizza\s*chegou|pedido\s*chegou|ja\s*recebi|recebi\s*(o\s*)?(pedido|pizza|lanche|comida|entrega)|entregue|entregaram|pronto\s*pode\s*(encerrar|fechar|finalizar)|nao\s*precisa\s*mais|obrigad[oa]\s*pode\s*(encerrar|fechar|finalizar))\b/i.test(msgLow);
+        const isClose = /\b(encerra(r)?|finaliza(r)?|fechar?\s*(pedido|atendimento)?|pode\s*encerrar|ja\s*(chegou|recebi|entregaram|entregue)|pizza\s*chegou|pedido\s*chegou|ja\s*recebi|recebi\s*(o\s*)?(pedido|pizza|lanche|comida|entrega)|entregue|entregaram|pronto\s*pode\s*(encerrar|fechar|finalizar)|nao\s*precisa\s*mais|obrigad[oa]\s*pode\s*(encerrar|fechar|finalizar)|pedido\s*(concluido|finalizado|encerrado)|recebi\s*o?\s*(meu\s*)?(pedido|pizza|lanche)|ta\s*tudo\s*certo|tudo\s*certo\s*obrigad|valeu\s*pode\s*(encerrar|fechar|finalizar)|pode\s*fechar)\b/i.test(msgLow);
         if (isClose) {
           await supabase.from("order_sessions")
             .update({ status: "completed" } as any)
@@ -7062,7 +7019,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         // 2. Tem pending_action na sessão (order_confirm, etc) → a msg é pro fluxo pendente, não relay
         const relayIntent = classifyIntent(text);
         const isNewCommand = relayIntent !== "ai_chat" && relayIntent !== "greeting";
-        const hasPendingFlow = session?.pending_action && session.pending_action !== "order_waiting_user";
+        const hasPendingFlow = !!session?.pending_action;
         if (isNewCommand || hasPendingFlow) {
           // Não é resposta pra pizzaria — deixa passar pro fluxo normal
           log.push("order_relay_skipped");
@@ -7079,7 +7036,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
             sendPhone || replyTo,
             `✅ Repassei para *${businessName}*: _"${text}"_`
           ).catch(() => {});
-          log.push("order_user_relay_early");
+          log.push("order_relay");
           return log;
         }
       }
@@ -7097,7 +7054,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
       if (activeSession) {
         const msgLow = text.toLowerCase().trim();
-        const isClose = /\b(encerra(r)?|finaliza(r)?|fechar?\s*(pedido|atendimento)?|pode\s*encerrar|ja\s*(chegou|recebi|entregaram|entregue)|pizza\s*chegou|pedido\s*chegou|ja\s*recebi|recebi\s*(o\s*)?(pedido|pizza|lanche|comida|entrega)|entregue|entregaram|pronto\s*pode\s*(encerrar|fechar|finalizar)|nao\s*precisa\s*mais|obrigad[oa]\s*pode\s*(encerrar|fechar|finalizar))\b/i.test(msgLow);
+        const isClose = /\b(encerra(r)?|finaliza(r)?|fechar?\s*(pedido|atendimento)?|pode\s*encerrar|ja\s*(chegou|recebi|entregaram|entregue)|pizza\s*chegou|pedido\s*chegou|ja\s*recebi|recebi\s*(o\s*)?(pedido|pizza|lanche|comida|entrega)|entregue|entregaram|pronto\s*pode\s*(encerrar|fechar|finalizar)|nao\s*precisa\s*mais|obrigad[oa]\s*pode\s*(encerrar|fechar|finalizar)|pedido\s*(concluido|finalizado|encerrado)|recebi\s*o?\s*(meu\s*)?(pedido|pizza|lanche)|ta\s*tudo\s*certo|tudo\s*certo\s*obrigad|valeu\s*pode\s*(encerrar|fechar|finalizar)|pode\s*fechar)\b/i.test(msgLow);
         if (isClose) {
           await supabase.from("order_sessions")
             .update({ status: "completed" } as any)
@@ -7528,17 +7485,10 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         pendingAction  = undefined;
         pendingContext = undefined;
       } else {
-        // Nao entendeu — repete a confirmacao
-        responseText = "Responda *sim* para confirmar o pedido ou *não* para cancelar.";
-      }
-
-    } else if (intent === "order_user_relay" || session?.pending_action === "order_waiting_user") {
-      // Usuario enviou resposta para repassar ao estabelecimento
-      const handled = await handleOrderUserRelay(sendPhone || replyTo, text);
-      if (handled) {
-        responseText  = "";
-        pendingAction  = undefined;
-        pendingContext = undefined;
+        // Nao entendeu — repete a confirmacao E preserva o contexto
+        responseText   = "Responda *sim* para confirmar o pedido ou *não* para cancelar.";
+        pendingAction  = "order_confirm";
+        pendingContext = ctx;
       }
 
     } else if (intent === "contact_save_confirm") {
