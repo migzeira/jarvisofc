@@ -3649,6 +3649,24 @@ serve(async (req) => {
     quotedText.includes("assistente virtual de");
 
   if (isCrossJarvisReply) {
+    // ANTES de tratar como cross-Jarvis, checa se é um estabelecimento com order_session ativa
+    // (ex: pizzaria respondendo ao pedido feito pelo Jarvis via reply/quote)
+    {
+      const replyDigits = remoteJid.replace(/@.*$/, "").replace(/[:\D]/g, "");
+      if (replyDigits.length >= 10) {
+        try {
+          const orderHandled = await handleActiveOrderSession(replyDigits, text?.trim() || "");
+          if (orderHandled) {
+            return new Response(JSON.stringify({ ok: true, order_reply: true }), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+        } catch (e) {
+          console.error("[order] cross-jarvis reply order check error:", e);
+        }
+      }
+    }
+
     // Checa se o remetente é um usuário registrado do Hey Jarvis
     const { profile: senderProfile } = await resolveProfileForShadow(replyTo, lid);
     if (senderProfile) {
@@ -3662,7 +3680,7 @@ serve(async (req) => {
       );
       return new Response("OK");
     }
-    // Não é usuário Jarvis → ignora silenciosamente (já é o comportamento padrão)
+    // Não é usuário Jarvis e não tem order_session → ignora silenciosamente
     return new Response("OK");
   }
 
