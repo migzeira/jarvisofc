@@ -5799,8 +5799,14 @@ async function executeOrder(
     status:           "pending",
   } as any).catch(() => {});
 
-  // 4. Confirmação pro usuário — envia direto aqui pra garantir que chega
-  // (se depender do responseText, pode dar timeout antes de enviar)
+  // 4. Limpa pending_action IMEDIATAMENTE pra evitar re-execução
+  // (se a Edge Function der timeout depois, pelo menos o pedido não é duplicado)
+  await supabase.from("whatsapp_sessions")
+    .update({ pending_action: null, pending_context: null } as any)
+    .eq("user_id", userId)
+    .catch(() => {});
+
+  // 5. Confirmação pro usuário — envia direto aqui pra garantir que chega
   const confirmMsg =
     `✅ Pedido enviado para *${businessName}*!\n\n` +
     `Vou te avisar assim que eles responderem. Se falar algo que eu não souber responder, repasso pra você na hora. 🍕`;
