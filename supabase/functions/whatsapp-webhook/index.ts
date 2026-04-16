@@ -7024,20 +7024,30 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           return log;
         }
 
-        // Repassa resposta do usuario pro estabelecimento
-        await sendText(businessPhone, text).catch(() => {});
-        // Volta sessao pra "active" para continuar capturando respostas da pizzaria
-        await supabase.from("order_sessions")
-          .update({ status: "active" } as any)
-          .eq("id", waitingSession.id)
-          .catch(() => {});
-        // Confirma pro usuario
-        await sendText(
-          sendPhone || replyTo,
-          `✅ Repassei para *${businessName}*: _"${text}"_`
-        ).catch(() => {});
-        log.push("order_user_relay_early");
-        return log;
+        // Verifica se a mensagem é um NOVO comando/intent (não é resposta pra pizzaria)
+        // Se for um novo pedido, lembrete, agenda, etc → deixa passar pro fluxo normal
+        const relayIntent = classifyIntent(text);
+        const isNewCommand = relayIntent !== "ai_chat" && relayIntent !== "greeting";
+        if (isNewCommand) {
+          // Não é resposta pra pizzaria — é um novo comando. Deixa passar pro classify normal.
+          // (a sessão continua waiting_user pra quando o usuário realmente responder)
+          log.push("order_relay_skipped_new_intent");
+        } else {
+          // Repassa resposta do usuario pro estabelecimento
+          await sendText(businessPhone, text).catch(() => {});
+          // Volta sessao pra "active" para continuar capturando respostas da pizzaria
+          await supabase.from("order_sessions")
+            .update({ status: "active" } as any)
+            .eq("id", waitingSession.id)
+            .catch(() => {});
+          // Confirma pro usuario
+          await sendText(
+            sendPhone || replyTo,
+            `✅ Repassei para *${businessName}*: _"${text}"_`
+          ).catch(() => {});
+          log.push("order_user_relay_early");
+          return log;
+        }
       }
 
       // Também checa se o usuário quer encerrar uma sessão ativa (não waiting)
