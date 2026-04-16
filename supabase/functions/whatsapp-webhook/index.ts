@@ -5008,7 +5008,7 @@ async function handleActiveOrderSession(
   // O usuario decide o que responder, e o Jarvis repassa de volta.
   await sendText(
     userPhone,
-    `📞 *${businessName}* disse:\n\n_"${text}"_\n\n💬 O que eu respondo? Manda aqui e eu repasso.\n\n_Se o pedido já chegou, manda *chegou* pra encerrar._`
+    `📞 *${businessName}* disse:\n\n_"${text}"_\n\n💬 O que eu respondo? Manda aqui e eu repasso.\n\n_Quando o pedido chegar, me avisa (ex: "já chegou", "recebi o pedido") que eu encerro._`
   );
 
   await supabase.from("order_sessions")
@@ -6804,7 +6804,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         const businessName  = waitingSession.business_name  as string;
 
         // Comandos de encerramento do pedido
-        const isClose = /^(encerra(r)?|chegou|finaliza(r)?|recebi|pedido chegou|pode encerrar|fechar pedido|entregue)\b/i.test(msgLow);
+        const isClose = /\b(encerra(r)?|finaliza(r)?|fechar?\s*(pedido|atendimento)?|pode\s*encerrar|ja\s*(chegou|recebi|entregaram|entregue)|pizza\s*chegou|pedido\s*chegou|ja\s*recebi|recebi\s*(o\s*)?(pedido|pizza|lanche|comida|entrega)|entregue|entregaram|pronto\s*pode\s*(encerrar|fechar|finalizar)|nao\s*precisa\s*mais|obrigad[oa]\s*pode\s*(encerrar|fechar|finalizar))\b/i.test(msgLow);
         if (isClose) {
           await supabase.from("order_sessions")
             .update({ status: "completed" } as any)
@@ -6847,7 +6847,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
       if (activeSession) {
         const msgLow = text.toLowerCase().trim();
-        const isClose = /^(encerra(r)?|chegou|finaliza(r)?|recebi|pedido chegou|pode encerrar|fechar pedido|entregue)\b/i.test(msgLow);
+        const isClose = /\b(encerra(r)?|finaliza(r)?|fechar?\s*(pedido|atendimento)?|pode\s*encerrar|ja\s*(chegou|recebi|entregaram|entregue)|pizza\s*chegou|pedido\s*chegou|ja\s*recebi|recebi\s*(o\s*)?(pedido|pizza|lanche|comida|entrega)|entregue|entregaram|pronto\s*pode\s*(encerrar|fechar|finalizar)|nao\s*precisa\s*mais|obrigad[oa]\s*pode\s*(encerrar|fechar|finalizar))\b/i.test(msgLow);
         if (isClose) {
           await supabase.from("order_sessions")
             .update({ status: "completed" } as any)
