@@ -4990,7 +4990,7 @@ Responda APENAS com a resposta curta para o estabelecimento (máximo 1 linha) OU
     const escalatedMsg = aiText.replace(/^ESCALAR:\s*/i, "").trim() || text;
     await sendText(
       userPhone,
-      `📞 *${businessName}* enviou:\n\n_"${escalatedMsg}"_\n\n💬 O que eu respondo? Manda aqui e eu repasso.`
+      `📞 *${businessName}* disse:\n\n_"${escalatedMsg}"_\n\n💬 O que eu respondo? Manda aqui e eu repasso.\n\n_Se o pedido já chegou, manda *chegou* pra encerrar._`
     ).catch(() => {});
     // Salva contexto na sessao para o proximo turno do usuario
     await supabase.from("order_sessions")
@@ -5000,10 +5000,10 @@ Responda APENAS com a resposta curta para o estabelecimento (máximo 1 linha) OU
   } else if (aiText.trim()) {
     // Jarvis responde autonomamente ao estabelecimento
     await sendText(businessPhone, aiText.trim()).catch(() => {});
-    // Notifica usuario do que aconteceu (silenciosamente, sem precisar responder)
+    // Notifica usuario do que aconteceu
     await sendText(
       userPhone,
-      `✅ *${businessName}* disse: _"${text}"_\n\nRespondi: _"${aiText.trim()}"_`
+      `✅ *${businessName}* disse: _"${text}"_\n\nRespondi: _"${aiText.trim()}"_\n\n_Quando o pedido chegar, manda *chegou* pra encerrar._`
     ).catch(() => {});
   }
 
@@ -5629,8 +5629,8 @@ async function executeOrder(
 
   await sendText(businessPhone, outgoing).catch(() => {});
 
-  // Cria order_session de 1h
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  // Cria order_session de 3h (pizza pode demorar + entrega)
+  const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
   await supabase.from("order_sessions").insert({
     user_id:            userId,
     user_phone:         userPhone,
@@ -6746,6 +6746,96 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
             .replace("{{agent_name}}", agentName);
           await sendText(sendPhone || replyTo, reply);
           log.push(`quick_reply: ${match.trigger_text}`);
+          return log;
+        }
+      }
+    }
+
+    // 4c. ORDER SESSION — intercepta respostas do usuario quando está no meio de um pedido ativo
+    // Roda ANTES do classify para evitar que "pode sim", "ok", "cheddar" sejam classificados como outro intent
+    {
+      const userRawDigits = (sendPhone || replyTo).replace(/\D/g, "");
+      const userPhone55   = userRawDigits.startsWith("55") ? userRawDigits : `55${userRawDigits}`;
+      const userPhoneNo55 = userRawDigits.startsWith("55") ? userRawDigits.slice(2) : userRawDigits;
+      const profilePhone  = profile.phone_number?.replace(/\D/g, "") ?? "";
+      const profilePhone55   = profilePhone.startsWith("55") ? profilePhone : `55${profilePhone}`;
+      const profilePhoneNo55 = profilePhone.startsWith("55") ? profilePhone.slice(2) : profilePhone;
+      const now = new Date().toISOString();
+
+      // Busca order_session com status waiting_user para QUALQUER variação do telefone do usuário
+      const phoneVariants = [userPhone55, userPhoneNo55, profilePhone55, profilePhoneNo55].filter(Boolean);
+      const orFilter = phoneVariants.map(p => `user_phone.eq.${p}`).join(",");
+
+      const { data: waitingSession } = await supabase
+        .from("order_sessions")
+        .select("*")
+        .or(orFilter)
+        .eq("status", "waiting_user")
+        .gt("expires_at", now)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (waitingSession) {
+        const msgLow = text.toLowerCase().trim();
+        const businessPhone = waitingSession.business_phone as string;
+        const businessName  = waitingSession.business_name  as string;
+
+        // Comandos de encerramento do pedido
+        const isClose = /^(encerra(r)?|chegou|finaliza(r)?|recebi|pedido chegou|pode encerrar|fechar pedido|entregue)\b/i.test(msgLow);
+        if (isClose) {
+          await supabase.from("order_sessions")
+            .update({ status: "completed" } as any)
+            .eq("id", waitingSession.id)
+            .catch(() => {});
+          await sendText(
+            sendPhone || replyTo,
+            `✅ Pedido na *${businessName}* encerrado! Bom apetite! 🍕😋`
+          ).catch(() => {});
+          log.push("order_session_closed_by_user");
+          return log;
+        }
+
+        // Repassa resposta do usuario pro estabelecimento
+        await sendText(businessPhone, text).catch(() => {});
+        // Volta sessao pra "active" para continuar capturando respostas da pizzaria
+        await supabase.from("order_sessions")
+          .update({ status: "active" } as any)
+          .eq("id", waitingSession.id)
+          .catch(() => {});
+        // Confirma pro usuario
+        await sendText(
+          sendPhone || replyTo,
+          `✅ Repassei para *${businessName}*: _"${text}"_`
+        ).catch(() => {});
+        log.push("order_user_relay_early");
+        return log;
+      }
+
+      // Também checa se o usuário quer encerrar uma sessão ativa (não waiting)
+      const { data: activeSession } = await supabase
+        .from("order_sessions")
+        .select("*")
+        .or(orFilter)
+        .eq("status", "active")
+        .gt("expires_at", now)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (activeSession) {
+        const msgLow = text.toLowerCase().trim();
+        const isClose = /^(encerra(r)?|chegou|finaliza(r)?|recebi|pedido chegou|pode encerrar|fechar pedido|entregue)\b/i.test(msgLow);
+        if (isClose) {
+          await supabase.from("order_sessions")
+            .update({ status: "completed" } as any)
+            .eq("id", activeSession.id)
+            .catch(() => {});
+          await sendText(
+            sendPhone || replyTo,
+            `✅ Pedido na *${activeSession.business_name}* encerrado! Bom apetite! 🍕😋`
+          ).catch(() => {});
+          log.push("order_session_closed_by_user");
           return log;
         }
       }
