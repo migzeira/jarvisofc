@@ -8,10 +8,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { lazy, Suspense } from "react";
 import logoIcon from "@/assets/logo_icon.webp";
 
-// Landing page carrega imediato (SEO + first paint)
-import Index from "./pages/Index";
-
-// Tudo mais carrega sob demanda (lazy loading)
+// Tudo carrega sob demanda (lazy loading)
 const Login = lazy(() => import("./pages/Login"));
 const Signup = lazy(() => import("./pages/Signup"));
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
@@ -60,7 +57,6 @@ const App = () => (
           <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/" element={<Login />} />
-              <Route path="/landing" element={<Index />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
               <Route path="/termos-de-uso" element={<TermosDeUso />} />
