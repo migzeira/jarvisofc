@@ -1084,7 +1084,9 @@ async function handleFinanceReport(
   } else if (/\bsemana\b/.test(m)) {
     // Início da semana atual em BRT
     const startOfWeek = new Date(now);
-    const dayOfWeek = parseInt(now.toLocaleDateString("en-US", { timeZone: userTz, weekday: "numeric" as any }), 10) || now.getDay();
+    const dayNameLong = now.toLocaleDateString("en-US", { timeZone: userTz, weekday: "long" });
+    const weekdayMap: Record<string, number> = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
+    const dayOfWeek = weekdayMap[dayNameLong] ?? now.getDay();
     startOfWeek.setDate(now.getDate() - dayOfWeek);
     startDate = startOfWeek.toLocaleDateString("sv-SE", { timeZone: userTz });
     periodLabel = "esta semana";
