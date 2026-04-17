@@ -243,7 +243,7 @@ export function classifyIntent(msg: string): Intent {
 
   // Criar agenda
   if (
-    /marca(r)?( na| uma| pra)? (agenda|reuniao|meeting|compromisso|consulta|evento|call|chamada)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso|medico|dentista|medica)|colocar na agenda|adicionar na agenda|criar evento|novo compromisso|nova reuniao|nova consulta|novo evento|agenda dia \d|vou ao (medico|dentista|hospital|especialista)|vou a (clinica|consulta)|preciso ir ao (medico|dentista|hospital)|marcar com o (medico|dentista|doutor|dra|dr)|marca (uma )?reuniao|agenda (uma )?consulta|tenho que ir ao/.test(
+    /marca(r)?( na| uma| pra)?(\s+(minha|sua|nossa))?\s+(agenda|reuniao|meeting|compromisso|consulta|evento|call|chamada)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso|medico|dentista|medica)|colocar na (minha )?agenda|adicionar na (minha )?agenda|criar evento|novo compromisso|nova reuniao|nova consulta|novo evento|agenda dia \d|vou ao (medico|dentista|hospital|especialista)|vou a (clinica|consulta)|preciso ir ao (medico|dentista|hospital)|marcar com o (medico|dentista|doutor|dra|dr)|marca (uma )?reuniao|agenda (uma )?consulta|tenho que ir ao/.test(
       m
     ) ||
     // Verbos imperativos de criação: "cria/crie/criar uma reuniao", "faz uma reuniao", "bota/coloca/poe na agenda"

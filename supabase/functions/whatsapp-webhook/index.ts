@@ -7377,7 +7377,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           console.error("[finance_report] Failed to send chart:", chartErr);
         }
       }
-    } else if (intent === "agenda_create") {
+    } else if (intent === "agenda_create" || session?.pending_action === "agenda_create") {
       const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
       responseText = result.response;
       pendingAction = result.pendingAction;
