@@ -3836,7 +3836,8 @@ serve(async (req) => {
   }
 
   // Processa e responde (síncrono para garantir execução)
-  const debugResult = await processMessage(replyTo, text.trim(), lid, messageId, pushName);
+  // Passa o quotedText se for reply — assim o Jarvis sabe a qual mensagem dele o usuário está respondendo
+  const debugResult = await processMessage(replyTo, text.trim(), lid, messageId, pushName, undefined, quotedText);
 
   return new Response(JSON.stringify({ ok: true, debug: debugResult }), {
     headers: { "Content-Type": "application/json" },
@@ -6563,7 +6564,7 @@ async function logMetric(
   } catch { /* silencioso — nao deve quebrar o fluxo principal */ }
 }
 
-async function processMessage(replyTo: string, text: string, lid: string | null = null, messageId?: string, pushName = "", _originalText?: string): Promise<unknown> {
+async function processMessage(replyTo: string, text: string, lid: string | null = null, messageId?: string, pushName = "", _originalText?: string, quotedText = ""): Promise<unknown> {
   const log: string[] = [];
   const t0 = Date.now(); // timing para bot_metrics
   let currentIntent = "";
@@ -7147,6 +7148,24 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     ) {
       intent = session.pending_action as Intent;
       currentIntent = intent;
+    }
+
+    // ── Reply WhatsApp: infere intent pelo contexto da mensagem respondida ──
+    // Se o usuário deu "reply" em uma mensagem específica do Jarvis, usamos o
+    // conteúdo dela pra direcionar a ação certa (ex: replied em "Confirma o pedido?"
+    // → força order_confirm; replied em "Hora do seu hábito" → habit_checkin)
+    if (quotedText && intent === "ai_chat") {
+      const qLow = quotedText.toLowerCase();
+      if (/confirma o pedido\?|vou agendar seu pedido|pedido agendado|responda \*sim\* para.*(enviar|agendar)/i.test(qLow)) {
+        intent = "order_confirm" as Intent;
+        currentIntent = intent;
+      } else if (/hora do seu habito|hora do hábito|habito:|hábito:/i.test(qLow)) {
+        intent = "habit_checkin" as Intent;
+        currentIntent = intent;
+      } else if (/confirma o evento|evento criado|reuni[ãa]o marcada|^⏰.*lembrete/i.test(qLow)) {
+        intent = "event_followup" as Intent;
+        currentIntent = intent;
+      }
     }
 
     // Módulos ativos por padrão quando sem configuração
@@ -7942,7 +7961,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       ].filter(Boolean).join(" ");
       const enrichedInstructions = [customInstructions, moduleContext].filter(Boolean).join("\n\n");
       const history = await getRecentHistory(profile.id);
-      responseText = await assistantChat(text, agentName, tone, language, userNickname, enrichedInstructions, history);
+      // Se o usuário deu reply em uma mensagem anterior do Jarvis, adiciona isso como contexto
+      const contextualText = quotedText
+        ? `[Usuário está respondendo a essa sua mensagem anterior: "${quotedText.slice(0, 300)}"]\n\nMensagem do usuário: ${text}`
+        : text;
+      responseText = await assistantChat(contextualText, agentName, tone, language, userNickname, enrichedInstructions, history);
     }
 
     // 7. Traduz resposta se necessário e envia
