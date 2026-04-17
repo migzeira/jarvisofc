@@ -7414,6 +7414,55 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = await handleAgendaDelete(profile.id, text);
     } else if (intent === "notes_list") {
       responseText = await handleNotesList(profile.id);
+    } else if (intent === "anota_ambiguous") {
+      // Usuário disse "anota" sem destino claro — pergunta qual
+      responseText =
+        `📝 Onde você quer que eu salve?\n\n` +
+        `*1.* 📌 Anotações (bloco de notas)\n` +
+        `*2.* 📅 Agenda (compromisso com data)\n` +
+        `*3.* ⏰ Lembrete (aviso futuro)\n\n` +
+        `Me diz o número ou fala _"nas anotações"_, _"na agenda"_ ou _"em lembretes"_ e depois o que quer salvar.`;
+      pendingAction = "anota_choose_destination";
+      pendingContext = {};
+    } else if (session?.pending_action === "anota_choose_destination") {
+      // Usuário respondeu qual destino e/ou já mandou o conteúdo
+      const msgLow = text.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const isNotes  = /^1$|\bnota|anotac|bloco de nota/.test(msgLow);
+      const isAgenda = /^2$|\bagenda|calendario|compromisso/.test(msgLow);
+      const isRem    = /^3$|\blembrete|avisa|lembra/.test(msgLow);
+
+      // Se a mensagem só diz o destino (curta), pede o conteúdo
+      const contentAfter = text.replace(/^\s*(1|2|3|nas? anotac\w+|na agenda|no calendario|em lembretes?|nos lembretes|o que|sobre|anota)\s*[:\-,]?\s*/i, "").trim();
+      const hasContent = contentAfter.length > 3 && contentAfter !== text.trim();
+
+      if (!isNotes && !isAgenda && !isRem) {
+        responseText = `Não entendi. Responda *1* (anotações), *2* (agenda) ou *3* (lembrete).`;
+        pendingAction = "anota_choose_destination";
+        pendingContext = {};
+      } else if (!hasContent) {
+        const destName = isNotes ? "anotações" : isAgenda ? "agenda" : "lembretes";
+        responseText = `Beleza! O que você quer que eu salve em *${destName}*?`;
+        pendingAction = isNotes ? "anota_await_content_notes" : isAgenda ? "anota_await_content_agenda" : "anota_await_content_reminder";
+        pendingContext = {};
+      } else if (isNotes) {
+        const r = await handleNotesSave(profile.id, sendPhone || replyTo, `anota: ${contentAfter}`, session, config, userTz);
+        responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
+      } else if (isAgenda) {
+        const r = await handleAgendaCreate(profile.id, sendPhone || replyTo, contentAfter, session, language, userNickname, userTz);
+        responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
+      } else {
+        const r = await handleReminderSet(profile.id, sendPhone || replyTo, contentAfter, session, language, userNickname, userTz);
+        responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
+      }
+    } else if (session?.pending_action === "anota_await_content_notes") {
+      const r = await handleNotesSave(profile.id, sendPhone || replyTo, `anota: ${text}`, session, config, userTz);
+      responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
+    } else if (session?.pending_action === "anota_await_content_agenda") {
+      const r = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
+      responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
+    } else if (session?.pending_action === "anota_await_content_reminder") {
+      const r = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
+      responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
     } else if (intent === "notes_save") {
       const notesResult = await handleNotesSave(profile.id, sendPhone || replyTo, text, session, config, userTz);
       responseText = notesResult.response;

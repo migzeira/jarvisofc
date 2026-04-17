@@ -50,6 +50,7 @@ export type Intent =
   | "reminder_delegate"
   | "finance_delete_confirm"
   | "agenda_edit_choose"
+  | "anota_ambiguous"
   | "ai_chat";
 
 export function classifyIntent(msg: string): Intent {
@@ -279,6 +280,29 @@ export function classifyIntent(msg: string): Intent {
     /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(aquela|essa|esta)\s+(nota|anotacao)/.test(m)
   )
     return "notes_delete";
+
+  // ── "anota" com destino EXPLÍCITO ──
+  // Se o usuário especifica onde salvar, direcionamos sem ambiguidade.
+  // "anota na agenda ..." → agenda_create
+  if (/\b(anota|anote|anotar|salva|registra)\b.{0,25}\b(na agenda|no calendario|em agenda|pra agenda)\b/.test(m)) {
+    return "agenda_create";
+  }
+  // "anota em lembretes ..." / "anota um lembrete ..." → reminder_set
+  if (/\b(anota|anote|anotar|salva|registra|cria|criar)\b.{0,25}\b(em lembrete|nos lembretes|no lembrete|um lembrete|lembrete de|de lembrete|nos meus lembretes)\b/.test(m)) {
+    return "reminder_set";
+  }
+  // "anota em anotações / bloco de notas / nas notas" — explicit note destination → notes_save (fall-through)
+  // (não retornamos aqui, deixa o regex de notes_save abaixo pegar normalmente)
+
+  // ── "anota" SOZINHO ou sem destino claro → ambíguo ──
+  // Casos: "anota", "anota aí", "anota isso", "anota pra mim" (sem destino após)
+  // Só dispara quando a mensagem é CURTA e não tem indicadores de destino
+  if (
+    /^(anota|anote|anotar)(\s+(ai|aí|isso|aqui|pra mim|por favor))?[\s!?.]*$/.test(m) &&
+    !/\b(agenda|calendario|lembrete|anotacao|anotacoes|notas|bloco de notas|reuniao|reunioes|consulta|consultas|evento|eventos|compromisso|compromissos)\b/.test(m)
+  ) {
+    return "anota_ambiguous";
+  }
 
   // Salvar nota — cobre formas diretas, casuais e indiretas
   if (
