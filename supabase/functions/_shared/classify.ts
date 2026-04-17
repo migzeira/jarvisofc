@@ -243,7 +243,7 @@ export function classifyIntent(msg: string): Intent {
 
   // Criar agenda
   if (
-    /marca(r)?( na| uma| pra)?(\s+(minha|sua|nossa))?\s+(agenda|reuniao|meeting|compromisso|consulta|evento|call|chamada)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso|medico|dentista|medica)|colocar na (minha )?agenda|adicionar na (minha )?agenda|criar evento|novo compromisso|nova reuniao|nova consulta|novo evento|agenda dia \d|vou ao (medico|dentista|hospital|especialista)|vou a (clinica|consulta)|preciso ir ao (medico|dentista|hospital)|marcar com o (medico|dentista|doutor|dra|dr)|marca (uma )?reuniao|agenda (uma )?consulta|tenho que ir ao/.test(
+    /marca(r)?( na| uma| pra)?(\s+(minha|sua|nossa))?\s+(agenda|reuniao|meeting|compromisso|consulta|evento|call|chamada)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso|medico|dentista|medica|aula|treino|academia|voo|entrevista|exame|evento|cirurgia|apresentacao|aniversario|palestra)|colocar na (minha )?agenda|adicionar na (minha )?agenda|criar evento|novo compromisso|nova reuniao|nova consulta|novo evento|agenda dia \d|vou ao (medico|dentista|hospital|especialista)|vou a (clinica|consulta)|preciso ir ao (medico|dentista|hospital)|marcar com o (medico|dentista|doutor|dra|dr)|marca (uma )?reuniao|agenda (uma )?consulta|tenho que ir ao/.test(
       m
     ) ||
     // Verbos imperativos de criação: "cria/crie/criar uma reuniao", "faz uma reuniao", "bota/coloca/poe na agenda"
@@ -251,9 +251,15 @@ export function classifyIntent(msg: string): Intent {
     // "quero/preciso/vou marcar|agendar|criar reuniao|evento..."
     /\b(quero|queria|preciso|vou|gostaria de|pode)\b.{0,20}\b(marcar|agendar|cria(r)?|criar|adiciona(r)?|colocar|incluir|salvar|registrar|montar|botar)\b.{0,30}\b(reuniao|meeting|call|chamada|compromisso|consulta|evento|agenda|sessao|appointment)?\b/.test(m) ||
     // Forma minimalista com horário: "reuniao 10h", "reuniao amanha 10h", "consulta sexta 14:30", "call 15h com fulano"
-    /^(reuniao|reunioes|meeting|call|chamada|compromisso|consulta|evento|sessao|appointment)\b.{0,60}(\d{1,2}\s*[h:]\d{0,2}|\d{1,2}\s*horas?|amanha|hoje|segunda|terca|quarta|quinta|sexta|sabado|domingo|dia \d|às |as |ao meio dia|ao meio-dia)/.test(m) ||
+    /^(reuniao|reunioes|meeting|call|chamada|compromisso|consulta|evento|sessao|appointment|aula|treino|academia|voo|entrevista|exame|cirurgia|apresentacao)\b.{0,60}(\d{1,2}\s*[h:]\d{0,2}|\d{1,2}\s*horas?|amanha|hoje|segunda|terca|quarta|quinta|sexta|sabado|domingo|dia \d|às |as |ao meio dia|ao meio-dia)/.test(m) ||
     // Mesma forma com horário ANTES: "10h reuniao", "amanha 10h reuniao com fulano"
-    /\b(\d{1,2}\s*[h:]\d{0,2}|\d{1,2}\s*horas?)\b.{0,30}\b(reuniao|meeting|call|chamada|compromisso|consulta|evento|sessao|appointment)\b/.test(m)
+    /\b(\d{1,2}\s*[h:]\d{0,2}|\d{1,2}\s*horas?)\b.{0,30}\b(reuniao|meeting|call|chamada|compromisso|consulta|evento|sessao|appointment|aula|treino|entrevista|exame|apresentacao)\b/.test(m) ||
+    // Grupo 2 — confirmação passada: "marquei/agendei X pra/para Y"
+    /\b(marquei|agendei)\b.{1,60}\b(pra|para|dia|amanha|hoje|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/.test(m) ||
+    // Grupo 3 — anúncio futuro: "vai ter X amanhã", "vou ter consulta sexta", "lembrei que tenho X"
+    /\bvai ter\b.{1,50}\b(reuniao|consulta|compromisso|evento|aula|treino|voo|entrevista|exame|cirurgia|apresentacao|call|meeting)\b/.test(m) ||
+    /\bvou ter\b.{1,50}\b(reuniao|consulta|compromisso|evento|aula|treino|voo|entrevista|exame|cirurgia|apresentacao|call|meeting)\b/.test(m) ||
+    /\blembrei que tenho\b.{1,60}\b(reuniao|consulta|compromisso|evento|aula|treino|voo|entrevista|exame|cirurgia|apresentacao|medico|dentista|call|meeting)\b/.test(m)
   )
     return "agenda_create";
 
