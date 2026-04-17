@@ -4965,6 +4965,37 @@ async function handleIncomingRelay(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Encerra uma order_session e CANCELA qualquer reminder de follow-up pendente
+ * pra evitar que o Jarvis pergunte "já chegou?" depois que o usuário já encerrou.
+ */
+async function closeOrderSession(
+  sessionId: string,
+  userId: string,
+  userPhone: string,
+): Promise<void> {
+  // 1. Marca a sessão como completed
+  try {
+    await supabase.from("order_sessions")
+      .update({ status: "completed" } as any)
+      .eq("id", sessionId);
+  } catch (e) {
+    console.error("[closeOrderSession] update session:", e);
+  }
+
+  // 2. Cancela reminders de follow-up pendentes desse usuário
+  try {
+    await supabase.from("reminders")
+      .update({ status: "cancelled" } as any)
+      .eq("user_id", userId)
+      .eq("whatsapp_number", userPhone)
+      .eq("source", "order_followup")
+      .eq("status", "pending");
+  } catch (e) {
+    console.error("[closeOrderSession] cancel followups:", e);
+  }
+}
+
+/**
  * Intercepta mensagens vindas de estabelecimentos durante uma sessao de pedido ativa.
  * Se encontrar sessao ativa → usa IA pra decidir se responde sozinho ou escala pro usuario.
  * Retorna true se tratou a mensagem, false para continuar fluxo normal.
@@ -7018,9 +7049,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         // Comandos de encerramento do pedido
         const isClose = /\b(encerra(r)?|finaliza(r)?|fechar?\s*(pedido|atendimento)?|pode\s*encerrar|ja\s*(chegou|recebi|entregaram|entregue)|pizza\s*chegou|pedido\s*chegou|ja\s*recebi|recebi\s*(o\s*)?(pedido|pizza|lanche|comida|entrega)|entregue|entregaram|pronto\s*pode\s*(encerrar|fechar|finalizar)|nao\s*precisa\s*mais|obrigad[oa]\s*pode\s*(encerrar|fechar|finalizar)|pedido\s*(concluido|finalizado|encerrado)|recebi\s*o?\s*(meu\s*)?(pedido|pizza|lanche)|ta\s*tudo\s*certo|tudo\s*certo\s*obrigad|valeu\s*pode\s*(encerrar|fechar|finalizar)|pode\s*fechar)\b/i.test(msgLow);
         if (isClose) {
-          await supabase.from("order_sessions")
-            .update({ status: "completed" } as any)
-            .eq("id", waitingSession.id).then(undefined, () => {});
+          await closeOrderSession(
+            waitingSession.id as string,
+            profile.id,
+            waitingSession.user_phone as string,
+          );
           await sendText(
             sendPhone || replyTo,
             `✅ Pedido na *${businessName}* encerrado! Bom apetite! 🍕😋`
@@ -7070,9 +7103,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         const msgLow = text.toLowerCase().trim();
         const isClose = /\b(encerra(r)?|finaliza(r)?|fechar?\s*(pedido|atendimento)?|pode\s*encerrar|ja\s*(chegou|recebi|entregaram|entregue)|pizza\s*chegou|pedido\s*chegou|ja\s*recebi|recebi\s*(o\s*)?(pedido|pizza|lanche|comida|entrega)|entregue|entregaram|pronto\s*pode\s*(encerrar|fechar|finalizar)|nao\s*precisa\s*mais|obrigad[oa]\s*pode\s*(encerrar|fechar|finalizar)|pedido\s*(concluido|finalizado|encerrado)|recebi\s*o?\s*(meu\s*)?(pedido|pizza|lanche)|ta\s*tudo\s*certo|tudo\s*certo\s*obrigad|valeu\s*pode\s*(encerrar|fechar|finalizar)|pode\s*fechar)\b/i.test(msgLow);
         if (isClose) {
-          await supabase.from("order_sessions")
-            .update({ status: "completed" } as any)
-            .eq("id", activeSession.id).then(undefined, () => {});
+          await closeOrderSession(
+            activeSession.id as string,
+            profile.id,
+            activeSession.user_phone as string,
+          );
           await sendText(
             sendPhone || replyTo,
             `✅ Pedido na *${activeSession.business_name}* encerrado! Bom apetite! 🍕😋`
