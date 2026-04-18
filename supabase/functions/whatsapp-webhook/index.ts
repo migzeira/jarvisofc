@@ -7662,13 +7662,9 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
             { id: "CONTACT_SAVE_NO",                        text: "❌ Não" },
           ]
         );
-        await supabase.from("whatsapp_sessions").upsert({
-          user_id: profile.id, phone_number: sessionId,
-          pending_action: "contact_save_confirm",
-          pending_context: { name: nameCS, phone: phoneCS },
-          last_activity: new Date().toISOString(),
-        }, { onConflict: "phone_number" });
-        responseText = ""; // botão já enviado
+        pendingAction  = "contact_save_confirm";
+        pendingContext = { name: nameCS, phone: phoneCS };
+        responseText   = ""; // botão já enviado
       }
 
     } else if (session?.pending_action === "order_disambiguate") {
