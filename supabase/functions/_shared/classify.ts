@@ -178,8 +178,8 @@ export function classifyIntent(msg: string): Intent {
   // Salvar contato digitado (nome + número no texto)
   // "salva o contato João 11999" / "adiciona o João: 11999" / "guarda o numero da Cibele 11999"
   if (
-    /\b(salva(r)?|adiciona(r)?|cadastra(r)?|guarda(r)?|registra(r)?)\s+(o\s+)?(contato|numero|telefone)\s+(d[oa]\s+)?[A-ZÁÉÍÓÚ]/i.test(m) ||
-    /\b(salva(r)?|adiciona(r)?)\s+(o\s+)?[A-ZÁÉÍÓÚ][a-záéíóú]+.{0,20}\d{8,}/i.test(m)
+    /\b(salva(r)?|adiciona(r)?|cadastra(r)?|guarda(r)?|registra(r)?|anota(r)?|coloca(r)?|armazena(r)?)\s+(o\s+|a\s+)?(contato|numero|telefone)\s+(d[oa]\s+|do\s+meu\s+|da\s+minha\s+)?[A-ZÁÉÍÓÚ]/i.test(m) ||
+    /\b(salva(r)?|adiciona(r)?|cadastra(r)?|guarda(r)?|registra(r)?|anota(r)?|coloca(r)?|armazena(r)?)\s+(o\s+)?[A-ZÁÉÍÓÚ][a-záéíóú]+.{0,20}\d{8,}/i.test(m)
   )
     return "contact_save";
 
