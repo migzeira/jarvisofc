@@ -46,6 +46,8 @@ export type Intent =
   | "contact_save_confirm"
   | "contact_save_type"
   | "contact_save_category"
+  | "contact_delete"
+  | "contact_delete_confirm"
   | "list_contacts"
   | "reminder_delegate"
   | "finance_delete_confirm"
@@ -425,6 +427,13 @@ export function classifyIntent(msg: string): Intent {
   // Buscar evento específico
   if (/voce lembra (do|da|de) (meu|minha)|lembra (do|da|de) (meu|minha)|tem (meu|minha) .{2,30} marcad|qual (e|é) (meu|minha)|quando (e|é) (meu|minha)|tem algo (marcado|agendado) (dia|no dia|para)/.test(m))
     return "agenda_lookup";
+
+  // Deletar contato — ANTES de agenda_delete para não conflitar
+  if (
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|tira(r)?)\s+(o\s+|a\s+)?(contato|numero|telefone)\s+/i.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|tira(r)?)\s+(o\s+contato|a\s+entrada)\s+(d[oa]\s+)?[a-z]/i.test(m)
+  )
+    return "contact_delete";
 
   // Cancelar/excluir evento direto (sem edição)
   if (

@@ -7880,6 +7880,61 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         responseText = `📇 *Seus contatos salvos (${allContacts.length}):*\n\n${lines}\n\nPara enviar mensagem: _"Manda pra [Nome] dizendo..."_`;
       }
 
+    } else if (intent === "contact_delete" || session?.pending_action === "contact_delete_confirm") {
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+
+      // ── Confirmação de deleção (sim/não após listar) ──
+      if (session?.pending_action === "contact_delete_confirm") {
+        const contactId = ctx.contact_id as string | undefined;
+        const contactName = ctx.contact_name as string | undefined;
+        const isYes = /^(1|sim|s|yes|apaga|deleta|remove|confirma|ok)\b/i.test(text.trim());
+        const isNo  = /^(2|nao|não|n|cancela|cancelar)\b/i.test(text.trim());
+        if (isYes && contactId) {
+          const { error: delErr } = await supabase.from("contacts").delete().eq("id", contactId).eq("user_id", profile.id);
+          if (delErr) {
+            responseText = "❌ Erro ao apagar o contato. Tenta de novo.";
+          } else {
+            responseText = `✅ Contato *${contactName}* apagado com sucesso!`;
+          }
+        } else if (isNo) {
+          responseText = `Ok, contato *${contactName}* mantido. 👍`;
+        } else {
+          responseText = `Confirma apagar *${contactName}*?\n\n*1.* ✅ Sim, apaga\n*2.* ❌ Não, cancela`;
+          pendingAction  = "contact_delete_confirm";
+          pendingContext = ctx;
+        }
+
+      // ── Busca inicial por nome ──
+      } else {
+        const mLow = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const keyword = mLow
+          .replace(/\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|tira(r)?|o|a|contato|numero|telefone|d[oa]|meu|minha)\b/g, " ")
+          .replace(/\s+/g, " ").trim();
+
+        const STOP_CD = new Set(["de","da","do","um","uma","que","pra","pro","para","com","sem","por"]);
+        const keyWords = keyword.split(/\s+/).filter(w => w.length > 1 && !STOP_CD.has(w));
+
+        const { data: allC } = await supabase
+          .from("contacts").select("id, name, phone").eq("user_id", profile.id).order("name");
+
+        const matches = (allC ?? []).filter((c: any) => {
+          const hay = (c.name ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          return keyWords.length > 0 && keyWords.every(w => hay.includes(w));
+        });
+
+        if (matches.length === 0) {
+          responseText = `🔍 Não encontrei nenhum contato com "${keyword}".\n\nDiga _"Liste meus contatos"_ pra ver todos.`;
+        } else if (matches.length === 1) {
+          const c: any = matches[0];
+          responseText = `Quer mesmo apagar o contato *${c.name}* (${c.phone})?\n\n*1.* ✅ Sim, apaga\n*2.* ❌ Não, cancela`;
+          pendingAction  = "contact_delete_confirm";
+          pendingContext = { contact_id: c.id, contact_name: c.name };
+        } else {
+          const lines = matches.slice(0, 5).map((c: any, i: number) => `*${i+1}.* ${c.name} — ${c.phone}`).join("\n");
+          responseText = `🔍 Encontrei *${matches.length}* contatos com "${keyword}":\n\n${lines}\n\nDiga o nome exato que quer apagar.`;
+        }
+      }
+
     } else if (intent === "order_on_behalf") {
       const orderResult = await handleOrderOnBehalf(
         profile.id, sendPhone || replyTo, text, agentName, userNickname, pushName, userTz
