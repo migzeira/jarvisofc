@@ -3429,7 +3429,7 @@ async function handleNotesSave(
   const analysis = await analyzeNoteContent(message);
 
   // Comandos diretos de "guarda" → salva como nota imediatamente, sem perguntar sobre lembrete
-  if (/^(guarda(r)?|bota\s+ai|grava(r)?)\s*[:!,\s]/i.test(message)) {
+  if (/^(guarda(r)?|salva(r)?|anota(r)?|registra(r)?|escreve(r)?|coloca(r)?|bota(\s+ai)?|grava(r)?|fixa(r)?|memoriza(r)?|nota|copia(r)?)\s*[:!,\s]/i.test(message)) {
     const { error: ge } = await supabase.from("notes").insert({
       user_id: userId,
       title: analysis.suggestedTitle || null,
