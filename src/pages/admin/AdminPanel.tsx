@@ -45,6 +45,28 @@ function exportCSV(data: any[], filename: string) {
   URL.revokeObjectURL(url);
 }
 
+// Busca todas as páginas de uma query Supabase para export. A UI pagina em 25,
+// mas o export precisa do dataset completo (filtros incluídos). builderFactory
+// DEVE retornar uma query NOVA a cada chamada (sem .range() aplicado), porque
+// .range() muta o builder. Limite defensivo de 50k linhas — muito além do
+// realista pro estágio atual; acima disso migrar pra edge function.
+const EXPORT_PAGE_SIZE = 1000;
+const EXPORT_MAX_ROWS = 50000;
+async function fetchAllRows(builderFactory: () => any): Promise<any[]> {
+  const all: any[] = [];
+  let from = 0;
+  while (from < EXPORT_MAX_ROWS) {
+    const q = builderFactory();
+    const { data, error } = await q.range(from, from + EXPORT_PAGE_SIZE - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < EXPORT_PAGE_SIZE) break;
+    from += EXPORT_PAGE_SIZE;
+  }
+  return all;
+}
+
 export default function AdminPanel() {
   const { user, session, isAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState("pending");
@@ -454,6 +476,63 @@ export default function AdminPanel() {
     }
     if (data) { setKirvanoEvents(data); setKirvanoCount(count || 0); }
   };
+
+  // Export "tudo" com paginação por trás — fetcha todas as páginas do Supabase
+  // respeitando os filtros ativos (data/busca/contexto), agrega, e passa pro
+  // exportCSV. Substitui os exports antigos que só exportavam a página atual
+  // (25 linhas). Loading toast + row count no sucesso.
+  const handleExportAll = async (label: string, builderFactory: () => any, filename: string) => {
+    const toastId = toast.loading(`Exportando ${label}...`);
+    try {
+      const rows = await fetchAllRows(builderFactory);
+      if (!rows.length) {
+        toast.error(`Nenhum dado de ${label} pra exportar`, { id: toastId });
+        return;
+      }
+      exportCSV(rows, filename);
+      toast.success(`${label}: ${rows.length.toLocaleString("pt-BR")} linhas exportadas`, { id: toastId });
+    } catch (e) {
+      console.error(`[admin] export ${label} error:`, e);
+      toast.error(`Erro ao exportar ${label}`, { id: toastId });
+    }
+  };
+
+  // Builders de query que replicam as condições de cada loadX SEM .range() —
+  // .order() é aplicado pra output consistente. fetchAllRows aplica .range()
+  // por página internamente.
+  const buildUsersExportQuery = () => {
+    const search = debouncedUserSearch.replace(/[%,]/g, "");
+    let q = supabase
+      .from("profiles")
+      .select("id, display_name, phone_number, whatsapp_lid, created_at, account_status");
+    if (search) q = q.or(`display_name.ilike.%${search}%,phone_number.ilike.%${search}%`);
+    return q.order("created_at", { ascending: false });
+  };
+
+  const buildConversationsExportQuery = () => {
+    let q = supabase
+      .from("conversations")
+      .select("id, user_id, contact_name, whatsapp_lid, phone_number, last_message_at, started_at, message_count");
+    const df = getDateFilter(dateRange);
+    if (df) q = q.gte("started_at", df);
+    if (debouncedConvsSearch) {
+      const safe = debouncedConvsSearch.replace(/[%,]/g, "");
+      if (safe) q = q.or(`contact_name.ilike.%${safe}%,phone_number.ilike.%${safe}%`);
+    }
+    return q.order("last_message_at", { ascending: false });
+  };
+
+  const buildPaymentsExportQuery = () =>
+    supabase.from("kirvano_payments").select("*").order("created_at", { ascending: false });
+
+  const buildErrorLogsExportQuery = () => {
+    let q = supabase.from("error_logs").select("*").order("created_at", { ascending: false });
+    if (errContextFilter !== "all") q = q.eq("context", errContextFilter);
+    return q;
+  };
+
+  const buildKirvanoExportQuery = () =>
+    (supabase.from("kirvano_events" as any) as any).select("*").order("created_at", { ascending: false });
 
   // Ações para eventos Kirvano sem match — helpers defensivos, sem mutar backend.
   const copyToClipboard = async (text: string, label: string) => {
@@ -978,7 +1057,7 @@ export default function AdminPanel() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Buscar por nome ou telefone..." value={userSearch} onChange={e => setUserSearch(e.target.value)} className="pl-9" />
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => exportCSV(filteredProfiles, "usuarios.csv")}>
+                  <Button size="sm" variant="outline" onClick={() => handleExportAll("usuários", buildUsersExportQuery, "usuarios.csv")}>
                     <Download className="h-4 w-4 mr-1" /> CSV
                   </Button>
                 </div>
@@ -1033,7 +1112,7 @@ export default function AdminPanel() {
                       className="pl-8 h-9"
                     />
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => exportCSV(conversations, "conversas.csv")}>
+                  <Button size="sm" variant="outline" onClick={() => handleExportAll("conversas", buildConversationsExportQuery, "conversas.csv")}>
                     <Download className="h-4 w-4 mr-1" /> CSV
                   </Button>
                 </div>
@@ -1092,7 +1171,7 @@ export default function AdminPanel() {
                   <CardTitle className="text-base flex items-center gap-2">
                     <CreditCard className="h-5 w-5 text-emerald-400" /> Pagamentos Kirvano
                   </CardTitle>
-                  <Button size="sm" variant="outline" onClick={() => exportCSV(payments, "pagamentos.csv")}>
+                  <Button size="sm" variant="outline" onClick={() => handleExportAll("pagamentos", buildPaymentsExportQuery, "pagamentos.csv")}>
                     <Download className="h-4 w-4 mr-1" /> CSV
                   </Button>
                 </div>
@@ -1137,7 +1216,7 @@ export default function AdminPanel() {
                       <SelectItem value="send-report">Send Report</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button size="sm" variant="outline" onClick={() => exportCSV(errorLogs, "erros.csv")}>
+                  <Button size="sm" variant="outline" onClick={() => handleExportAll("erros", buildErrorLogsExportQuery, "erros.csv")}>
                     <Download className="h-4 w-4 mr-1" /> CSV
                   </Button>
                 </div>
@@ -1403,7 +1482,7 @@ export default function AdminPanel() {
                       Histórico de Eventos Kirvano
                       <Badge variant="secondary">{kirvanoCount}</Badge>
                     </CardTitle>
-                    <Button size="sm" variant="outline" onClick={() => exportCSV(kirvanoEvents, "kirvano-eventos.csv")}>
+                    <Button size="sm" variant="outline" onClick={() => handleExportAll("eventos Kirvano", buildKirvanoExportQuery, "kirvano-eventos.csv")}>
                       <Download className="h-4 w-4 mr-1" /> CSV
                     </Button>
                   </div>
