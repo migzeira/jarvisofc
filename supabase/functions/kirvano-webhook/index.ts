@@ -212,6 +212,8 @@ async function handleActivate(
     access_until: null,
     access_source: "kirvano",
     subscription_cancelled_at: null, // ativa = limpa qualquer cancelamento anterior
+    renewal_reminder_sent_at: null,  // permite novo ciclo de lembretes
+    suspension_notice_sent_at: null,
     ...(subscriptionId && { kirvano_subscription_id: subscriptionId }),
   } as any).eq("id", userId);
 

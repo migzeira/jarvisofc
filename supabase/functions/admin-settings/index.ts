@@ -28,6 +28,9 @@ const ALLOWED_KEYS = [
   "notion_client_id",
   "notion_client_secret",
   "dashboard_url",
+  "renewal_link",
+  "renewal_reminders_enabled",
+  "overdue_grace_days",
 ];
 
 serve(async (req) => {

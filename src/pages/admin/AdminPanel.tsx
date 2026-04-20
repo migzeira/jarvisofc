@@ -889,6 +889,24 @@ export default function AdminPanel() {
           return "URL inválida (ex: https://app.heyjarvis.com.br)";
         }
       }
+      case "renewal_link": {
+        try {
+          const u = new URL(v);
+          if (!/^https?:$/.test(u.protocol)) return "Use http:// ou https://";
+          return null;
+        } catch {
+          return "URL inválida (ex: https://pay.kirvano.com/abc123)";
+        }
+      }
+      case "renewal_reminders_enabled": {
+        if (!/^(true|false)$/i.test(v)) return "Use 'true' ou 'false'";
+        return null;
+      }
+      case "overdue_grace_days": {
+        const n = parseInt(v, 10);
+        if (isNaN(n) || n < 1 || n > 90) return "Número entre 1 e 90";
+        return null;
+      }
       default:
         return null;
     }
@@ -901,6 +919,9 @@ export default function AdminPanel() {
     { key: "notion_client_id", label: "Notion Client ID", type: "text" },
     { key: "notion_client_secret", label: "Notion Client Secret", type: "password" },
     { key: "dashboard_url", label: "URL do Dashboard", type: "text" },
+    { key: "renewal_link", label: "Link de Renovação (Kirvano)", type: "text", hint: "URL do checkout enviada nos lembretes de vencimento" },
+    { key: "renewal_reminders_enabled", label: "Lembretes de Renovação Ativos", type: "text", hint: "'true' envia lembretes automáticos; 'false' desativa" },
+    { key: "overdue_grace_days", label: "Dias de Tolerância (OVERDUE)", type: "text", hint: "Grace period quando Kirvano sinaliza atraso. Default: 7" },
   ];
 
   // Calcula erros por campo e se o form é submetível.
