@@ -464,8 +464,19 @@ export default function AdminPanel() {
     if (!session) return;
     setSavingSettings(true);
     const body: Record<string, string> = {};
-    Object.entries(settingsForm).forEach(([k, v]) => { if (v) body[k] = v; });
+    Object.entries(settingsForm).forEach(([k, v]) => { if (v) body[k] = v.trim(); });
     if (Object.keys(body).length === 0) { toast.error("Preencha pelo menos um campo"); setSavingSettings(false); return; }
+    // Revalida antes de enviar — defesa em profundidade caso o botão disabled
+    // escape (ex: submit via Enter). Não envia nada se algum campo preenchido
+    // estiver inválido.
+    for (const [k, v] of Object.entries(body)) {
+      const err = validateSetting(k, v);
+      if (err) {
+        toast.error(`${k}: ${err}`);
+        setSavingSettings(false);
+        return;
+      }
+    }
     try {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-settings`, {
         method: "POST",
@@ -686,6 +697,51 @@ export default function AdminPanel() {
     );
   }
 
+  // Validadores por campo — retornam mensagem de erro ou null. Só são aplicados
+  // quando o valor NÃO é vazio: campos em branco continuam significando "manter
+  // valor atual", mantendo o comportamento anterior do saveSettings.
+  const validateSetting = (key: string, value: string): string | null => {
+    const v = value.trim();
+    if (!v) return null;
+    switch (key) {
+      case "whatsapp_number": {
+        const digits = v.replace(/\D/g, "");
+        if (digits.length < 10 || digits.length > 15) return "Deve ter entre 10 e 15 dígitos (ex: 5511999999999)";
+        if (!/^[\d+\s()-]+$/.test(v)) return "Use apenas dígitos (com ou sem + no início)";
+        return null;
+      }
+      case "google_client_id": {
+        if (!/\.apps\.googleusercontent\.com$/.test(v)) return "Deve terminar com .apps.googleusercontent.com";
+        return null;
+      }
+      case "google_client_secret": {
+        if (v.length < 20) return "Secret muito curto (mínimo 20 caracteres)";
+        return null;
+      }
+      case "notion_client_id": {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) {
+          return "Formato UUID esperado (ex: 12345678-1234-1234-1234-123456789012)";
+        }
+        return null;
+      }
+      case "notion_client_secret": {
+        if (v.length < 20) return "Secret muito curto (mínimo 20 caracteres)";
+        return null;
+      }
+      case "dashboard_url": {
+        try {
+          const u = new URL(v);
+          if (!/^https?:$/.test(u.protocol)) return "Use http:// ou https://";
+          return null;
+        } catch {
+          return "URL inválida (ex: https://app.heyjarvis.com.br)";
+        }
+      }
+      default:
+        return null;
+    }
+  };
+
   const SETTINGS_FIELDS = [
     { key: "whatsapp_number", label: "Número WhatsApp da IA", type: "text", hint: "Ex: 5511999999999 — número que os usuários devem chamar" },
     { key: "google_client_id", label: "Google Client ID", type: "text" },
@@ -694,6 +750,12 @@ export default function AdminPanel() {
     { key: "notion_client_secret", label: "Notion Client Secret", type: "password" },
     { key: "dashboard_url", label: "URL do Dashboard", type: "text" },
   ];
+
+  // Calcula erros por campo e se o form é submetível.
+  const settingsErrors = Object.fromEntries(
+    SETTINGS_FIELDS.map(f => [f.key, validateSetting(f.key, settingsForm[f.key] || "")])
+  ) as Record<string, string | null>;
+  const hasSettingsErrors = Object.values(settingsErrors).some(e => e !== null);
 
   return (
     <div className="min-h-screen bg-background">
@@ -1348,6 +1410,7 @@ export default function AdminPanel() {
               <CardContent className="space-y-6">
                 {SETTINGS_FIELDS.map(f => {
                   const s = settings[f.key];
+                  const err = settingsErrors[f.key];
                   return (
                     <div key={f.key} className="space-y-1.5">
                       <div className="flex items-center gap-2">
@@ -1361,13 +1424,16 @@ export default function AdminPanel() {
                         placeholder={s?.configured ? `${s.value} — deixe vazio para manter` : `Insira ${f.label}`}
                         value={settingsForm[f.key] || ""}
                         onChange={e => setSettingsForm(prev => ({ ...prev, [f.key]: e.target.value }))}
+                        className={err ? "border-red-500 focus-visible:ring-red-500" : ""}
+                        aria-invalid={!!err}
                       />
-                      {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
+                      {err && <p className="text-xs text-red-400">{err}</p>}
+                      {f.hint && !err && <p className="text-xs text-muted-foreground">{f.hint}</p>}
                     </div>
                   );
                 })}
-                <Button onClick={saveSettings} disabled={savingSettings} className="bg-purple-600 hover:bg-purple-700">
-                  {savingSettings ? "Salvando..." : "Salvar Configurações"}
+                <Button onClick={saveSettings} disabled={savingSettings || hasSettingsErrors} className="bg-purple-600 hover:bg-purple-700">
+                  {savingSettings ? "Salvando..." : hasSettingsErrors ? "Corrija os erros acima" : "Salvar Configurações"}
                 </Button>
               </CardContent>
             </Card>
