@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1171,8 +1171,8 @@ export default function AdminPanel() {
                       </TableHeader>
                       <TableBody>
                         {kirvanoEvents.map((ev: any) => (
-                          <>
-                            <TableRow key={ev.id} className={!ev.matched_user_id ? "bg-orange-500/5" : ""}>
+                          <React.Fragment key={ev.id}>
+                            <TableRow className={!ev.matched_user_id ? "bg-orange-500/5" : ""}>
                               <TableCell className="text-xs whitespace-nowrap text-muted-foreground">{formatDate(ev.created_at)}</TableCell>
                               <TableCell>
                                 <div className="space-y-0.5">
@@ -1200,7 +1200,7 @@ export default function AdminPanel() {
                               </TableCell>
                             </TableRow>
                             {kirvanoExpandedId === ev.id && (
-                              <TableRow key={`${ev.id}-detail`}>
+                              <TableRow>
                                 <TableCell colSpan={7} className="bg-muted/20 p-0">
                                   <div className="p-4 space-y-2">
                                     <p className="text-xs font-medium text-muted-foreground">Raw Payload completo:</p>
@@ -1211,7 +1211,7 @@ export default function AdminPanel() {
                                 </TableCell>
                               </TableRow>
                             )}
-                          </>
+                          </React.Fragment>
                         ))}
                       </TableBody>
                     </Table>
