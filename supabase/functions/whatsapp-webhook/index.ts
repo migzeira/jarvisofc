@@ -368,7 +368,7 @@ Frase: "${message}"`;
     .select("id")
     .single();
 
-  if (error) {
+  if (error || !data) {
     console.error("Habit create error:", error);
     return "Erro ao criar habito. Tente novamente.";
   }
