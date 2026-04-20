@@ -57,6 +57,10 @@ export default function AdminPanel() {
     totalRevenue: 0, approvedPayments: 0, errorCount: 0,
   });
   const [profiles, setProfiles] = useState<any[]>([]);
+  // Lista dedicada pra aba "Sem plano". Antes a gente filtrava `profiles` (que
+  // é paginado em 25), então pendentes em páginas diferentes ficavam invisíveis.
+  // Agora uma query dedicada busca TODOS os pending (limit defensivo de 500).
+  const [pendingProfilesList, setPendingProfilesList] = useState<any[]>([]);
   const [conversations, setConversations] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [errorLogs, setErrorLogs] = useState<any[]>([]);
@@ -132,7 +136,7 @@ export default function AdminPanel() {
   const loadData = async () => {
     setLoading(true);
     await Promise.all([
-      loadProfiles(), loadConversations(), loadSettings(), loadPayments(), loadErrorLogs(),
+      loadProfiles(), loadPendingProfiles(), loadConversations(), loadSettings(), loadPayments(), loadErrorLogs(),
       loadKirvanoEvents(), loadAnalytics(),
     ]);
     setLastRefresh(new Date());
@@ -186,6 +190,24 @@ export default function AdminPanel() {
       }
       setDailyUsers(days);
     }
+  };
+
+  // Carrega TODOS os usuários com account_status='pending' em uma única query
+  // — fonte exclusiva da aba "Sem plano". Não mexe em `profiles` (aba Usuários)
+  // nem em `stats` (cards do topo). Limit de 500 é defensivo: fila de pendentes
+  // na prática nunca cresce tanto porque o admin ativa rapidamente.
+  const loadPendingProfiles = async () => {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, display_name, phone_number, plan, created_at, account_status")
+      .eq("account_status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(500) as any;
+    if (error) {
+      console.error("[admin] loadPendingProfiles error:", error);
+      return;
+    }
+    setPendingProfilesList(data ?? []);
   };
 
   const loadConversations = async () => {
@@ -388,7 +410,9 @@ export default function AdminPanel() {
     return matchSearch;
   });
 
-  const pendingProfiles = profiles.filter(p => p.account_status === "pending");
+  // NOTA: antes usava `profiles.filter(p => account_status === "pending")`, mas
+  // `profiles` é paginado em 25, então pendentes de páginas > 1 sumiam.
+  // Agora a aba "Sem plano" lê diretamente de `pendingProfilesList` (query dedicada).
 
   const getUserName = (userId: string) => {
     const p = profiles.find(pr => pr.id === userId);
@@ -583,7 +607,7 @@ export default function AdminPanel() {
                 </p>
               </CardHeader>
               <CardContent>
-                {pendingProfiles.length === 0 ? (
+                {pendingProfilesList.length === 0 ? (
                   <p className="text-center text-muted-foreground py-8">Nenhuma conta sem plano no momento.</p>
                 ) : (
                   <Table>
@@ -591,7 +615,7 @@ export default function AdminPanel() {
                       <TableHead>Nome</TableHead><TableHead>Telefone</TableHead><TableHead>Plano</TableHead><TableHead>Cadastro</TableHead><TableHead>Ações</TableHead>
                     </TableRow></TableHeader>
                     <TableBody>
-                      {pendingProfiles.map(p => (
+                      {pendingProfilesList.map(p => (
                         <TableRow key={p.id}>
                           <TableCell className="font-medium">{p.display_name || "—"}</TableCell>
                           <TableCell className="text-sm font-mono">{p.phone_number || <span className="text-muted-foreground italic">Não informado</span>}</TableCell>
@@ -1333,7 +1357,7 @@ export default function AdminPanel() {
           userName={selectedUserName}
           open={!!selectedUserId}
           onClose={() => setSelectedUserId(null)}
-          onProfileUpdate={loadProfiles}
+          onProfileUpdate={() => { loadProfiles(); loadPendingProfiles(); }}
         />
       )}
     </div>
