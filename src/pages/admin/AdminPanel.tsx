@@ -213,18 +213,40 @@ export default function AdminPanel() {
           whatsappConnected: waCount || 0,
         }));
 
-        // Sparkline: users per day last 7 days
-        const days: number[] = [];
-        for (let i = 6; i >= 0; i--) {
-          const dayStart = subDays(new Date(), i);
-          dayStart.setHours(0, 0, 0, 0);
-          const dayEnd = new Date(dayStart);
-          dayEnd.setHours(23, 59, 59, 999);
-          const { count: dc } = await supabase.from("profiles").select("id", { count: "exact", head: true })
-            .gte("created_at", dayStart.toISOString()).lte("created_at", dayEnd.toISOString()) as any;
-          days.push(dc || 0);
+        // Sparkline: users per day last 7 days.
+        // Antes: loop com 7 queries SEQUENCIAIS (await em cada iteração),
+        // ~2-3s de latência extra só pra desenhar 7 barrinhas. Agora: 1 query
+        // que traz os created_at dos últimos 7 dias e agrupa no JS. Limit
+        // defensivo de 5000 é muito além do realista pro estágio atual —
+        // quando passar, migrar pra RPC com GROUP BY DATE_TRUNC.
+        const windowStart = subDays(new Date(), 6);
+        windowStart.setHours(0, 0, 0, 0);
+        const { data: recentProfiles, error: sparkErr } = await supabase
+          .from("profiles")
+          .select("created_at")
+          .gte("created_at", windowStart.toISOString())
+          .limit(5000) as any;
+
+        if (sparkErr) {
+          console.error("[admin] sparkline query error:", sparkErr);
+          // Fail-safe: mantém dailyUsers como estava — sparkline não regride
+          // visualmente em caso de erro transitório
+        } else {
+          // Chave YYYY-MM-DD em timezone LOCAL — mesmo critério dos
+          // setHours(0,0,0,0) antigos, pra o gráfico bater com "hoje" do admin
+          const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          const counts: Record<string, number> = {};
+          (recentProfiles ?? []).forEach((p: any) => {
+            const k = dayKey(new Date(p.created_at));
+            counts[k] = (counts[k] || 0) + 1;
+          });
+          const days: number[] = [];
+          for (let i = 6; i >= 0; i--) {
+            const d = subDays(new Date(), i);
+            days.push(counts[dayKey(d)] || 0);
+          }
+          setDailyUsers(days);
         }
-        setDailyUsers(days);
       }
     }
   };
