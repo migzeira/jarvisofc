@@ -296,7 +296,12 @@ export default function AdminPanel() {
         q = q.or(`contact_name.ilike.%${safe}%,phone_number.ilike.%${safe}%`);
       }
     }
-    const { data, count } = await q.range(convsPage * PAGE_SIZE, (convsPage + 1) * PAGE_SIZE - 1) as any;
+    const { data, count, error } = await q.range(convsPage * PAGE_SIZE, (convsPage + 1) * PAGE_SIZE - 1) as any;
+    if (error) {
+      console.error("[admin] loadConversations error:", error);
+      toast.error("Erro ao carregar conversas");
+      return;
+    }
     if (data) {
       setConversations(data);
       setConvCount(count || 0);
@@ -308,11 +313,15 @@ export default function AdminPanel() {
         (data as any[]).map(c => c.user_id).filter((id: any) => id && !userNamesMap[id])
       ));
       if (userIds.length > 0) {
-        const { data: profs } = await supabase
+        const { data: profs, error: profsError } = await supabase
           .from("profiles")
           .select("id, display_name")
           .in("id", userIds) as any;
-        if (profs && profs.length > 0) {
+        // Falha na resolução de nomes não derruba a tabela — só loga.
+        // getUserName já tem fallback (mostra "—" ou id truncado).
+        if (profsError) {
+          console.warn("[admin] loadConversations profiles lookup warn:", profsError);
+        } else if (profs && profs.length > 0) {
           setUserNamesMap(prev => {
             const next = { ...prev };
             (profs as any[]).forEach(p => { next[p.id] = p.display_name || "—"; });
@@ -324,10 +333,15 @@ export default function AdminPanel() {
   };
 
   const loadPayments = async () => {
-    const { data, count } = await supabase.from("kirvano_payments")
+    const { data, count, error } = await supabase.from("kirvano_payments")
       .select("*", { count: "exact" })
       .order("created_at", { ascending: false })
       .range(payPage * PAGE_SIZE, (payPage + 1) * PAGE_SIZE - 1) as any;
+    if (error) {
+      console.error("[admin] loadPayments error:", error);
+      toast.error("Erro ao carregar pagamentos");
+      return;
+    }
     if (data) {
       setPayments(data);
       setPayCount(count || 0);
