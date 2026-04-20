@@ -89,6 +89,9 @@ export default function AdminPanel() {
 
   // Filters
   const [userSearch, setUserSearch] = useState("");
+  // Debounced search — usado na query server-side pra não disparar request
+  // a cada tecla. Atualizado 300ms depois do usuário parar de digitar.
+  const [debouncedUserSearch, setDebouncedUserSearch] = useState("");
   const [dateRange, setDateRange] = useState<DateRange>("all");
   const [errContextFilter, setErrContextFilter] = useState("all");
 
@@ -117,8 +120,21 @@ export default function AdminPanel() {
   useEffect(() => { if (!loading && isAdmin) loadConversations(); }, [convsPage, dateRange]);
   useEffect(() => { if (!loading && isAdmin) loadPayments(); }, [payPage]);
   useEffect(() => { if (!loading && isAdmin) loadErrorLogs(); }, [errPage, errContextFilter]);
-  useEffect(() => { if (!loading && isAdmin) loadProfiles(); }, [usersPage]);
+  useEffect(() => { if (!loading && isAdmin) loadProfiles(); }, [usersPage, debouncedUserSearch]);
   useEffect(() => { if (!loading && isAdmin) loadKirvanoEvents(); }, [kirvanoPage]);
+
+  // Debounce do input de busca — 300ms depois que o usuário para de digitar,
+  // propaga pra debouncedUserSearch (que dispara o loadProfiles via useEffect acima)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedUserSearch(userSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [userSearch]);
+
+  // Quando a busca muda, volta pra página 1 — evita ficar em página 3 com 0 resultados
+  useEffect(() => {
+    if (usersPage !== 0) setUsersPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedUserSearch]);
 
   // Live refresh para Kirvano — atualiza a cada 3s enquanto a aba estiver ativa
   useEffect(() => {
@@ -151,11 +167,23 @@ export default function AdminPanel() {
   };
 
   const loadProfiles = async () => {
-    const { data, count, error } = await supabase
+    // Sanitiza caracteres que têm significado especial em filtros PostgREST
+    // (vírgula separa filtros em .or(), % é wildcard do ILIKE). Busca por nome
+    // OU telefone — ambos via ilike case-insensitive.
+    const search = debouncedUserSearch.replace(/[%,]/g, "");
+
+    let q = supabase
       .from("profiles")
-      .select("id, display_name, phone_number, whatsapp_lid, created_at, account_status", { count: "exact" })
+      .select("id, display_name, phone_number, whatsapp_lid, created_at, account_status", { count: "exact" });
+
+    if (search) {
+      q = q.or(`display_name.ilike.%${search}%,phone_number.ilike.%${search}%`);
+    }
+
+    const { data, count, error } = await q
       .order("created_at", { ascending: false })
       .range(usersPage * PAGE_SIZE, (usersPage + 1) * PAGE_SIZE - 1) as any;
+
     if (error) {
       console.error("[admin] loadProfiles error:", error);
       toast.error("Erro ao carregar usuários");
@@ -165,30 +193,34 @@ export default function AdminPanel() {
       setProfiles(data);
       setUserCount(count || 0);
 
-      // Stats from full count - need separate queries for pending
-      const { count: totalCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }) as any;
-      const { count: pendCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }).eq("account_status", "pending") as any;
-      const { count: waCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }).not("phone_number", "is", null) as any;
+      // IMPORTANTE: stats globais (cards do topo) e sparkline só são
+      // atualizados quando NÃO há filtro de busca — senão os cards passariam
+      // a refletir apenas o resultado da busca em vez do total do sistema.
+      if (!search) {
+        const { count: totalCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }) as any;
+        const { count: pendCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }).eq("account_status", "pending") as any;
+        const { count: waCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }).not("phone_number", "is", null) as any;
 
-      setStats(s => ({
-        ...s,
-        totalUsers: totalCount || 0,
-        pendingUsers: pendCount || 0,
-        whatsappConnected: waCount || 0,
-      }));
+        setStats(s => ({
+          ...s,
+          totalUsers: totalCount || 0,
+          pendingUsers: pendCount || 0,
+          whatsappConnected: waCount || 0,
+        }));
 
-      // Sparkline: users per day last 7 days
-      const days: number[] = [];
-      for (let i = 6; i >= 0; i--) {
-        const dayStart = subDays(new Date(), i);
-        dayStart.setHours(0, 0, 0, 0);
-        const dayEnd = new Date(dayStart);
-        dayEnd.setHours(23, 59, 59, 999);
-        const { count: dc } = await supabase.from("profiles").select("id", { count: "exact", head: true })
-          .gte("created_at", dayStart.toISOString()).lte("created_at", dayEnd.toISOString()) as any;
-        days.push(dc || 0);
+        // Sparkline: users per day last 7 days
+        const days: number[] = [];
+        for (let i = 6; i >= 0; i--) {
+          const dayStart = subDays(new Date(), i);
+          dayStart.setHours(0, 0, 0, 0);
+          const dayEnd = new Date(dayStart);
+          dayEnd.setHours(23, 59, 59, 999);
+          const { count: dc } = await supabase.from("profiles").select("id", { count: "exact", head: true })
+            .gte("created_at", dayStart.toISOString()).lte("created_at", dayEnd.toISOString()) as any;
+          days.push(dc || 0);
+        }
+        setDailyUsers(days);
       }
-      setDailyUsers(days);
     }
   };
 
@@ -423,10 +455,12 @@ export default function AdminPanel() {
     else { toast.success("Agendamento cancelado"); loadBroadcastHistory(); }
   };
 
-  const filteredProfiles = profiles.filter(p => {
-    const matchSearch = !userSearch || (p.display_name || "").toLowerCase().includes(userSearch.toLowerCase());
-    return matchSearch;
-  });
+  // Antes esse filtro rodava client-side sobre `profiles`, mas como `profiles`
+  // é paginado em 25, a busca nunca encontrava usuários de outras páginas.
+  // Agora o filtro é aplicado server-side no loadProfiles (ilike em nome e
+  // telefone), então `filteredProfiles` vira passthrough pra não quebrar as
+  // referências existentes (tabela, export CSV, mensagem de vazio).
+  const filteredProfiles = profiles;
 
   // NOTA: antes usava `profiles.filter(p => account_status === "pending")`, mas
   // `profiles` é paginado em 25, então pendentes de páginas > 1 sumiam.
@@ -664,7 +698,7 @@ export default function AdminPanel() {
                 <div className="flex flex-col sm:flex-row gap-3">
                   <div className="relative flex-1">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Buscar por nome..." value={userSearch} onChange={e => setUserSearch(e.target.value)} className="pl-9" />
+                    <Input placeholder="Buscar por nome ou telefone..." value={userSearch} onChange={e => setUserSearch(e.target.value)} className="pl-9" />
                   </div>
                   <Button size="sm" variant="outline" onClick={() => exportCSV(filteredProfiles, "usuarios.csv")}>
                     <Download className="h-4 w-4 mr-1" /> CSV
