@@ -136,6 +136,8 @@ export default function AdminPanel() {
   const [settings, setSettings] = useState<Record<string, { value: string; configured: boolean }>>({});
   const [settingsForm, setSettingsForm] = useState<Record<string, string>>({});
   const [savingSettings, setSavingSettings] = useState(false);
+  // Qual setting está salvando individualmente (undefined = nenhum)
+  const [savingKey, setSavingKey] = useState<string | null>(null);
 
   // Broadcast
   const [broadcastUsers, setBroadcastUsers] = useState<any[]>([]);
@@ -641,6 +643,32 @@ export default function AdminPanel() {
     setSavingSettings(false);
   };
 
+  /** Salva UM único campo do Settings, independente dos outros.
+   *  Valida só aquele campo — permite salvar o link de renovação mesmo
+   *  se Google Client ID estiver com valor inválido autocompletado pelo
+   *  navegador, por exemplo. */
+  const saveSingleSetting = async (key: string) => {
+    if (!session) return;
+    const raw = (settingsForm[key] || "").trim();
+    if (!raw) { toast.error("Preencha o campo antes de salvar"); return; }
+    const err = validateSetting(key, raw);
+    if (err) { toast.error(err); return; }
+    setSavingKey(key);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-settings`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ [key]: raw }),
+      });
+      if (res.ok) {
+        toast.success("Salvo!");
+        setSettingsForm(prev => ({ ...prev, [key]: "" })); // limpa só esse campo
+        loadSettings();
+      } else toast.error("Erro ao salvar");
+    } catch { toast.error("Erro de rede"); }
+    setSavingKey(null);
+  };
+
 
 
   // ── Broadcast helpers ────────────────────────────────────────────────────
@@ -889,7 +917,9 @@ export default function AdminPanel() {
           return "URL inválida (ex: https://app.heyjarvis.com.br)";
         }
       }
-      case "renewal_link": {
+      case "renewal_link":
+      case "renewal_link_monthly":
+      case "renewal_link_annual": {
         try {
           const u = new URL(v);
           if (!/^https?:$/.test(u.protocol)) return "Use http:// ou https://";
@@ -919,7 +949,8 @@ export default function AdminPanel() {
     { key: "notion_client_id", label: "Notion Client ID", type: "text" },
     { key: "notion_client_secret", label: "Notion Client Secret", type: "password" },
     { key: "dashboard_url", label: "URL do Dashboard", type: "text" },
-    { key: "renewal_link", label: "Link de Renovação (Kirvano)", type: "text", hint: "URL do checkout enviada nos lembretes de vencimento" },
+    { key: "renewal_link_monthly", label: "Link de Renovação — Plano Mensal", type: "text", hint: "Checkout Kirvano enviado nos lembretes de clientes do plano mensal" },
+    { key: "renewal_link_annual", label: "Link de Renovação — Plano Anual", type: "text", hint: "Checkout Kirvano enviado nos lembretes de clientes do plano anual" },
     { key: "renewal_reminders_enabled", label: "Lembretes de Renovação Ativos", type: "text", hint: "'true' envia lembretes automáticos; 'false' desativa" },
     { key: "overdue_grace_days", label: "Dias de Tolerância (OVERDUE)", type: "text", hint: "Grace period quando Kirvano sinaliza atraso. Default: 7" },
   ];
@@ -1608,40 +1639,93 @@ export default function AdminPanel() {
 
           {/* SETTINGS */}
           <TabsContent value="settings">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2"><Settings className="h-5 w-5" /> Configurações do Sistema</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {SETTINGS_FIELDS.map(f => {
-                  const s = settings[f.key];
-                  const err = settingsErrors[f.key];
-                  return (
-                    <div key={f.key} className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <Label>{f.label}</Label>
-                        <Badge className={s?.configured ? "bg-green-500/20 text-green-300 border-green-500/30" : "bg-muted text-muted-foreground"}>
-                          {s?.configured ? "Configurado" : "Não configurado"}
-                        </Badge>
-                      </div>
+            {(() => {
+              // Agrupa campos por categoria — cada grupo é 1 card, cada campo
+              // tem seu próprio botão "Salvar" (independente).
+              const GROUPS: { title: string; keys: string[] }[] = [
+                { title: "Integrações Principais", keys: ["whatsapp_number", "dashboard_url"] },
+                { title: "Google OAuth (Calendar + Sheets)", keys: ["google_client_id", "google_client_secret"] },
+                { title: "Notion OAuth", keys: ["notion_client_id", "notion_client_secret"] },
+                { title: "Renovação & Cobrança", keys: ["renewal_link_monthly", "renewal_link_annual", "renewal_reminders_enabled", "overdue_grace_days"] },
+              ];
+              const renderField = (key: string) => {
+                const f = SETTINGS_FIELDS.find(x => x.key === key);
+                if (!f) return null;
+                const s = settings[f.key];
+                const err = settingsErrors[f.key];
+                const current = settingsForm[f.key] || "";
+                const isSaving = savingKey === f.key;
+                const canSave = current.trim().length > 0 && !err && !isSaving;
+                return (
+                  <div key={f.key} className="space-y-1.5 pt-3 first:pt-0 border-t first:border-t-0 border-border/50">
+                    <div className="flex items-center gap-2">
+                      <Label>{f.label}</Label>
+                      <Badge className={s?.configured ? "bg-green-500/20 text-green-300 border-green-500/30" : "bg-muted text-muted-foreground"}>
+                        {s?.configured ? "Configurado" : "Não configurado"}
+                      </Badge>
+                    </div>
+                    <div className="flex gap-2">
                       <Input
                         type={f.type}
                         placeholder={s?.configured ? `${s.value} — deixe vazio para manter` : `Insira ${f.label}`}
-                        value={settingsForm[f.key] || ""}
+                        value={current}
                         onChange={e => setSettingsForm(prev => ({ ...prev, [f.key]: e.target.value }))}
-                        className={err ? "border-red-500 focus-visible:ring-red-500" : ""}
+                        className={err ? "border-red-500 focus-visible:ring-red-500 flex-1" : "flex-1"}
                         aria-invalid={!!err}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        name={`setting_${f.key}`}
                       />
-                      {err && <p className="text-xs text-red-400">{err}</p>}
-                      {f.hint && !err && <p className="text-xs text-muted-foreground">{f.hint}</p>}
+                      <Button
+                        onClick={() => saveSingleSetting(f.key)}
+                        disabled={!canSave}
+                        size="sm"
+                        className="bg-purple-600 hover:bg-purple-700 shrink-0"
+                      >
+                        {isSaving ? "Salvando..." : "Salvar"}
+                      </Button>
                     </div>
-                  );
-                })}
-                <Button onClick={saveSettings} disabled={savingSettings || hasSettingsErrors} className="bg-purple-600 hover:bg-purple-700">
-                  {savingSettings ? "Salvando..." : hasSettingsErrors ? "Corrija os erros acima" : "Salvar Configurações"}
-                </Button>
-              </CardContent>
-            </Card>
+                    {err && <p className="text-xs text-red-400">{err}</p>}
+                    {f.hint && !err && <p className="text-xs text-muted-foreground">{f.hint}</p>}
+                  </div>
+                );
+              };
+              return (
+                <div className="space-y-4">
+                  {GROUPS.map(g => (
+                    <Card key={g.title}>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Settings className="h-4 w-4" /> {g.title}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {g.keys.map(renderField)}
+                      </CardContent>
+                    </Card>
+                  ))}
+                  {/* Fallback — permite salvar vários campos de uma vez se o admin quiser */}
+                  {Object.values(settingsForm).some(v => (v || "").trim().length > 0) && (
+                    <Card>
+                      <CardContent className="pt-4 flex items-center justify-between">
+                        <p className="text-xs text-muted-foreground">
+                          Ou salve todos os campos preenchidos de uma vez.
+                        </p>
+                        <Button
+                          onClick={saveSettings}
+                          disabled={savingSettings || hasSettingsErrors}
+                          variant="outline"
+                          size="sm"
+                        >
+                          {savingSettings ? "Salvando..." : hasSettingsErrors ? "Corrija os erros" : "Salvar Todos"}
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              );
+            })()}
           </TabsContent>
 
           {/* BROADCAST — Enviar mensagem para clientes */}

@@ -43,6 +43,21 @@ function buildLink(raw: string): string {
   return link || "Entre em contato com o suporte.";
 }
 
+/** Escolhe o link de renovação baseado no plano do cliente.
+ *  anual → renewal_link_annual; mensal (ou qualquer outro) → renewal_link_monthly.
+ *  Fallback na ordem: link específico → renewal_link (legacy) → "". */
+function pickLinkByPlan(
+  plan: string | null,
+  monthly: string,
+  annual: string,
+  legacy: string,
+): string {
+  const p = (plan ?? "").toLowerCase();
+  const isAnnual = p.includes("anual") || p.includes("annual") || p.includes("annually");
+  const chosen = isAnnual ? (annual || legacy) : (monthly || legacy);
+  return buildLink(chosen);
+}
+
 async function sendReminder1(
   userId: string,
   phone: string,
@@ -112,7 +127,12 @@ serve(async (req) => {
     });
   }
 
-  const link = buildLink(await getSetting("renewal_link"));
+  // Carrega os 3 links (mensal, anual, legacy) em paralelo
+  const [monthlyLink, annualLink, legacyLink] = await Promise.all([
+    getSetting("renewal_link_monthly"),
+    getSetting("renewal_link_annual"),
+    getSetting("renewal_link"),
+  ]);
 
   const now = new Date();
   const inOneHour = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
@@ -122,7 +142,7 @@ serve(async (req) => {
   // ── Lembrete 1: access_until venceu nas últimas 24h, ainda em grace ──
   const { data: r1, error: r1err } = await supabase
     .from("profiles")
-    .select("id, phone_number")
+    .select("id, phone_number, plan")
     .eq("account_status", "active")
     .eq("access_source", "kirvano")
     .lte("access_until", inOneHour)   // já venceu (ou vence na próxima hora)
@@ -135,13 +155,14 @@ serve(async (req) => {
   for (const p of r1 ?? []) {
     const phone = (p.phone_number ?? "").replace(/\D/g, "");
     if (!phone) continue;
+    const link = pickLinkByPlan(p.plan, monthlyLink, annualLink, legacyLink);
     if (await sendReminder1(p.id, phone, link)) sent1++;
   }
 
   // ── Lembrete 2: grace quase acabou (≥23h no vencido), ainda ativo ──
   const { data: r2, error: r2err } = await supabase
     .from("profiles")
-    .select("id, phone_number")
+    .select("id, phone_number, plan")
     .eq("account_status", "active")
     .eq("access_source", "kirvano")
     .lte("access_until", h23Ago)
@@ -153,6 +174,7 @@ serve(async (req) => {
   for (const p of r2 ?? []) {
     const phone = (p.phone_number ?? "").replace(/\D/g, "");
     if (!phone) continue;
+    const link = pickLinkByPlan(p.plan, monthlyLink, annualLink, legacyLink);
     if (await sendReminder2(p.id, phone, link)) sent2++;
   }
 

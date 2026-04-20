@@ -28,7 +28,9 @@ const ALLOWED_KEYS = [
   "notion_client_id",
   "notion_client_secret",
   "dashboard_url",
-  "renewal_link",
+  "renewal_link",          // legacy — mantido pra retrocompat
+  "renewal_link_monthly",
+  "renewal_link_annual",
   "renewal_reminders_enabled",
   "overdue_grace_days",
 ];
