@@ -157,12 +157,32 @@ export default function AdminPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedConvsSearch]);
 
-  // Live refresh para Kirvano — atualiza a cada 3s enquanto a aba estiver ativa
+  // Live refresh para Kirvano — atualiza a cada 3s SÓ quando:
+  //   1) a aba Kirvano está ativa (activeTab === "kirvano"), E
+  //   2) a página do navegador está visível (document.visibilityState === "visible"), E
+  //   3) o toggle kirvanoLiveRefresh está ligado.
+  // Antes: alguns TabsTrigger (pending/users/conversations/payments/metricas) não
+  // desligavam o live, então o interval continuava queimando query em background.
+  // Agora ele é auto-gated por activeTab — não importa como o admin mude de aba.
   useEffect(() => {
+    if (activeTab !== "kirvano") return;
     if (!kirvanoLiveRefresh) return;
-    const interval = setInterval(() => loadKirvanoEvents(), 3000);
+    const tick = () => {
+      if (document.visibilityState === "visible") loadKirvanoEvents();
+    };
+    const interval = setInterval(tick, 3000);
     return () => clearInterval(interval);
-  }, [kirvanoLiveRefresh, kirvanoPage]);
+  }, [kirvanoLiveRefresh, kirvanoPage, activeTab]);
+
+  // Auto-desliga o live refresh quando o usuário sai da aba Kirvano —
+  // torna redundantes (mas inofensivos) os setKirvanoLiveRefresh(false)
+  // espalhados nos onClick dos TabsTrigger.
+  useEffect(() => {
+    if (activeTab !== "kirvano" && kirvanoLiveRefresh) {
+      setKirvanoLiveRefresh(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   useEffect(() => {
     if (isAdmin) loadData();
