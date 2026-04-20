@@ -55,6 +55,11 @@ export default function AdminPanel() {
   const [stats, setStats] = useState({
     totalUsers: 0, pendingUsers: 0, whatsappConnected: 0,
     totalRevenue: 0, approvedPayments: 0, errorCount: 0,
+    // Split de receita: mrr = valor mensal recorrente (Anual normalizado /12),
+    // oneTime = planos vitalicios / produtos unicos. totalRevenue continua
+    // sendo a soma bruta de todos os approved — preservado pra nao quebrar
+    // lugares que ja leem esse campo.
+    mrr: 0, oneTimeRevenue: 0,
   });
   const [profiles, setProfiles] = useState<any[]>([]);
   // Lista dedicada pra aba "Sem plano". Antes a gente filtrava `profiles` (que
@@ -377,16 +382,50 @@ export default function AdminPanel() {
   const loadRevenueStats = async () => {
     const { data, error } = await supabase
       .from("kirvano_payments")
-      .select("amount")
+      .select("amount, plan")
       .eq("status", "approved")
       .limit(10000) as any;
     if (error) {
       console.error("[admin] loadRevenueStats error:", error);
       return;
     }
-    const revenue = (data ?? []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+    // Classifica cada pagamento como recorrente (MRR) ou one-time baseado no
+    // campo `plan`. Heuristica conservadora: so conta como MRR quando o plano
+    // bate com padroes conhecidos; resto cai em one-time (mais seguro do que
+    // o contrario — nao infla MRR de forma enganosa).
+    // Regras:
+    //   - "mensal"/"mes"/"monthly"  → amount inteiro vira MRR
+    //   - "anual"/"yearly"/"ano"    → amount/12 vira MRR
+    //   - "trimestral"              → amount/3 vira MRR
+    //   - "semestral"               → amount/6 vira MRR
+    //   - tudo mais (permanente, vitalicio, produtos, null, "")  → one-time
+    let revenue = 0;
+    let mrr = 0;
+    let oneTime = 0;
+    (data ?? []).forEach((p: any) => {
+      const amount = Number(p.amount) || 0;
+      revenue += amount;
+      const plan = String(p.plan || "").toLowerCase();
+      if (/mensal|monthly|\bmes\b/.test(plan)) {
+        mrr += amount;
+      } else if (/anual|yearly|\bano\b/.test(plan)) {
+        mrr += amount / 12;
+      } else if (/trimestral|quarterly/.test(plan)) {
+        mrr += amount / 3;
+      } else if (/semestral/.test(plan)) {
+        mrr += amount / 6;
+      } else {
+        oneTime += amount;
+      }
+    });
     const approvedCount = (data ?? []).length;
-    setStats(s => ({ ...s, totalRevenue: revenue, approvedPayments: approvedCount }));
+    setStats(s => ({
+      ...s,
+      totalRevenue: revenue,
+      approvedPayments: approvedCount,
+      mrr,
+      oneTimeRevenue: oneTime,
+    }));
   };
 
   const loadErrorLogs = async () => {
@@ -832,7 +871,18 @@ export default function AdminPanel() {
         <Card><CardContent className="pt-4 text-center">
           <CreditCard className="h-5 w-5 mx-auto text-emerald-400 mb-1" />
           <p className="text-2xl font-bold text-emerald-400">R${stats.totalRevenue.toFixed(0)}</p>
-          <p className="text-xs text-muted-foreground">Receita</p>
+          <p className="text-xs text-muted-foreground">Receita total</p>
+          <div
+            className="mt-1.5 pt-1.5 border-t border-border/60 space-y-0.5"
+            title="MRR normaliza planos anuais (÷12), trimestrais (÷3) e semestrais (÷6). One-time soma planos vitalícios e produtos únicos."
+          >
+            <p className="text-[11px] text-emerald-300/90">
+              <span className="text-muted-foreground">MRR</span> R${stats.mrr.toFixed(0)}
+            </p>
+            <p className="text-[11px] text-emerald-300/70">
+              <span className="text-muted-foreground">One-time</span> R${stats.oneTimeRevenue.toFixed(0)}
+            </p>
+          </div>
         </CardContent></Card>
         <Card><CardContent className="pt-4 text-center">
           <AlertTriangle className="h-5 w-5 mx-auto text-red-400 mb-1" />
