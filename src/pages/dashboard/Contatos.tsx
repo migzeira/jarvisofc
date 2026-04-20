@@ -65,7 +65,7 @@ export default function Contatos() {
       .eq("user_id", user.id)
       .order("name");
     if (error) toast.error("Erro ao carregar contatos");
-    else setContacts(data ?? []);
+    else setContacts((data ?? []) as unknown as Contact[]);
     setLoading(false);
   };
 

@@ -425,7 +425,7 @@ export default function Agenda() {
     if (error) {
       toast.error("Erro ao carregar eventos");
     }
-    setEvents((data as CalendarEvent[]) ?? []);
+    setEvents((data as unknown as CalendarEvent[]) ?? []);
     setLoading(false);
   }, [user]);
 

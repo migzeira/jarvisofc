@@ -252,32 +252,38 @@ export type Database = {
       }
       contacts: {
         Row: {
+          category: string | null
           created_at: string
           id: string
           name: string
           notes: string | null
           phone: string
           source: string
+          type: string
           updated_at: string
           user_id: string
         }
         Insert: {
+          category?: string | null
           created_at?: string
           id?: string
           name: string
           notes?: string | null
           phone: string
           source?: string
+          type?: string
           updated_at?: string
           user_id: string
         }
         Update: {
+          category?: string | null
           created_at?: string
           id?: string
           name?: string
           notes?: string | null
           phone?: string
           source?: string
+          type?: string
           updated_at?: string
           user_id?: string
         }
@@ -901,7 +907,14 @@ export type Database = {
           access_source: string | null
           access_until: string | null
           account_status: string
+          cpf_orders: string | null
           created_at: string
+          delivery_city: string | null
+          delivery_complement: string | null
+          delivery_neighborhood: string | null
+          delivery_number: string | null
+          delivery_reference: string | null
+          delivery_street: string | null
           display_name: string | null
           id: string
           is_admin: boolean
@@ -911,6 +924,7 @@ export type Database = {
           link_code_expires_at: string | null
           messages_limit: number
           messages_used: number
+          payment_preference: string | null
           phone_changes_count: number
           phone_number: string | null
           plan: string
@@ -923,7 +937,14 @@ export type Database = {
           access_source?: string | null
           access_until?: string | null
           account_status?: string
+          cpf_orders?: string | null
           created_at?: string
+          delivery_city?: string | null
+          delivery_complement?: string | null
+          delivery_neighborhood?: string | null
+          delivery_number?: string | null
+          delivery_reference?: string | null
+          delivery_street?: string | null
           display_name?: string | null
           id: string
           is_admin?: boolean
@@ -933,6 +954,7 @@ export type Database = {
           link_code_expires_at?: string | null
           messages_limit?: number
           messages_used?: number
+          payment_preference?: string | null
           phone_changes_count?: number
           phone_number?: string | null
           plan?: string
@@ -945,7 +967,14 @@ export type Database = {
           access_source?: string | null
           access_until?: string | null
           account_status?: string
+          cpf_orders?: string | null
           created_at?: string
+          delivery_city?: string | null
+          delivery_complement?: string | null
+          delivery_neighborhood?: string | null
+          delivery_number?: string | null
+          delivery_reference?: string | null
+          delivery_street?: string | null
           display_name?: string | null
           id?: string
           is_admin?: boolean
@@ -955,6 +984,7 @@ export type Database = {
           link_code_expires_at?: string | null
           messages_limit?: number
           messages_used?: number
+          payment_preference?: string | null
           phone_changes_count?: number
           phone_number?: string | null
           plan?: string
