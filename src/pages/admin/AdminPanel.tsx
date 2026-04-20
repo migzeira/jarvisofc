@@ -97,6 +97,9 @@ export default function AdminPanel() {
   // Debounced search — usado na query server-side pra não disparar request
   // a cada tecla. Atualizado 300ms depois do usuário parar de digitar.
   const [debouncedUserSearch, setDebouncedUserSearch] = useState("");
+  // Busca na aba Conversas (nome do contato ou telefone) — server-side via ilike
+  const [convsSearch, setConvsSearch] = useState("");
+  const [debouncedConvsSearch, setDebouncedConvsSearch] = useState("");
   const [dateRange, setDateRange] = useState<DateRange>("all");
   const [errContextFilter, setErrContextFilter] = useState("all");
 
@@ -123,7 +126,7 @@ export default function AdminPanel() {
   const [dailyUsers, setDailyUsers] = useState<number[]>([]);
 
   // Reload on filter/page changes
-  useEffect(() => { if (!loading && isAdmin) loadConversations(); }, [convsPage, dateRange]);
+  useEffect(() => { if (!loading && isAdmin) loadConversations(); }, [convsPage, dateRange, debouncedConvsSearch]);
   useEffect(() => { if (!loading && isAdmin) loadPayments(); }, [payPage]);
   useEffect(() => { if (!loading && isAdmin) loadErrorLogs(); }, [errPage, errContextFilter]);
   useEffect(() => { if (!loading && isAdmin) loadProfiles(); }, [usersPage, debouncedUserSearch]);
@@ -141,6 +144,18 @@ export default function AdminPanel() {
     if (usersPage !== 0) setUsersPage(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedUserSearch]);
+
+  // Debounce da busca da aba Conversas
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedConvsSearch(convsSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [convsSearch]);
+
+  // Reseta página quando a busca de Conversas muda
+  useEffect(() => {
+    if (convsPage !== 0) setConvsPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedConvsSearch]);
 
   // Live refresh para Kirvano — atualiza a cada 3s enquanto a aba estiver ativa
   useEffect(() => {
@@ -272,6 +287,15 @@ export default function AdminPanel() {
       .order("last_message_at", { ascending: false });
     const df = getDateFilter(dateRange);
     if (df) q = q.gte("started_at", df);
+    // Busca server-side via ilike em contact_name e phone_number.
+    // Sanitiza `%` e `,` — caracteres especiais do PostgREST .or() — pra evitar
+    // que o usuário quebre o filtro digitando vírgulas ou %.
+    if (debouncedConvsSearch) {
+      const safe = debouncedConvsSearch.replace(/[%,]/g, "");
+      if (safe) {
+        q = q.or(`contact_name.ilike.%${safe}%,phone_number.ilike.%${safe}%`);
+      }
+    }
     const { data, count } = await q.range(convsPage * PAGE_SIZE, (convsPage + 1) * PAGE_SIZE - 1) as any;
     if (data) {
       setConversations(data);
@@ -801,8 +825,18 @@ export default function AdminPanel() {
           <TabsContent value="conversations">
             <Card>
               <CardHeader>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <DateFilter />
+                  <div className="relative flex-1 min-w-[220px] max-w-sm">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      type="text"
+                      placeholder="Buscar por nome ou telefone..."
+                      value={convsSearch}
+                      onChange={e => setConvsSearch(e.target.value)}
+                      className="pl-8 h-9"
+                    />
+                  </div>
                   <Button size="sm" variant="outline" onClick={() => exportCSV(conversations, "conversas.csv")}>
                     <Download className="h-4 w-4 mr-1" /> CSV
                   </Button>
