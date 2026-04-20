@@ -381,9 +381,10 @@ Frase: "${message}"`;
   const sendAt = new Date(`${todayLocal}T${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:00${tzOff}`);
   if (sendAt <= new Date()) sendAt.setDate(sendAt.getDate() + 1);
 
-  await supabase.from("reminders").insert({
+  const { error: remErr } = await supabase.from("reminders").insert({
     user_id: userId,
     whatsapp_number: phone,
+    habit_id: data.id,
     title: `Habito: ${parsed.name}`,
     message: `${parsed.icon || "🎯"} Hora do habito: *${parsed.name}*!\n\nQuando terminar, responda *feito* para registrar.`,
     send_at: sendAt.toISOString(),
@@ -391,6 +392,11 @@ Frase: "${message}"`;
     source: "habit",
     status: "pending",
   });
+  if (remErr) {
+    console.error("Habit reminder create error:", remErr);
+    // Habito foi criado mas lembrete falhou — avisa mas nao cancela o habito
+    return `✅ *Habito criado!*\n\n${parsed.icon || "🎯"} *${parsed.name}*\n\n⚠️ Nao consegui agendar o lembrete automatico. Voce pode ajustar direto no app.`;
+  }
 
   return `✅ *Habito criado!*\n\n${parsed.icon || "🎯"} *${parsed.name}*\n${parsed.description ? `📝 ${parsed.description}\n` : ""}⏰ Lembrete diario as ${parsed.reminder_time || "08:00"}\n\nQuando completar, responda *feito* e eu registro seu progresso!`;
 }
