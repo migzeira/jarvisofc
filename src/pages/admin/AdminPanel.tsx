@@ -61,6 +61,11 @@ export default function AdminPanel() {
   // é paginado em 25), então pendentes em páginas diferentes ficavam invisíveis.
   // Agora uma query dedicada busca TODOS os pending (limit defensivo de 500).
   const [pendingProfilesList, setPendingProfilesList] = useState<any[]>([]);
+  // Cache de nomes de usuários indexado por id — alimentado sob demanda pelo
+  // loadConversations. Necessário porque `profiles` é paginado: sem esse mapa,
+  // a aba Conversas mostrava "—" pra donos de conversa que estivessem em
+  // outra página de profiles. Merge incremental pra preservar entradas antigas.
+  const [userNamesMap, setUserNamesMap] = useState<Record<string, string>>({});
   const [conversations, setConversations] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [errorLogs, setErrorLogs] = useState<any[]>([]);
@@ -249,7 +254,30 @@ export default function AdminPanel() {
     const df = getDateFilter(dateRange);
     if (df) q = q.gte("started_at", df);
     const { data, count } = await q.range(convsPage * PAGE_SIZE, (convsPage + 1) * PAGE_SIZE - 1) as any;
-    if (data) { setConversations(data); setConvCount(count || 0); }
+    if (data) {
+      setConversations(data);
+      setConvCount(count || 0);
+
+      // Popula userNamesMap com os donos dessas conversas. Antes getUserName
+      // procurava em `profiles` (paginado em 25), então donos em outras páginas
+      // apareciam como "—". Agora buscamos em batch só os ids que faltam no mapa.
+      const userIds = Array.from(new Set(
+        (data as any[]).map(c => c.user_id).filter((id: any) => id && !userNamesMap[id])
+      ));
+      if (userIds.length > 0) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("id, display_name")
+          .in("id", userIds) as any;
+        if (profs && profs.length > 0) {
+          setUserNamesMap(prev => {
+            const next = { ...prev };
+            (profs as any[]).forEach(p => { next[p.id] = p.display_name || "—"; });
+            return next;
+          });
+        }
+      }
+    }
   };
 
   const loadPayments = async () => {
@@ -467,6 +495,10 @@ export default function AdminPanel() {
   // Agora a aba "Sem plano" lê diretamente de `pendingProfilesList` (query dedicada).
 
   const getUserName = (userId: string) => {
+    // Ordem de lookup: 1) cache userNamesMap (populado por loadConversations
+    // em batch pra donos de todas as conversas visíveis), 2) profiles da aba
+    // Usuários (fallback p/ quando o user aparece nas duas abas), 3) "—".
+    if (userNamesMap[userId]) return userNamesMap[userId];
     const p = profiles.find(pr => pr.id === userId);
     return p?.display_name || "—";
   };
