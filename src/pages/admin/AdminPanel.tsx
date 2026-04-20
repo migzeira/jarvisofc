@@ -114,6 +114,7 @@ export default function AdminPanel() {
   const [broadcastMsg, setBroadcastMsg] = useState("");
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastResults, setBroadcastResults] = useState<{ sent: number; failed: number; skipped: number } | null>(null);
+  const [broadcastSearch, setBroadcastSearch] = useState("");
   const [scheduleAt, setScheduleAt] = useState<string>("");
   const [broadcastHistory, setBroadcastHistory] = useState<any[]>([]);
   const [scheduledList, setScheduledList] = useState<any[]>([]);
@@ -426,12 +427,19 @@ export default function AdminPanel() {
     });
   };
 
-  const toggleSelectAll = () => {
-    if (broadcastSelected.size === broadcastUsers.length) {
-      setBroadcastSelected(new Set());
-    } else {
-      setBroadcastSelected(new Set(broadcastUsers.map(u => u.id)));
-    }
+  const toggleSelectAll = (list?: any[]) => {
+    const target = list && list.length > 0 ? list : broadcastUsers;
+    const targetIds = target.map(u => u.id);
+    const allSelected = targetIds.every(id => broadcastSelected.has(id));
+    setBroadcastSelected(prev => {
+      const next = new Set(prev);
+      if (allSelected) {
+        targetIds.forEach(id => next.delete(id));
+      } else {
+        targetIds.forEach(id => next.add(id));
+      }
+      return next;
+    });
   };
 
   const handleBroadcast = async () => {
@@ -1277,22 +1285,48 @@ export default function AdminPanel() {
                     </div>
                   ) : broadcastUsers.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-6">Nenhum cliente ativo com telefone cadastrado.</p>
-                  ) : (
+                  ) : (() => {
+                    const q = broadcastSearch.trim().toLowerCase();
+                    const filteredBroadcastUsers = q
+                      ? broadcastUsers.filter(u => {
+                          const name = (u.display_name || "").toLowerCase();
+                          const phone = (u.phone_number || "").replace(/\D/g, "");
+                          return name.includes(q) || phone.includes(q.replace(/\D/g, ""));
+                        })
+                      : broadcastUsers;
+                    const filteredIds = filteredBroadcastUsers.map(u => u.id);
+                    const allFilteredSelected = filteredIds.length > 0 && filteredIds.every(id => broadcastSelected.has(id));
+                    return (
                     <>
+                      <div className="relative mb-3">
+                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                        <Input
+                          type="text"
+                          placeholder="Buscar por nome ou telefone..."
+                          value={broadcastSearch}
+                          onChange={e => setBroadcastSearch(e.target.value)}
+                          className="pl-8 h-9"
+                        />
+                      </div>
                       <div className="flex items-center gap-2 mb-3 pb-3 border-b">
                         <input
                           type="checkbox"
                           id="select-all"
                           className="h-4 w-4 cursor-pointer"
-                          checked={broadcastSelected.size === broadcastUsers.length && broadcastUsers.length > 0}
-                          onChange={toggleSelectAll}
+                          checked={allFilteredSelected}
+                          onChange={() => toggleSelectAll(filteredBroadcastUsers)}
                         />
                         <label htmlFor="select-all" className="text-sm font-medium cursor-pointer select-none">
-                          Selecionar todos ({broadcastUsers.length})
+                          {q
+                            ? `Selecionar ${filteredBroadcastUsers.length} filtrado(s) de ${broadcastUsers.length}`
+                            : `Selecionar todos (${broadcastUsers.length})`}
                         </label>
                       </div>
+                      {filteredBroadcastUsers.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-6">Nenhum cliente corresponde à busca.</p>
+                      ) : (
                       <div className="space-y-1 max-h-80 overflow-y-auto pr-1">
-                        {broadcastUsers.map(u => (
+                        {filteredBroadcastUsers.map(u => (
                           <div
                             key={u.id}
                             className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
@@ -1313,8 +1347,10 @@ export default function AdminPanel() {
                           </div>
                         ))}
                       </div>
+                      )}
                     </>
-                  )}
+                    );
+                  })()}
                 </CardContent>
               </Card>
 
