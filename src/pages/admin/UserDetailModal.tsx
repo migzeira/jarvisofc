@@ -215,6 +215,33 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
     try { return format(new Date(d), "dd/MM/yy", { locale: ptBR }); } catch { return "—"; }
   };
 
+  // Garante que o agente fique ativo DEPOIS de liberar plano/trial/permanente.
+  //
+  // Por que upsert e não update:
+  //   - Usuários legados (criados antes do trigger handle_new_user atual) podem
+  //     não ter row em agent_configs. .update() não falha nesse caso — apenas
+  //     não afeta linhas. Resultado: admin "ativava" plano mas o Jarvis continuava
+  //     silencioso porque não existia config pra flag is_active=true.
+  //   - .upsert({ user_id, is_active: true }, { onConflict: 'user_id' }) cria a
+  //     row se faltar e atualiza se já existir. user_id tem UNIQUE na tabela, então
+  //     o onConflict é seguro e idempotente.
+  //
+  // Também atualiza o estado local agentConfig pra UI refletir na hora, sem
+  // precisar reabrir o modal.
+  const ensureAgentActive = async () => {
+    const { error: agentErr } = await (supabase.from("agent_configs").upsert({
+      user_id: userId,
+      is_active: true,
+    } as any, { onConflict: "user_id" }) as any);
+    if (agentErr) {
+      console.error("ensureAgentActive error:", agentErr);
+      toast.error("Plano ativado, mas falhei ao ativar o agente. Abra o modal de novo e clique em Retomar agente.");
+      return false;
+    }
+    setAgentConfig((c: any) => c ? { ...c, is_active: true } : { user_id: userId, is_active: true });
+    return true;
+  };
+
   const handleActivateWithPeriod = async () => {
     const days = parseInt(activatingDays);
     if (!days || days < 1) { toast.error("Informe um número de dias válido"); return; }
@@ -228,14 +255,12 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
         access_source: "admin_trial",
         subscription_cancelled_at: null,
       } as any).eq("id", userId) as any);
-      await supabase.from("agent_configs").update({ is_active: true } as any).eq("user_id", userId);
-      if (error) toast.error("Erro ao ativar");
-      else {
-        toast.success(`Período teste de ${days} dia${days > 1 ? "s" : ""} liberado!`);
-        setProfile((p: any) => ({ ...p, account_status: "active", access_until: accessUntil, access_source: "admin_trial", subscription_cancelled_at: null }));
-        setActivatingDays("");
-        onProfileUpdate?.();
-      }
+      if (error) { toast.error("Erro ao ativar"); return; }
+      await ensureAgentActive();
+      toast.success(`Período teste de ${days} dia${days > 1 ? "s" : ""} liberado e agente ativado!`);
+      setProfile((p: any) => ({ ...p, account_status: "active", access_until: accessUntil, access_source: "admin_trial", subscription_cancelled_at: null }));
+      setActivatingDays("");
+      onProfileUpdate?.();
     } finally {
       setActionInProgress(null);
     }
@@ -255,10 +280,10 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
         access_source: "admin_plan",
         subscription_cancelled_at: null,
       } as any).eq("id", userId) as any);
-      await supabase.from("agent_configs").update({ is_active: true } as any).eq("user_id", userId);
       if (error) { toast.error("Erro ao ativar plano"); return; }
+      await ensureAgentActive();
       const label = plan === "maya_anual" ? "Anual" : "Mensal";
-      toast.success(`Plano ${label} liberado pelo admin por ${days} dias!`);
+      toast.success(`Plano ${label} liberado por ${days} dias e agente ativado!`);
       setProfile((p: any) => ({ ...p, plan, account_status: "active", access_until: accessUntil, access_source: "admin_plan", subscription_cancelled_at: null }));
       onProfileUpdate?.();
     } finally {
@@ -277,13 +302,11 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
         access_source: "admin_plan",
         subscription_cancelled_at: null,
       } as any).eq("id", userId) as any);
-      await supabase.from("agent_configs").update({ is_active: true } as any).eq("user_id", userId);
-      if (error) toast.error("Erro ao ativar");
-      else {
-        toast.success("Conta ativada permanentemente!");
-        setProfile((p: any) => ({ ...p, account_status: "active", access_until: null, access_source: "admin_plan", subscription_cancelled_at: null }));
-        onProfileUpdate?.();
-      }
+      if (error) { toast.error("Erro ao ativar"); return; }
+      await ensureAgentActive();
+      toast.success("Conta ativada permanentemente e agente ativado!");
+      setProfile((p: any) => ({ ...p, account_status: "active", access_until: null, access_source: "admin_plan", subscription_cancelled_at: null }));
+      onProfileUpdate?.();
     } finally {
       setActionInProgress(null);
     }
@@ -334,11 +357,16 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
     if (actionInProgress) return;
     setActionInProgress("resume_agent");
     try {
-      const { error } = await (supabase.from("agent_configs").update({ is_active: true } as any).eq("user_id", userId) as any);
+      // upsert em vez de update: se o user legado não tem agent_configs,
+      // cria a row com is_active=true em vez de falhar silenciosamente
+      const { error } = await (supabase.from("agent_configs").upsert({
+        user_id: userId,
+        is_active: true,
+      } as any, { onConflict: "user_id" }) as any);
       if (error) toast.error("Erro ao retomar agente");
       else {
         toast.success("Agente retomado");
-        setAgentConfig((c: any) => ({ ...c, is_active: true }));
+        setAgentConfig((c: any) => c ? { ...c, is_active: true } : { user_id: userId, is_active: true });
         onProfileUpdate?.();
       }
     } finally {
