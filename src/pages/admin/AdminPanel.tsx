@@ -15,7 +15,7 @@ import {
   Users, MessageSquare, Settings, Shield, Search, Eye, MessageCircle,
   Clock, CheckCircle, XCircle, RefreshCw, Download, CreditCard, AlertTriangle,
   TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Webhook, ChevronDown, ChevronUp, Link2, Link2Off,
-  Activity, BarChart3, UserCheck, UserX, Send,
+  Activity, BarChart3, UserCheck, UserX, Send, Copy, UserSearch,
 } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
@@ -380,6 +380,56 @@ export default function AdminPanel() {
       return;
     }
     if (data) { setKirvanoEvents(data); setKirvanoCount(count || 0); }
+  };
+
+  // Ações para eventos Kirvano sem match — helpers defensivos, sem mutar backend.
+  const copyToClipboard = async (text: string, label: string) => {
+    if (!text) { toast.error(`${label} vazio`); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copiado`);
+    } catch {
+      toast.error("Falha ao copiar");
+    }
+  };
+
+  // Manda o admin pra aba Usuários com o termo já preenchido — usa email (ou
+  // telefone como fallback) pra tentar localizar o profile manualmente.
+  const searchUserFromKirvano = (ev: any) => {
+    const term = (ev.customer_email || ev.customer_phone || "").trim();
+    if (!term) { toast.error("Evento sem email/telefone pra buscar"); return; }
+    setUserSearch(term);
+    setActiveTab("users");
+    setKirvanoLiveRefresh(false);
+    toast.info(`Buscando "${term}" na aba Usuários`);
+  };
+
+  // Re-processa o webhook Kirvano pro evento atual (sem duplicar pagamento —
+  // o edge function já tem guards de idempotência). Útil quando o usuário
+  // criou conta DEPOIS do evento chegar, então agora o match deve funcionar.
+  const retryKirvanoMatch = async (ev: any) => {
+    if (!ev.raw_payload) { toast.error("Sem raw_payload pra re-processar"); return; }
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/kirvano-webhook`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify(ev.raw_payload),
+      });
+      if (res.ok) {
+        toast.success("Evento re-processado — verificando match...");
+        setTimeout(() => loadKirvanoEvents(), 800);
+      } else {
+        const txt = await res.text().catch(() => "");
+        toast.error(`Falha ao re-processar (${res.status})`);
+        console.error("[retryKirvanoMatch]", res.status, txt);
+      }
+    } catch (err) {
+      toast.error("Erro de rede ao re-processar");
+      console.error("[retryKirvanoMatch]", err);
+    }
   };
 
   const loadAnalytics = async () => {
@@ -1244,7 +1294,32 @@ export default function AdminPanel() {
                             {kirvanoExpandedId === ev.id && (
                               <TableRow>
                                 <TableCell colSpan={7} className="bg-muted/20 p-0">
-                                  <div className="p-4 space-y-2">
+                                  <div className="p-4 space-y-3">
+                                    {!ev.matched_user_id && (
+                                      <div className="flex flex-wrap items-center gap-2 p-2 rounded-md border border-orange-500/30 bg-orange-500/5">
+                                        <span className="text-xs font-medium text-orange-300 mr-1">Ações:</span>
+                                        <Button size="sm" variant="outline" className="h-7 text-xs"
+                                          onClick={() => copyToClipboard(ev.customer_email, "Email")}
+                                          disabled={!ev.customer_email}>
+                                          <Copy className="h-3 w-3 mr-1" /> Copiar email
+                                        </Button>
+                                        <Button size="sm" variant="outline" className="h-7 text-xs"
+                                          onClick={() => copyToClipboard(ev.customer_phone, "Telefone")}
+                                          disabled={!ev.customer_phone}>
+                                          <Copy className="h-3 w-3 mr-1" /> Copiar telefone
+                                        </Button>
+                                        <Button size="sm" variant="outline" className="h-7 text-xs"
+                                          onClick={() => searchUserFromKirvano(ev)}
+                                          disabled={!ev.customer_email && !ev.customer_phone}>
+                                          <UserSearch className="h-3 w-3 mr-1" /> Buscar em Usuários
+                                        </Button>
+                                        <Button size="sm" variant="outline" className="h-7 text-xs"
+                                          onClick={() => retryKirvanoMatch(ev)}
+                                          disabled={!ev.raw_payload}>
+                                          <RefreshCw className="h-3 w-3 mr-1" /> Tentar match novamente
+                                        </Button>
+                                      </div>
+                                    )}
                                     <p className="text-xs font-medium text-muted-foreground">Raw Payload completo:</p>
                                     <pre className="text-xs bg-background border border-border rounded-md p-3 overflow-auto max-h-72 text-green-300 font-mono whitespace-pre-wrap break-all">
                                       {JSON.stringify(ev.raw_payload, null, 2)}
