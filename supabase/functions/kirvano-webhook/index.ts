@@ -25,6 +25,16 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
 
+/** Lê configuração do app_settings (fallback para env var) */
+async function getSetting(key: string): Promise<string> {
+  const { data } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", key)
+    .maybeSingle();
+  return (data?.value as string) ?? Deno.env.get(key.toUpperCase()) ?? "";
+}
+
 // ─────────────────────────────────────────────────────────
 // Plano único — mensal ou anual (sem tiers de funcionalidade)
 // ─────────────────────────────────────────────────────────
@@ -226,6 +236,12 @@ async function handleCancel(
     const isAnnual = plan.includes("anual") || plan.includes("annual") || plan.includes("annually");
     const days = isAnnual ? 365 : 30;
     accessUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    // Log para diagnosticar qualidade dos dados da Kirvano — quando o
+    // next_charge_date não vem no payload, caímos no fallback por tipo de plano.
+    console.warn(
+      `[kirvano] ⚠️ handleCancel: next_charge_date ausente no payload — usando fallback de ${days}d ` +
+      `(plan=${plan}, user=${userId}, accessUntil=${accessUntil})`
+    );
   }
 
   await supabase.from("profiles").update({
@@ -269,12 +285,40 @@ async function handleRevoke(userId: string): Promise<void> {
   console.log(`[kirvano] 🚫 Revoked access for user ${userId}`);
 }
 
-/** Pagamento atrasado */
+/** Pagamento atrasado — define período de graça e notifica.
+ *  Após `overdue_grace_days` (default 7) sem regularizar, o cron
+ *  `expire_stale_accounts` suspende automaticamente. */
 async function handleOverdue(userId: string): Promise<void> {
+  const graceSetting = await getSetting("overdue_grace_days");
+  const graceDays = Math.max(1, parseInt(graceSetting || "7", 10) || 7);
+
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("account_status, access_until")
+    .eq("id", userId)
+    .maybeSingle();
+
+  // Só aplica grace period se a conta está ativa e ainda não tem deadline.
+  // Se já tem access_until (ex: cancelamento anterior), respeita a data existente.
+  let graceApplied = false;
+  if (prof?.account_status === "active" && !prof.access_until) {
+    const accessUntil = new Date(Date.now() + graceDays * 24 * 60 * 60 * 1000).toISOString();
+    await supabase.from("profiles").update({
+      access_until: accessUntil,
+      access_source: "kirvano",
+    } as any).eq("id", userId);
+    graceApplied = true;
+    console.log(`[kirvano] ⏰ Overdue grace period set for user ${userId}: ${graceDays}d → ${accessUntil}`);
+  }
+
+  const tail = graceApplied
+    ? `\n\nSeu acesso continua ativo por mais *${graceDays} dia(s)*. Após esse prazo, o assistente será suspenso automaticamente.`
+    : ``;
+
   await notifyUser(userId,
-    `⏰ *Pagamento atrasado*\n\nIdentificamos um pagamento em atraso na sua assinatura do Jarvis.\n\nRegularize para evitar a suspensão do seu acesso. Qualquer dúvida, acesse o app.`
+    `⏰ *Pagamento atrasado*\n\nIdentificamos um pagamento em atraso na sua assinatura do Jarvis.${tail}\n\nRegularize para evitar a suspensão do seu acesso. Qualquer dúvida, acesse o app.`
   );
-  console.log(`[kirvano] ⚠️ Overdue for user ${userId}`);
+  console.log(`[kirvano] ⚠️ Overdue notified for user ${userId} (graceApplied=${graceApplied})`);
 }
 
 // ─────────────────────────────────────────────────────────
