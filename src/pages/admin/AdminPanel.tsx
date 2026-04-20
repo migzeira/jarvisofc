@@ -202,41 +202,37 @@ export default function AdminPanel() {
       // atualizados quando NÃO há filtro de busca — senão os cards passariam
       // a refletir apenas o resultado da busca em vez do total do sistema.
       if (!search) {
-        const { count: totalCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }) as any;
-        const { count: pendCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }).eq("account_status", "pending") as any;
-        const { count: waCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }).not("phone_number", "is", null) as any;
+        // Antes: 3 count queries + 1 sparkline query rodando em SÉRIE via
+        // await sequencial. Agora: Promise.all paraleliza as 4 — são 100%
+        // independentes (nenhuma depende do resultado da outra), então o
+        // speedup é ~4x em condição normal de rede. Limit 5000 defensivo
+        // no sparkline preservado. Semântica e resultados idênticos.
+        const windowStart = subDays(new Date(), 6);
+        windowStart.setHours(0, 0, 0, 0);
+
+        const [totalRes, pendRes, waRes, sparkRes] = await Promise.all([
+          supabase.from("profiles").select("id", { count: "exact", head: true }) as any,
+          supabase.from("profiles").select("id", { count: "exact", head: true }).eq("account_status", "pending") as any,
+          supabase.from("profiles").select("id", { count: "exact", head: true }).not("phone_number", "is", null) as any,
+          supabase.from("profiles").select("created_at").gte("created_at", windowStart.toISOString()).limit(5000) as any,
+        ]);
 
         setStats(s => ({
           ...s,
-          totalUsers: totalCount || 0,
-          pendingUsers: pendCount || 0,
-          whatsappConnected: waCount || 0,
+          totalUsers: totalRes.count || 0,
+          pendingUsers: pendRes.count || 0,
+          whatsappConnected: waRes.count || 0,
         }));
 
-        // Sparkline: users per day last 7 days.
-        // Antes: loop com 7 queries SEQUENCIAIS (await em cada iteração),
-        // ~2-3s de latência extra só pra desenhar 7 barrinhas. Agora: 1 query
-        // que traz os created_at dos últimos 7 dias e agrupa no JS. Limit
-        // defensivo de 5000 é muito além do realista pro estágio atual —
-        // quando passar, migrar pra RPC com GROUP BY DATE_TRUNC.
-        const windowStart = subDays(new Date(), 6);
-        windowStart.setHours(0, 0, 0, 0);
-        const { data: recentProfiles, error: sparkErr } = await supabase
-          .from("profiles")
-          .select("created_at")
-          .gte("created_at", windowStart.toISOString())
-          .limit(5000) as any;
-
-        if (sparkErr) {
-          console.error("[admin] sparkline query error:", sparkErr);
-          // Fail-safe: mantém dailyUsers como estava — sparkline não regride
-          // visualmente em caso de erro transitório
+        // Sparkline — se a query falhou, mantém dailyUsers como estava
+        // (fail-safe visual). Chave YYYY-MM-DD em timezone LOCAL — mesmo
+        // critério de "hoje" do admin que existia no loop original.
+        if (sparkRes.error) {
+          console.error("[admin] sparkline query error:", sparkRes.error);
         } else {
-          // Chave YYYY-MM-DD em timezone LOCAL — mesmo critério dos
-          // setHours(0,0,0,0) antigos, pra o gráfico bater com "hoje" do admin
           const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
           const counts: Record<string, number> = {};
-          (recentProfiles ?? []).forEach((p: any) => {
+          (sparkRes.data ?? []).forEach((p: any) => {
             const k = dayKey(new Date(p.created_at));
             counts[k] = (counts[k] || 0) + 1;
           });
