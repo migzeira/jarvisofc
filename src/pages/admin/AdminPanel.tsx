@@ -973,18 +973,39 @@ export default function AdminPanel() {
                   <TableHeader><TableRow>
                     <TableHead>Usuário</TableHead><TableHead>Contato</TableHead><TableHead>Telefone</TableHead>
                     <TableHead>Mensagens</TableHead><TableHead>Último</TableHead><TableHead>Início</TableHead>
+                    <TableHead className="w-20 text-right">Ações</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {conversations.map(c => (
+                    {conversations.map(c => {
+                      const ownerName = getUserName(c.user_id);
+                      return (
                       <TableRow key={c.id}>
-                        <TableCell>{getUserName(c.user_id)}</TableCell>
+                        <TableCell>{ownerName}</TableCell>
                         <TableCell>{c.contact_name || "—"}</TableCell>
                         <TableCell className="text-sm">{c.phone_number}</TableCell>
                         <TableCell>{c.message_count}</TableCell>
                         <TableCell className="text-sm">{formatDate(c.last_message_at)}</TableCell>
                         <TableCell className="text-sm">{formatDate(c.started_at)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2"
+                            disabled={!c.user_id}
+                            title={c.user_id ? "Ver detalhes do usuário dono da conversa" : "Conversa sem usuário vinculado"}
+                            onClick={() => {
+                              if (!c.user_id) return;
+                              setSelectedUserId(c.user_id);
+                              setSelectedUserName(ownerName && ownerName !== "—" ? ownerName : "Usuário");
+                            }}
+                          >
+                            <Eye className="h-4 w-4 mr-1" />
+                            <span className="text-xs">Detalhes</span>
+                          </Button>
+                        </TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
                 {conversations.length === 0 && <p className="text-center text-muted-foreground py-8">Nenhuma conversa</p>}
