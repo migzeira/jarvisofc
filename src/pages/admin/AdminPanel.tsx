@@ -136,7 +136,7 @@ export default function AdminPanel() {
   const loadData = async () => {
     setLoading(true);
     await Promise.all([
-      loadProfiles(), loadPendingProfiles(), loadConversations(), loadSettings(), loadPayments(), loadErrorLogs(),
+      loadProfiles(), loadPendingProfiles(), loadConversations(), loadSettings(), loadPayments(), loadRevenueStats(), loadErrorLogs(),
       loadKirvanoEvents(), loadAnalytics(),
     ]);
     setLastRefresh(new Date());
@@ -228,10 +228,28 @@ export default function AdminPanel() {
     if (data) {
       setPayments(data);
       setPayCount(count || 0);
-      const approved = data.filter((p: any) => p.status === "approved");
-      const revenue = approved.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
-      setStats(s => ({ ...s, totalRevenue: revenue, approvedPayments: approved.length }));
     }
+    // NOTA: antes a receita era calculada aqui em cima de `data` (só 25 linhas
+    // da página atual), então o card "Receita" ficava errado — pior: mudava
+    // ao navegar entre páginas. Cálculo correto agora vive em `loadRevenueStats`.
+  };
+
+  // Soma TODOS os pagamentos approved em uma query dedicada — independente
+  // da paginação da tabela. Limit 10000 é defensivo (muito além do realista
+  // pro estágio atual); quando passar disso, migrar pra RPC com SUM() no Postgres.
+  const loadRevenueStats = async () => {
+    const { data, error } = await supabase
+      .from("kirvano_payments")
+      .select("amount")
+      .eq("status", "approved")
+      .limit(10000) as any;
+    if (error) {
+      console.error("[admin] loadRevenueStats error:", error);
+      return;
+    }
+    const revenue = (data ?? []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+    const approvedCount = (data ?? []).length;
+    setStats(s => ({ ...s, totalRevenue: revenue, approvedPayments: approvedCount }));
   };
 
   const loadErrorLogs = async () => {
