@@ -1,4 +1,4 @@
-import { Home, Wallet, CalendarDays, StickyNote, Settings, User, LogOut, Shield, Bell, X, Zap, BookUser, BookOpen, Sparkles } from "lucide-react";
+import { Home, Wallet, CalendarDays, StickyNote, Settings, LogOut, Shield, Bell, X, Zap, BookUser, BookOpen, Sparkles } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import logoEscrita from "@/assets/logo_escrita.webp";
 import logoIcon from "@/assets/logo_icon.webp";
@@ -30,8 +30,7 @@ const menuItems = [
   { title: "Hábitos", url: "/dashboard/habitos", icon: Zap },
   { title: "Contatos", url: "/dashboard/contatos", icon: BookUser },
   { title: "Google Calendar", url: "/dashboard/integracoes", icon: CalendarDays },
-  { title: "Config. do Agente", url: "/dashboard/agente", icon: Settings },
-  { title: "Meu Perfil", url: "/dashboard/perfil", icon: User },
+  { title: "Configurações", url: "/dashboard/configuracoes", icon: Settings },
 ];
 
 export function AppSidebar() {

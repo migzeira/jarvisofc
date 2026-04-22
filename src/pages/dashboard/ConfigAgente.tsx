@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { Plus, Trash2, Save, Clock } from "lucide-react";
 
-export default function ConfigAgente() {
+export default function ConfigAgente({ hideTitle = false }: { hideTitle?: boolean } = {}) {
   const { user } = useAuth();
   const [config, setConfig] = useState<any>(null);
   const [quickReplies, setQuickReplies] = useState<any[]>([]);
@@ -91,7 +91,7 @@ export default function ConfigAgente() {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <h1 className="text-2xl font-bold">Configurações do Agente</h1>
+      {!hideTitle && <h1 className="text-2xl font-bold">Configurações do Agente</h1>}
 
       <Card className="bg-card border-border">
         <CardHeader><CardTitle className="text-base">Identidade</CardTitle></CardHeader>

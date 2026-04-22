@@ -134,7 +134,7 @@ function StatusBadge({ status }: { status: string | null }) {
 // Component
 // ─────────────────────────────────────────────
 
-export default function MeuPerfil() {
+export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean } = {}) {
   const { user } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -446,10 +446,12 @@ export default function MeuPerfil() {
   return (
     <div className="space-y-6 max-w-lg">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Meu Perfil</h1>
-        <StatusBadge status={profile.account_status} />
-      </div>
+      {!hideTitle && (
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Meu Perfil</h1>
+          <StatusBadge status={profile.account_status} />
+        </div>
+      )}
 
       {/* ── Seu plano ── */}
       <Card className={`border-2 ${

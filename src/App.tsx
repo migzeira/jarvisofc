@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -25,8 +25,7 @@ const Anotacoes = lazy(() => import("./pages/dashboard/Anotacoes"));
 const Lembretes = lazy(() => import("./pages/dashboard/Lembretes"));
 const Habitos = lazy(() => import("./pages/dashboard/Habitos"));
 const Integracoes = lazy(() => import("./pages/dashboard/Integracoes"));
-const ConfigAgente = lazy(() => import("./pages/dashboard/ConfigAgente"));
-const MeuPerfil = lazy(() => import("./pages/dashboard/MeuPerfil"));
+const Configuracoes = lazy(() => import("./pages/dashboard/Configuracoes"));
 const Analytics = lazy(() => import("./pages/dashboard/Analytics"));
 const Contatos = lazy(() => import("./pages/dashboard/Contatos"));
 const AdminPanel = lazy(() => import("./pages/admin/AdminPanel"));
@@ -71,8 +70,10 @@ const App = () => (
                 <Route path="lembretes" element={<Lembretes />} />
                 <Route path="habitos" element={<Habitos />} />
                 <Route path="integracoes" element={<Integracoes />} />
-                <Route path="agente" element={<ConfigAgente />} />
-                <Route path="perfil" element={<MeuPerfil />} />
+                <Route path="configuracoes" element={<Configuracoes />} />
+                {/* Old routes redirect to the unified Configurações page with the right tab pre-selected — keeps existing links working */}
+                <Route path="agente" element={<Navigate to="/dashboard/configuracoes?tab=agente" replace />} />
+                <Route path="perfil" element={<Navigate to="/dashboard/configuracoes?tab=perfil" replace />} />
                 <Route path="analytics" element={<Analytics />} />
                 <Route path="contatos" element={<Contatos />} />
               </Route>
