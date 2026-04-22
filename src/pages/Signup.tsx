@@ -53,7 +53,7 @@ export default function Signup() {
             </Button>
           </div>
           <div className="flex items-center justify-center mb-4">
-            <img src={logoEscrita} alt="Hey Jarvis" className="h-8 w-auto object-contain" />
+            <img src={logoEscrita} alt="Hey Jarvis" fetchPriority="high" decoding="async" className="h-8 w-auto object-contain" />
           </div>
           <CardTitle className="text-xl">Criar sua conta</CardTitle>
           <CardDescription>Comece a usar seu assistente de IA no WhatsApp</CardDescription>

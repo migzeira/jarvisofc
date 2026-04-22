@@ -110,6 +110,9 @@
     <!-- ─── Performance ─────────────────────────────────────────── -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Supabase: sessão é verificada logo no mount do Login (getSession). Preconnect elimina ~200ms da cadeia TLS. -->
+    <link rel="preconnect" href="https://fnilyapvhhygfzcdxqjm.supabase.co" crossorigin />
+    <link rel="dns-prefetch" href="https://fnilyapvhhygfzcdxqjm.supabase.co" />
     <!--
       Fontes não-bloqueantes: carrega como "print" (invisível ao parser),
       troca para "all" quando pronto — elimina render-blocking de fontes.
