@@ -64,7 +64,7 @@ export function AppSidebar() {
       <div className="flex items-center justify-between px-4 h-16 border-b border-border">
         <img src={collapsed ? logoIcon : logoEscrita} alt="Hey Jarvis" className={`object-contain ${collapsed ? "h-8 w-8" : "h-8 w-auto"}`} />
         {isMobile && (
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setOpenMobile(false)}>
+          <Button variant="ghost" size="icon" aria-label="Fechar menu" className="h-8 w-8" onClick={() => setOpenMobile(false)}>
             <X className="h-5 w-5" />
           </Button>
         )}

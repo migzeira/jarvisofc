@@ -25,7 +25,7 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="text-center">
           <div className="flex items-center justify-center gap-2 mb-4">
@@ -54,11 +54,11 @@ export default function ForgotPassword() {
           </form>
         )}
         <div className="px-6 pb-6">
-          <Link to="/login" className="text-sm text-primary hover:underline inline-flex items-center gap-1">
-            <ArrowLeft className="h-3 w-3" /> Voltar ao login
+          <Link to="/login" className="text-sm text-primary underline underline-offset-4 inline-flex items-center gap-1">
+            <ArrowLeft className="h-3 w-3" aria-hidden="true" /> Voltar ao login
           </Link>
         </div>
       </Card>
-    </div>
+    </main>
   );
 }

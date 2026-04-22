@@ -33,7 +33,7 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="text-center">
           <div className="flex items-center justify-center gap-2 mb-4">
@@ -58,6 +58,6 @@ export default function ResetPassword() {
           </CardFooter>
         </form>
       </Card>
-    </div>
+    </main>
   );
 }

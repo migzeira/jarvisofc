@@ -16,6 +16,7 @@ function DashboardHeader() {
         <Button
           variant="ghost"
           size="sm"
+          aria-label={openMobile ? "Fechar menu" : "Abrir menu"}
           className="gap-2 h-8 px-2"
           onClick={toggleSidebar}
         >
@@ -32,6 +33,7 @@ function DashboardHeader() {
         <Button
           variant="ghost"
           size="icon"
+          aria-label="Alternar menu lateral"
           className="h-7 w-7"
           onClick={toggleSidebar}
         >

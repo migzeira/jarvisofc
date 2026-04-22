@@ -52,7 +52,7 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="text-center">
           <div className="flex justify-start mb-2">
@@ -76,7 +76,7 @@ export default function Login() {
               <Label htmlFor="password">Senha</Label>
               <div className="relative">
                 <Input id="password" type={showPassword ? "text" : "password"} placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} required />
-                <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors" onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
+                <button type="button" aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors" onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
@@ -86,7 +86,7 @@ export default function Login() {
                 <Checkbox id="remember" checked={rememberMe} onCheckedChange={(v) => setRememberMe(v === true)} />
                 <Label htmlFor="remember" className="text-sm text-muted-foreground cursor-pointer">Lembrar de mim</Label>
               </div>
-              <Link to="/forgot-password" className="text-sm text-primary hover:underline">Esqueci minha senha</Link>
+              <Link to="/forgot-password" className="text-sm text-primary underline underline-offset-4">Esqueci minha senha</Link>
             </div>
           </CardContent>
           <CardFooter className="flex flex-col gap-3">
@@ -96,11 +96,11 @@ export default function Login() {
             </Button>
             <p className="text-sm text-muted-foreground">
               Não tem conta?{" "}
-              <Link to="/signup" className="text-primary hover:underline">Criar conta</Link>
+              <Link to="/signup" className="text-primary underline underline-offset-4">Criar conta</Link>
             </p>
           </CardFooter>
         </form>
       </Card>
-    </div>
+    </main>
   );
 }

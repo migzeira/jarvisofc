@@ -44,7 +44,7 @@ export default function Signup() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="text-center">
           <div className="flex justify-start mb-2">
@@ -72,7 +72,7 @@ export default function Signup() {
               <Label htmlFor="password">Senha</Label>
               <div className="relative">
                 <Input id="password" type={showPassword ? "text" : "password"} placeholder="Mínimo 6 caracteres" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
-                <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors" onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
+                <button type="button" aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors" onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
@@ -81,9 +81,9 @@ export default function Signup() {
               <Checkbox id="terms" checked={acceptedTerms} onCheckedChange={(v) => setAcceptedTerms(v === true)} className="mt-0.5" />
               <Label htmlFor="terms" className="text-sm text-muted-foreground cursor-pointer leading-relaxed">
                 Li e concordo com os{" "}
-                <Link to="/termos-de-uso" className="text-primary hover:underline" target="_blank">Termos de Uso</Link>
+                <Link to="/termos-de-uso" className="text-primary underline underline-offset-4" target="_blank">Termos de Uso</Link>
                 {" "}e a{" "}
-                <Link to="/politica-de-privacidade" className="text-primary hover:underline" target="_blank">Política de Privacidade</Link>
+                <Link to="/politica-de-privacidade" className="text-primary underline underline-offset-4" target="_blank">Política de Privacidade</Link>
               </Label>
             </div>
           </CardContent>
@@ -94,11 +94,11 @@ export default function Signup() {
             </Button>
             <p className="text-sm text-muted-foreground">
               Já tem conta?{" "}
-              <Link to="/login" className="text-primary hover:underline">Entrar</Link>
+              <Link to="/login" className="text-primary underline underline-offset-4">Entrar</Link>
             </p>
           </CardFooter>
         </form>
       </Card>
-    </div>
+    </main>
   );
 }

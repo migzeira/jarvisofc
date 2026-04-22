@@ -1567,10 +1567,10 @@ export default function Agenda() {
           <Button variant="outline" size="sm" onClick={goToday}>
             Hoje
           </Button>
-          <Button variant="ghost" size="icon" onClick={goPrev}>
+          <Button variant="ghost" size="icon" aria-label="Período anterior" onClick={goPrev}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" onClick={goNext}>
+          <Button variant="ghost" size="icon" aria-label="Próximo período" onClick={goNext}>
             <ChevronRight className="h-4 w-4" />
           </Button>
           <h2 className="text-lg font-semibold capitalize ml-1">

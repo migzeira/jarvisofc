@@ -225,7 +225,7 @@ export default function Integracoes() {
                 <span>Cole exatamente este URL:</span>
                 <div className="flex items-center gap-2 mt-1.5 p-2 bg-muted/40 rounded-md border border-border">
                   <code className="text-xs font-mono flex-1 break-all select-all text-foreground">{callbackUrl}</code>
-                  <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => copyToClipboard(callbackUrl)}>
+                  <Button variant="ghost" size="icon" aria-label="Copiar URL de redirecionamento" className="h-6 w-6 shrink-0" onClick={() => copyToClipboard(callbackUrl)}>
                     <Copy className="h-3.5 w-3.5" />
                   </Button>
                 </div>

@@ -223,7 +223,7 @@ export default function ConfigAgente({ hideTitle = false }: { hideTitle?: boolea
                       <TableCell className="font-mono text-sm">{qr.trigger_text}</TableCell>
                       <TableCell className="text-sm">{qr.reply_text}</TableCell>
                       <TableCell>
-                        <button onClick={() => deleteQuickReply(qr.id)} className="text-muted-foreground hover:text-destructive">
+                        <button aria-label="Remover resposta rápida" onClick={() => deleteQuickReply(qr.id)} className="text-muted-foreground hover:text-destructive">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </TableCell>
@@ -242,7 +242,7 @@ export default function ConfigAgente({ hideTitle = false }: { hideTitle?: boolea
               <Label className="text-xs">Resposta</Label>
               <Input value={newReply} onChange={e => setNewReply(e.target.value)} placeholder="Minha chave PIX é..." />
             </div>
-            <Button variant="outline" onClick={addQuickReply}><Plus className="h-4 w-4" /></Button>
+            <Button variant="outline" aria-label="Adicionar resposta rápida" onClick={addQuickReply}><Plus className="h-4 w-4" /></Button>
           </div>
         </CardContent>
       </Card>
