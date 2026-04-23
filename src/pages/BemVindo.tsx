@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Loader2, CheckCircle2, XCircle, Eye, EyeOff, Sparkles } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, Eye, EyeOff } from "lucide-react";
 import logoEscrita from "@/assets/logo_escrita.webp";
 
 type Status = "loading" | "ready" | "success" | "error";
@@ -138,11 +138,6 @@ export default function BemVindo() {
 
           {status === "ready" && (
             <>
-              <div className="flex justify-center mb-3">
-                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
-                  <Sparkles className="w-8 h-8 text-primary" />
-                </div>
-              </div>
               <CardTitle className="text-xl">Bem-vindo ao Jarvis!</CardTitle>
               <CardDescription>
                 Sua assinatura está ativa. Crie uma senha pra acessar sua conta.
