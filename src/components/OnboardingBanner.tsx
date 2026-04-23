@@ -12,11 +12,11 @@ export function OnboardingBanner() {
       <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-4 py-3 flex items-center gap-3 text-sm">
         <Clock className="h-4 w-4 text-yellow-400 shrink-0" />
         <span className="text-yellow-200">
-          <strong>Conta aguardando aprovação.</strong> Certifique-se de que seu número de WhatsApp está salvo no{" "}
+          <strong>Sua conta não tem um plano ativo.</strong> Ative um plano e registre seu número de WhatsApp no{" "}
           <Link to="/dashboard/perfil" className="underline underline-offset-2 font-semibold">
             Meu Perfil
-          </Link>
-          . Você será notificado assim que o acesso for liberado.
+          </Link>{" "}
+          para utilizar o Jarvis.
         </span>
       </div>
     );

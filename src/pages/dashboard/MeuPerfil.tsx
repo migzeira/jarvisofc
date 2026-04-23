@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { PlanCTAButtons } from "@/components/PlanCTAButtons";
 
 // ─────────────────────────────────────────────
 // Constants
@@ -408,13 +409,21 @@ export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean }
     // Sem plano ativo: account_status != 'active' OU sem access_source
     // (conta nova com plan default 'jarvis_mensal' do trigger NÃO é plano ativo)
     if (profile?.account_status !== "active") return "Sem plano ativo";
-    if (accessSource === "admin_trial") return "Período teste";
     const planName = profile?.plan === "maya_anual" ? "Anual"
       : profile?.plan === "maya_mensal" ? "Mensal"
-      : profile?.plan || "Sem plano";
-    if (accessSource === "admin_plan") return `${planName} (liberado pelo admin)`;
-    if (subscriptionCancelledAt) return `${planName} (cancelado)`;
-    return planName;
+      : null;
+    if (accessSource === "admin_trial") return "Plano liberado pelo admin — Período teste";
+    if (accessSource === "admin_plan") {
+      return planName
+        ? `Plano liberado pelo admin — ${planName}`
+        : "Plano liberado pelo admin";
+    }
+    // Kirvano ou demais fontes
+    if (planName) {
+      const base = `Plano Pro — ${planName}`;
+      return subscriptionCancelledAt ? `${base} (cancelado)` : base;
+    }
+    return "Plano Pro";
   })();
   const accessUntilDate = profile?.access_until ? new Date(profile.access_until) : null;
   const daysLeft = accessUntilDate
@@ -492,14 +501,7 @@ export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean }
             </div>
             <StatusBadge status={profile.account_status} />
           </div>
-          {!hasActivePlan && (
-            <a href="https://heyjarvis.com.br" target="_blank" rel="noopener noreferrer" className="block">
-              <Button className="w-full gap-2" variant="default">
-                <ExternalLink className="h-4 w-4" />
-                Ver planos
-              </Button>
-            </a>
-          )}
+          {!hasActivePlan && <PlanCTAButtons className="pt-1" />}
         </CardContent>
       </Card>
 
@@ -577,11 +579,6 @@ export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean }
                 <p className="mt-0.5 text-violet-300/80 text-xs">
                   Você precisa de uma assinatura ativa (mensal ou anual) para que o Jarvis possa responder no seu número.
                 </p>
-                <a href="https://heyjarvis.com.br" target="_blank" rel="noopener noreferrer" className="inline-block mt-2">
-                  <Button size="sm" variant="outline" className="h-8 text-xs border-violet-500/40 text-violet-200 hover:bg-violet-500/20">
-                    <ExternalLink className="mr-1 h-3 w-3" /> Ver planos
-                  </Button>
-                </a>
               </div>
             </div>
           )}

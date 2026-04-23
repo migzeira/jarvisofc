@@ -13,6 +13,7 @@ import {
   X, Lock, CheckCircle,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { PlanCTAButtons } from "@/components/PlanCTAButtons";
 import { toast } from "sonner";
 import { format, subDays, startOfMonth, endOfMonth, endOfWeek, isToday, isTomorrow, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -332,24 +333,22 @@ export default function DashboardHome() {
       )}
 
       {isPending && !dismissedBanners.has("pending") && (
-        <div className="flex items-center gap-3 p-4 rounded-xl bg-violet-500/10 border border-violet-500/30 text-violet-200">
-          <Lock className="h-5 w-5 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold">Assine um plano para começar</p>
-            <p className="text-xs text-violet-300/80 mt-0.5">Sua conta está sem plano ativo. Assine para cadastrar seu WhatsApp e usar o Jarvis.</p>
-          </div>
-          <a href="https://heyjarvis.com.br" target="_blank" rel="noopener noreferrer" className="shrink-0 mr-2">
-            <button className="text-xs font-medium bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/40 text-violet-100 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
-              <ExternalLink className="h-3.5 w-3.5" /> Ver planos
-            </button>
-          </a>
+        <div className="rounded-xl bg-violet-500/10 border border-violet-500/30 text-violet-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3 relative">
           <button
             onClick={() => dismissBanner("pending")}
             aria-label="Fechar aviso"
-            className="shrink-0 p-1 rounded-md hover:bg-violet-500/20 text-violet-300/70 hover:text-violet-100 transition-colors"
+            className="absolute top-2 right-2 p-1 rounded-md hover:bg-violet-500/20 text-violet-300/70 hover:text-violet-100 transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
+          <div className="flex items-start sm:items-center gap-3 flex-1 min-w-0 pr-6 sm:pr-0">
+            <Lock className="h-5 w-5 shrink-0 mt-0.5 sm:mt-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold">Assine um plano para começar</p>
+              <p className="text-xs text-violet-300/80 mt-0.5">Sua conta está sem plano ativo. Assine para cadastrar seu WhatsApp e usar o Jarvis.</p>
+            </div>
+          </div>
+          <PlanCTAButtons className="sm:shrink-0 sm:mr-6" />
         </div>
       )}
 
