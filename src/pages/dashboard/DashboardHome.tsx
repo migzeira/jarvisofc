@@ -104,6 +104,7 @@ export default function DashboardHome() {
   const [agentConfig, setAgentConfig] = useState<any>(null);
   const [stats, setStats] = useState({ expenses: 0, events: 0, notes: 0, reminders: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
+  const [chartPeriod, setChartPeriod] = useState<7 | 15 | 30>(7);
   const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
   const [pendingReminders, setPendingReminders] = useState<any[]>([]);
   const [recentNotes, setRecentNotes] = useState<any[]>([]);
@@ -134,6 +135,42 @@ export default function DashboardHome() {
     loadData();
   }, [user]);
 
+  // Gráfico de gastos — refetch quando o período muda (7/15/30 dias)
+  useEffect(() => {
+    if (!user) return;
+    loadChart();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, chartPeriod]);
+
+  const loadChart = async () => {
+    const now = new Date();
+    const { data } = await supabase
+      .from("transactions")
+      .select("amount, transaction_date")
+      .eq("user_id", user!.id)
+      .eq("type", "expense")
+      .gte("transaction_date", format(subDays(now, chartPeriod - 1), "yyyy-MM-dd"))
+      .order("transaction_date");
+
+    const dailyTotals: Record<string, number> = {};
+    for (let i = chartPeriod - 1; i >= 0; i--) {
+      dailyTotals[format(subDays(now, i), "yyyy-MM-dd")] = 0;
+    }
+    data?.forEach((t: any) => {
+      if (dailyTotals[t.transaction_date] !== undefined) {
+        dailyTotals[t.transaction_date] += Number(t.amount);
+      }
+    });
+
+    const dateFormat = chartPeriod <= 7 ? "EEE" : "dd/MM";
+    setChartData(
+      Object.entries(dailyTotals).map(([date, total]) => ({
+        date: format(new Date(date + "T12:00:00"), dateFormat, { locale: ptBR }),
+        total,
+      }))
+    );
+  };
+
   // Sincroniza adminBannerDismissed com localStorage sempre que o access_until muda.
   // access_until vem do profile carregado em loadData — por isso depende de [profile].
   useEffect(() => {
@@ -153,7 +190,7 @@ export default function DashboardHome() {
 
     const [
       profileRes, agentRes, expensesRes, eventsRes, notesCountRes,
-      chartRes, upcomingRes, remindersRes, recentNotesRes,
+      upcomingRes, remindersRes, recentNotesRes,
       recentTransRes, recentEventsRes,
     ] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user!.id).single(),
@@ -163,10 +200,10 @@ export default function DashboardHome() {
       // Usa count head pra pegar só o total de notas (sem carregar os IDs).
       // Economiza payload quando user tem centenas de notas.
       supabase.from("notes").select("id", { count: "exact", head: true }).eq("user_id", user!.id),
-      supabase.from("transactions").select("amount, transaction_date").eq("user_id", user!.id).eq("type", "expense").gte("transaction_date", format(subDays(now, 6), "yyyy-MM-dd")).order("transaction_date"),
-      supabase.from("events").select("*").eq("user_id", user!.id).gte("event_date", format(now, "yyyy-MM-dd")).order("event_date").order("event_time").limit(3),
-      // Pending reminders (next 3)
-      supabase.from("reminders").select("id, title, send_at, message").eq("user_id", user!.id).eq("status", "pending").gte("send_at", nowIso).order("send_at").limit(3),
+      // Próximos eventos — busca 10 e filtra eventos do dia cuja hora já passou
+      supabase.from("events").select("*").eq("user_id", user!.id).gte("event_date", format(now, "yyyy-MM-dd")).order("event_date").order("event_time").limit(10),
+      // Pending reminders — exclui habits (que têm card próprio) e followups de evento (duplicam "Próximos")
+      supabase.from("reminders").select("id, title, send_at, message, source, event_id").eq("user_id", user!.id).eq("status", "pending").gte("send_at", nowIso).neq("source", "habit").order("send_at").limit(10),
       // Recent notes (last 3)
       supabase.from("notes").select("id, title, content, created_at, source").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(3),
       // For activity feed
@@ -186,8 +223,31 @@ export default function DashboardHome() {
       reminders: reminderCount,
     });
 
-    setUpcomingEvents(upcomingRes.data ?? []);
-    setPendingReminders(remindersRes.data ?? []);
+    // Próximos — filtra eventos de hoje cuja hora já passou.
+    // All-day events (event_time null) ficam visíveis o dia todo.
+    const todayStr = format(now, "yyyy-MM-dd");
+    const filteredUpcoming = (upcomingRes.data ?? []).filter((e: any) => {
+      if (e.event_date > todayStr) return true;
+      if (e.event_date < todayStr) return false;
+      if (!e.event_time) return true;
+      const [h, m] = String(e.event_time).split(":").map(Number);
+      const evDt = new Date(now);
+      evDt.setHours(h || 0, m || 0, 0, 0);
+      return evDt.getTime() > now.getTime();
+    }).slice(0, 3);
+
+    // Lembretes card — mostra só lembretes "puros" do usuário.
+    // Exclui habits (têm card próprio), event_followup e reminders ligados a evento
+    // (já aparecem em "Próximos" — duplicaria).
+    const filteredReminders = (remindersRes.data ?? []).filter((r: any) => {
+      if (r.source === "habit") return false;
+      if (r.source === "event" || r.source === "event_followup") return false;
+      if (r.event_id) return false;
+      return true;
+    }).slice(0, 3);
+
+    setUpcomingEvents(filteredUpcoming);
+    setPendingReminders(filteredReminders);
     setRecentNotes(recentNotesRes.data ?? []);
 
     // Build activity feed — merge transactions + events, sort by created_at, take 5
@@ -216,22 +276,7 @@ export default function DashboardHome() {
 
     setRecentActivity(activities);
 
-    // Chart: last 7 days
-    const dailyTotals: Record<string, number> = {};
-    for (let i = 6; i >= 0; i--) {
-      dailyTotals[format(subDays(now, i), "yyyy-MM-dd")] = 0;
-    }
-    chartRes.data?.forEach((t: any) => {
-      if (dailyTotals[t.transaction_date] !== undefined) {
-        dailyTotals[t.transaction_date] += Number(t.amount);
-      }
-    });
-    setChartData(
-      Object.entries(dailyTotals).map(([date, total]) => ({
-        date: format(new Date(date + "T12:00:00"), "EEE", { locale: ptBR }),
-        total,
-      }))
-    );
+    // Chart é carregado pelo useEffect separado de chartPeriod (loadChart).
 
     setLoading(false);
   };
@@ -610,8 +655,26 @@ export default function DashboardHome() {
       <div className="grid lg:grid-cols-3 gap-6">
         <Card className="bg-card border-border lg:col-span-2">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <TrendingDown className="h-4 w-4 text-emerald-400" /> Gastos — últimos 7 dias
+            <CardTitle className="text-base flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                <TrendingDown className="h-4 w-4 text-emerald-400" /> Gastos — últimos {chartPeriod} dias
+              </span>
+              <div className="flex gap-1 text-xs font-medium">
+                {([7, 15, 30] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setChartPeriod(p)}
+                    className={`px-2 py-0.5 rounded transition-colors ${
+                      chartPeriod === p
+                        ? "bg-emerald-500/20 text-emerald-300"
+                        : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                    }`}
+                  >
+                    {p}d
+                  </button>
+                ))}
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -631,7 +694,7 @@ export default function DashboardHome() {
             ) : (
               <div className="flex flex-col items-center justify-center py-10 text-center gap-2">
                 <BarChart3 className="h-8 w-8 text-muted-foreground/40" />
-                <p className="text-muted-foreground text-sm">Nenhum gasto registrado nos últimos 7 dias.</p>
+                <p className="text-muted-foreground text-sm">Nenhum gasto registrado nos últimos {chartPeriod} dias.</p>
                 <p className="text-xs text-muted-foreground">Diga para o Jarvis: <span className="font-mono text-violet-400">"Gastei 50 reais no mercado"</span></p>
               </div>
             )}
