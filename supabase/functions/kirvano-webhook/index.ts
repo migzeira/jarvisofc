@@ -287,6 +287,43 @@ async function handleRevoke(userId: string): Promise<void> {
   console.log(`[kirvano] 🚫 Revoked access for user ${userId}`);
 }
 
+/** Convida o cliente por email apos compra aprovada quando ele AINDA NAO tem conta.
+ *  Cria auth.users via admin.inviteUserByEmail → dispara email do Supabase com link
+ *  pra /bem-vindo onde ele define a senha. O trigger handle_new_user (que roda no
+ *  INSERT de auth.users) ja faz match com kirvano_events pendente e cria o profile
+ *  com plano ATIVO, entao quando ele entrar o acesso ja esta liberado.
+ *
+ *  Idempotente: se o email ja existe em auth.users, o invite falha com "already registered"
+ *  e apenas logamos — o fluxo normal (signup manual → trigger match) continua valido. */
+async function inviteNewCustomer(email: string, name: string): Promise<void> {
+  if (!email) return;
+
+  const siteUrl = (await getSetting("site_url")) || Deno.env.get("SITE_URL") || "https://app.heyjarvis.com.br";
+  const redirectTo = `${siteUrl.replace(/\/$/, "")}/bem-vindo`;
+
+  try {
+    const { data, error } = await (supabase.auth.admin as any).inviteUserByEmail(email, {
+      redirectTo,
+      data: name ? { display_name: name } : undefined,
+    });
+
+    if (error) {
+      // "User already registered" e esperado quando cliente ja tem conta — nao e erro real
+      const msg = (error.message ?? "").toLowerCase();
+      if (msg.includes("already") || msg.includes("registered") || msg.includes("exists")) {
+        console.log(`[kirvano] ℹ️ Invite skipped (user ${email} already exists) — signup manual fara match`);
+        return;
+      }
+      console.error(`[kirvano] ⚠️ inviteUserByEmail failed for ${email}:`, error.message);
+      return;
+    }
+
+    console.log(`[kirvano] 📧 Invite sent to ${email} (auth user ${data?.user?.id ?? "?"})`);
+  } catch (err: any) {
+    console.error(`[kirvano] ⚠️ inviteUserByEmail threw for ${email}:`, err?.message ?? err);
+  }
+}
+
 /** Pagamento atrasado — define período de graça e notifica.
  *  Após `overdue_grace_days` (default 7) sem regularizar, o cron
  *  `expire_stale_accounts` suspende automaticamente. */
@@ -366,6 +403,14 @@ async function processEvent(kData: KirvanoData): Promise<void> {
     console.log(
       `[kirvano] ℹ️ No user yet for email="${kData.email}" event="${kData.event}" — event stored, will activate on registration via handle_new_user trigger`
     );
+
+    // Se foi uma ativacao (compra/renovacao), dispara convite automatico:
+    // cria auth user + envia email com link pra /bem-vindo. Zero friccao pro cliente.
+    // Outros eventos (cancel/revoke/overdue) nao geram invite — nao faz sentido
+    // convidar alguem pra conta que ja foi cancelada.
+    if (canonical === "activate") {
+      await inviteNewCustomer(kData.email, kData.name);
+    }
     return;
   }
 
