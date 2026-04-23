@@ -34,3 +34,13 @@ jobs:
         run: supabase functions deploy process-scheduled-broadcasts --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy kirvano-webhook
+        run: supabase functions deploy kirvano-webhook --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy lookup-sale-email
+        run: supabase functions deploy lookup-sale-email --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
