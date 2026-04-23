@@ -7,16 +7,14 @@ type Variant = "violet" | "default";
 
 function PlanButton({
   href,
-  label,
-  price,
-  suffix,
+  line1,
+  line2,
   variant = "violet",
   size = "md",
 }: {
   href: string;
-  label: string;
-  price: string;
-  suffix: string;
+  line1: React.ReactNode;
+  line2: React.ReactNode;
   variant?: Variant;
   size?: "sm" | "md";
 }) {
@@ -28,19 +26,21 @@ function PlanButton({
   const padding = size === "sm" ? "px-3 py-2" : "px-4 py-2.5";
 
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="flex-1 sm:flex-initial">
-      <div className="flex flex-col items-center gap-0.5">
-        <div className="text-[11px] sm:text-xs font-semibold leading-tight text-center">
-          <span className="opacity-80">{label}</span>{" "}
-          <span className="font-bold">{price}</span>
-          <span className="opacity-70">{suffix}</span>
-        </div>
-        <button
-          className={`w-full text-xs font-medium border rounded-lg flex items-center justify-center gap-1.5 transition-colors ${styles} ${padding}`}
-        >
-          <ExternalLink className="h-3.5 w-3.5" /> Assinar
-        </button>
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex-1 flex flex-col items-stretch gap-1.5"
+    >
+      <div className="text-[11px] sm:text-xs leading-tight text-center">
+        <div className="font-semibold">{line1}</div>
+        <div className="opacity-70">{line2}</div>
       </div>
+      <button
+        className={`mt-auto w-full text-xs font-medium border rounded-lg flex items-center justify-center gap-1.5 transition-colors ${styles} ${padding}`}
+      >
+        <ExternalLink className="h-3.5 w-3.5" /> Assinar
+      </button>
     </a>
   );
 }
@@ -55,20 +55,18 @@ export function PlanCTAButtons({
   className?: string;
 }) {
   return (
-    <div className={`flex flex-row gap-2 sm:gap-3 w-full sm:w-auto ${className}`}>
+    <div className={`flex flex-row items-stretch gap-2 sm:gap-3 w-full sm:w-auto ${className}`}>
       <PlanButton
         href={KIRVANO_MENSAL}
-        label="Mensal"
-        price="R$ 29,90"
-        suffix="/mês"
+        line1="Mensal"
+        line2="R$ 29,90/mês"
         variant={variant}
         size={size}
       />
       <PlanButton
         href={KIRVANO_ANUAL}
-        label="Anual 12x"
-        price="R$ 23,91"
-        suffix=" ou R$ 287/ano"
+        line1="Anual 12x R$ 23,91"
+        line2="ou R$ 287/ano"
         variant={variant}
         size={size}
       />
