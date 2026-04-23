@@ -5,63 +5,100 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { CheckCircle2, Mail, AlertTriangle, MessageCircle, Clock, Inbox } from "lucide-react";
 import logoEscrita from "@/assets/logo_escrita.webp";
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co";
+
 /**
  * /obrigado — Thank-you page pos-compra Kirvano.
  *
  * Fluxo:
  *   1) Cliente finaliza compra na Kirvano
- *   2) Kirvano redireciona pra esta pagina com ?email={customer.email}
- *   3) Em paralelo, webhook Kirvano dispara inviteUserByEmail() no Supabase
- *   4) Cliente recebe email com link pra /bem-vindo e define senha
+ *   2) Kirvano redireciona aqui injetando ?ref={sale_id}&kirvano_upsell=<token>
+ *      (a Kirvano NAO suporta placeholders tipo {customer.email} na URL)
+ *   3) Em paralelo, webhook Kirvano grava o evento em kirvano_events e
+ *      dispara inviteUserByEmail() no Supabase (cria auth user + email de ativacao)
+ *   4) Esta pagina chama a edge function lookup-sale-email?ref=<sale_id>
+ *      que retorna o email do cliente (pra mostrar "foi pra xxx@yyy.com")
+ *   5) Cliente recebe email com link pra /bem-vindo e define senha
  *
- * Objetivo desta pagina: deixar cristalino o que ele precisa fazer
- * agora, que email procurar, que pode cair no spam. Zero duvida.
+ * Race condition: webhook e redirect rodam em paralelo. Se o cliente chegar
+ * antes do evento estar gravado, fazemos polling ate aparecer (max 10s).
  */
-// Detecta se um valor de query param é email real (não placeholder literal)
-function isRealEmail(v: string | null): boolean {
+function isRealEmail(v: string | null | undefined): boolean {
   if (!v) return false;
-  const trimmed = v.trim();
+  const trimmed = String(v).trim();
   if (!trimmed) return false;
   if (trimmed.startsWith("{") || trimmed.includes("customer.")) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
 }
 
+async function lookupEmailByRef(ref: string, signal?: AbortSignal): Promise<string | null> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/lookup-sale-email?ref=${encodeURIComponent(ref)}`, {
+      method: "GET",
+      signal,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return isRealEmail(data?.email) ? data.email : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function Obrigado() {
   const [searchParams] = useSearchParams();
   const [email, setEmail] = useState<string>("");
+  const [lookingUp, setLookingUp] = useState<boolean>(false);
 
-  // DEBUG MODE: ativa com ?debug=1 OU quando há params v1/v2/v3/v4 (teste de placeholder Kirvano)
-  const debugMode =
-    searchParams.get("debug") === "1" ||
-    ["v1", "v2", "v3", "v4"].some((k) => searchParams.get(k) !== null);
+  // Debug panel so ativa com ?debug=1 (usado pra troubleshoot quando necessario)
+  const debugMode = searchParams.get("debug") === "1";
 
-  // Coleta todos query params pra inspeção no modo debug
   const allParams: Array<{ key: string; value: string; isEmail: boolean }> = [];
   searchParams.forEach((value, key) => {
     allParams.push({ key, value, isEmail: isRealEmail(value) });
   });
 
   useEffect(() => {
-    // Tenta email direto primeiro; se for placeholder literal, tenta as variantes v1-v4
-    const direct = searchParams.get("email");
-    if (isRealEmail(direct)) {
-      setEmail(direct!);
-      return;
-    }
-    for (const k of ["v1", "v2", "v3", "v4"]) {
-      const v = searchParams.get(k);
-      if (isRealEmail(v)) {
-        setEmail(v!);
-        return;
-      }
-    }
-    setEmail("");
-  }, [searchParams]);
-
-  // Log pra inspeção no console (sempre)
-  useEffect(() => {
     // eslint-disable-next-line no-console
     console.log("[Obrigado] query params recebidos:", Object.fromEntries(searchParams.entries()));
+
+    let cancelled = false;
+    const abort = new AbortController();
+
+    const resolveEmail = async () => {
+      // 1) Email direto na URL (caso Kirvano venha a suportar placeholder no futuro)
+      const direct = searchParams.get("email");
+      if (isRealEmail(direct)) {
+        setEmail(direct!);
+        return;
+      }
+
+      // 2) Lookup via ref (sale_id) — edge function consulta kirvano_events
+      const ref = (searchParams.get("ref") ?? "").trim();
+      if (!ref) return;
+
+      setLookingUp(true);
+      // Polling: webhook pode estar processando. Tenta 5x com ~1.5s de espera.
+      const delays = [0, 1500, 2000, 2500, 3000];
+      for (const delay of delays) {
+        if (cancelled) return;
+        if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+        const found = await lookupEmailByRef(ref, abort.signal);
+        if (cancelled) return;
+        if (found) {
+          setEmail(found);
+          setLookingUp(false);
+          return;
+        }
+      }
+      setLookingUp(false);
+    };
+
+    resolveEmail();
+    return () => {
+      cancelled = true;
+      abort.abort();
+    };
   }, [searchParams]);
 
   return (
@@ -136,7 +173,7 @@ export default function Obrigado() {
             )}
 
             {/* Email usado */}
-            {email && (
+            {email ? (
               <div className="rounded-lg bg-accent/40 border border-border p-4">
                 <div className="flex items-start gap-3">
                   <Mail className="w-5 h-5 text-primary shrink-0 mt-0.5" />
@@ -153,7 +190,21 @@ export default function Obrigado() {
                   </div>
                 </div>
               </div>
-            )}
+            ) : lookingUp ? (
+              <div className="rounded-lg bg-accent/40 border border-border p-4">
+                <div className="flex items-start gap-3">
+                  <Mail className="w-5 h-5 text-primary shrink-0 mt-0.5 animate-pulse" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
+                      Verificando sua compra...
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Estamos confirmando os dados. Isso leva alguns segundos.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {/* Proximos passos */}
             <div>
