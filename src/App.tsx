@@ -13,6 +13,7 @@ const Login = lazy(() => import("./pages/Login"));
 const Signup = lazy(() => import("./pages/Signup"));
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const EmailConfirmed = lazy(() => import("./pages/EmailConfirmed"));
 const TermosDeUso = lazy(() => import("./pages/TermosDeUso"));
 const PoliticaPrivacidade = lazy(() => import("./pages/PoliticaPrivacidade"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -62,6 +63,8 @@ const App = () => (
               <Route path="/politica-de-privacidade" element={<PoliticaPrivacidade />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/email-confirmado" element={<EmailConfirmed />} />
+              <Route path="/auth/callback" element={<EmailConfirmed />} />
               <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
                 <Route index element={<DashboardHome />} />
                 <Route path="financas" element={<Financas />} />
