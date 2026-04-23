@@ -244,10 +244,10 @@ export default function AdminPanel() {
 
     let q = supabase
       .from("profiles")
-      .select("id, display_name, phone_number, whatsapp_lid, created_at, account_status", { count: "exact" });
+      .select("id, display_name, email, phone_number, whatsapp_lid, created_at, account_status", { count: "exact" });
 
     if (search) {
-      q = q.or(`display_name.ilike.%${search}%,phone_number.ilike.%${search}%`);
+      q = q.or(`display_name.ilike.%${search}%,phone_number.ilike.%${search}%,email.ilike.%${search}%`);
     }
 
     const { data, count, error } = await q
@@ -506,8 +506,8 @@ export default function AdminPanel() {
     const search = debouncedUserSearch.replace(/[%,]/g, "");
     let q = supabase
       .from("profiles")
-      .select("id, display_name, phone_number, whatsapp_lid, created_at, account_status");
-    if (search) q = q.or(`display_name.ilike.%${search}%,phone_number.ilike.%${search}%`);
+      .select("id, display_name, email, phone_number, whatsapp_lid, created_at, account_status");
+    if (search) q = q.or(`display_name.ilike.%${search}%,phone_number.ilike.%${search}%,email.ilike.%${search}%`);
     return q.order("created_at", { ascending: false });
   };
 
@@ -1117,7 +1117,7 @@ export default function AdminPanel() {
               <CardContent>
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>Nome</TableHead><TableHead>Telefone</TableHead>
+                    <TableHead>Nome</TableHead><TableHead>Email</TableHead><TableHead>Telefone</TableHead>
                     <TableHead>Status</TableHead><TableHead>WhatsApp</TableHead><TableHead>Cadastro</TableHead>
                     <TableHead></TableHead>
                   </TableRow></TableHeader>
@@ -1125,6 +1125,7 @@ export default function AdminPanel() {
                     {filteredProfiles.map(p => (
                       <TableRow key={p.id}>
                         <TableCell className="font-medium">{p.display_name || "—"}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-[220px] truncate" title={p.email || ""}>{p.email || "—"}</TableCell>
                         <TableCell className="text-sm">{p.phone_number || "—"}</TableCell>
                         <TableCell>{statusBadge(p.account_status)}</TableCell>
                         <TableCell>

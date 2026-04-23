@@ -74,8 +74,8 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
   const [notes, setNotes] = useState<any[]>([]);
   const [activatingDays, setActivatingDays] = useState("");
   // Rate limit frontend: evita múltiplos cliques simultâneos em ações admin.
-  // Valor = ID da ação em curso (ex: "mensal", "anual", "trial", "permanent", "suspend", "pause_agent").
-  // Botões com outro ID rodando ficam disabled.
+  // Valor = ID da ação em curso (ex: "mensal", "anual", "trial", "permanent", "suspend",
+  // "pause_agent", "pause_payment", "reactivate"). Botões com outro ID rodando ficam disabled.
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<{
     totalMessages: number;
@@ -239,6 +239,13 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
       return false;
     }
     setAgentConfig((c: any) => c ? { ...c, is_active: true } : { user_id: userId, is_active: true });
+    // Re-fetch depois do upsert pra pegar a row completa (id, agent_name, timestamps),
+    // garantindo que qualquer render posterior use o estado real do DB — se isso falhar,
+    // mantemos o setAgentConfig otimista acima pra UI nao regredir.
+    try {
+      const { data: fresh } = await (supabase.from("agent_configs").select("*").eq("user_id", userId).maybeSingle() as any);
+      if (fresh) setAgentConfig(fresh);
+    } catch { /* ignore — estado otimista ja cobriu */ }
     return true;
   };
 
@@ -331,6 +338,67 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
         setProfile((p: any) => ({ ...p, account_status: "suspended", access_until: null, access_source: null, subscription_cancelled_at: null }));
         onProfileUpdate?.();
       }
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  // Pausa por falta de pagamento: manda a conta pra estado "pending".
+  // Diferença pra Suspender: nao bloqueia o acesso pro suporte, so zera o plano
+  // — cliente ve banner amarelo + CTAs Kirvano no dashboard e pode se auto-reativar
+  // renovando. Zera access_until/source pra nao dar falso "ativo" e pausa agente.
+  const handlePausePayment = async () => {
+    if (actionInProgress) return;
+    if (!window.confirm(`Pausar a conta de ${userName} por falta de pagamento? O Jarvis para de responder e o cliente vera o CTA de renovacao.`)) return;
+    setActionInProgress("pause_payment");
+    try {
+      const { error } = await (supabase.from("profiles").update({
+        account_status: "pending",
+        access_until: null,
+        access_source: null,
+        subscription_cancelled_at: new Date().toISOString(),
+      } as any).eq("id", userId) as any);
+      if (error) { toast.error("Erro ao pausar conta"); return; }
+      // Pausa agente via upsert (user legado pode nao ter row em agent_configs)
+      await (supabase.from("agent_configs").upsert({
+        user_id: userId,
+        is_active: false,
+      } as any, { onConflict: "user_id" }) as any);
+      toast.success("Conta pausada por falta de pagamento. Cliente vera o CTA de renovacao.");
+      setProfile((p: any) => ({ ...p, account_status: "pending", access_until: null, access_source: null, subscription_cancelled_at: new Date().toISOString() }));
+      setAgentConfig((c: any) => c ? { ...c, is_active: false } : { user_id: userId, is_active: false });
+      onProfileUpdate?.();
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  // Reativa conta suspensa. Se ainda tiver access_until valido (ou for permanente
+  // vinda de admin_plan sem expiracao), volta pra "active" + agente on.
+  // Caso contrario, volta pra "pending" (banner amarelo + CTAs Kirvano) sem agente,
+  // pra admin decidir separadamente se quer liberar um novo plano/dias.
+  const handleReactivate = async () => {
+    if (actionInProgress) return;
+    setActionInProgress("reactivate");
+    try {
+      const now = new Date();
+      const hasFutureAccess = profile?.access_until && new Date(profile.access_until) > now;
+      const hasPermanent = profile?.access_source === "admin_plan" && !profile?.access_until;
+      const shouldActivate = hasFutureAccess || hasPermanent;
+
+      const { error } = await (supabase.from("profiles").update({
+        account_status: shouldActivate ? "active" : "pending",
+      } as any).eq("id", userId) as any);
+      if (error) { toast.error("Erro ao reativar"); return; }
+
+      if (shouldActivate) {
+        await ensureAgentActive();
+        toast.success("Conta reativada e agente ligado.");
+      } else {
+        toast.success("Conta reativada, mas sem plano ativo. Cliente vera o CTA de renovacao.");
+      }
+      setProfile((p: any) => ({ ...p, account_status: shouldActivate ? "active" : "pending" }));
+      onProfileUpdate?.();
     } finally {
       setActionInProgress(null);
     }
@@ -514,9 +582,14 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
               </div>
 
               <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
-                {profile?.account_status !== "active" && (
+                {profile?.account_status !== "active" && profile?.account_status !== "suspended" && (
                   <Button size="sm" variant="default" className="h-8 text-xs" disabled={!!actionInProgress} onClick={handleActivatePermanent}>
                     {actionInProgress === "permanent" ? "Ativando..." : "Ativar permanente"}
+                  </Button>
+                )}
+                {profile?.account_status === "suspended" && (
+                  <Button size="sm" variant="default" className="h-8 text-xs bg-green-600 hover:bg-green-500" disabled={!!actionInProgress} onClick={handleReactivate}>
+                    {actionInProgress === "reactivate" ? "Reativando..." : "Reativar conta"}
                   </Button>
                 )}
                 {agentConfig && agentConfig.is_active && profile?.account_status === "active" && (
@@ -527,6 +600,11 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
                 {agentConfig && !agentConfig.is_active && profile?.account_status === "active" && (
                   <Button size="sm" variant="default" className="h-8 text-xs bg-blue-600 hover:bg-blue-500" disabled={!!actionInProgress} onClick={handleResumeAgent}>
                     {actionInProgress === "resume_agent" ? "Retomando..." : "Retomar agente"}
+                  </Button>
+                )}
+                {profile?.account_status === "active" && (
+                  <Button size="sm" variant="outline" className="h-8 text-xs border-yellow-500/40 text-yellow-300 hover:bg-yellow-500/10" disabled={!!actionInProgress} onClick={handlePausePayment}>
+                    {actionInProgress === "pause_payment" ? "Pausando..." : "Pausar por falta de pagamento"}
                   </Button>
                 )}
                 {profile?.account_status !== "suspended" && (
