@@ -17,13 +17,51 @@ import logoEscrita from "@/assets/logo_escrita.webp";
  * Objetivo desta pagina: deixar cristalino o que ele precisa fazer
  * agora, que email procurar, que pode cair no spam. Zero duvida.
  */
+// Detecta se um valor de query param é email real (não placeholder literal)
+function isRealEmail(v: string | null): boolean {
+  if (!v) return false;
+  const trimmed = v.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("{") || trimmed.includes("customer.")) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+}
+
 export default function Obrigado() {
   const [searchParams] = useSearchParams();
   const [email, setEmail] = useState<string>("");
 
+  // DEBUG MODE: ativa com ?debug=1 OU quando há params v1/v2/v3/v4 (teste de placeholder Kirvano)
+  const debugMode =
+    searchParams.get("debug") === "1" ||
+    ["v1", "v2", "v3", "v4"].some((k) => searchParams.get(k) !== null);
+
+  // Coleta todos query params pra inspeção no modo debug
+  const allParams: Array<{ key: string; value: string; isEmail: boolean }> = [];
+  searchParams.forEach((value, key) => {
+    allParams.push({ key, value, isEmail: isRealEmail(value) });
+  });
+
   useEffect(() => {
-    const e = searchParams.get("email") || "";
-    setEmail(e);
+    // Tenta email direto primeiro; se for placeholder literal, tenta as variantes v1-v4
+    const direct = searchParams.get("email");
+    if (isRealEmail(direct)) {
+      setEmail(direct!);
+      return;
+    }
+    for (const k of ["v1", "v2", "v3", "v4"]) {
+      const v = searchParams.get(k);
+      if (isRealEmail(v)) {
+        setEmail(v!);
+        return;
+      }
+    }
+    setEmail("");
+  }, [searchParams]);
+
+  // Log pra inspeção no console (sempre)
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[Obrigado] query params recebidos:", Object.fromEntries(searchParams.entries()));
   }, [searchParams]);
 
   return (
@@ -53,6 +91,50 @@ export default function Obrigado() {
           </CardHeader>
 
           <CardContent className="space-y-5">
+            {/* DEBUG PANEL — teste de placeholder Kirvano (aparece só em modo debug) */}
+            {debugMode && (
+              <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/40 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-yellow-400" />
+                  <p className="text-sm font-bold text-yellow-200 uppercase tracking-wider">
+                    Modo Debug — Teste Kirvano
+                  </p>
+                </div>
+                <p className="text-xs text-yellow-100/80">
+                  Query params recebidos da Kirvano. O que virou email real é o placeholder correto.
+                </p>
+                <div className="space-y-1.5 font-mono text-xs">
+                  {allParams.length === 0 ? (
+                    <p className="text-yellow-200/70 italic">Nenhum query param recebido.</p>
+                  ) : (
+                    allParams.map((p) => (
+                      <div
+                        key={p.key}
+                        className={`flex items-start gap-2 p-2 rounded ${
+                          p.isEmail ? "bg-green-500/20 border border-green-500/40" : "bg-black/20"
+                        }`}
+                      >
+                        <span className={`font-bold shrink-0 ${p.isEmail ? "text-green-300" : "text-yellow-300"}`}>
+                          {p.key}=
+                        </span>
+                        <span className={`break-all ${p.isEmail ? "text-green-100" : "text-yellow-100/70"}`}>
+                          {p.value}
+                        </span>
+                        {p.isEmail && (
+                          <span className="ml-auto text-[10px] font-bold text-green-300 shrink-0">
+                            ✓ EMAIL OK
+                          </span>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <p className="text-[11px] text-yellow-100/60 italic">
+                  Quando souber qual placeholder funciona, ajuste a thank-you URL da Kirvano pra usar só <code>?email=&lt;placeholder&gt;</code>.
+                </p>
+              </div>
+            )}
+
             {/* Email usado */}
             {email && (
               <div className="rounded-lg bg-accent/40 border border-border p-4">
