@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { CheckCircle2, Mail, AlertTriangle, MessageCircle, Clock, Inbox } from "lucide-react";
+import { CheckCircle2, Mail, AlertTriangle, MessageCircle, Clock, Inbox, LogIn, ArrowRight } from "lucide-react";
 import logoEscrita from "@/assets/logo_escrita.webp";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co";
@@ -244,49 +244,39 @@ export default function Obrigado() {
             <div className="flex items-start gap-3 rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
               <Clock className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
               <p className="text-xs text-blue-300/90">
-                O email pode levar <strong>até 5 minutos</strong> pra chegar. Se passar disso, chama a gente no WhatsApp.
+                O email pode levar <strong>até 5 minutos</strong> pra chegar. Enquanto isso, verifique também o spam.
               </p>
             </div>
           </CardContent>
         </Card>
 
-        {/* Suporte */}
-        <Card className="bg-card border-border mb-4">
-          <CardContent className="pt-5 pb-5">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                <MessageCircle className="w-5 h-5 text-primary" />
+        {/* CTA destacado: ja tem conta */}
+        <Card className="bg-gradient-to-br from-primary/15 via-primary/5 to-transparent border-primary/40 mb-4 shadow-[0_0_40px_-12px] shadow-primary/30">
+          <CardContent className="pt-6 pb-6">
+            <div className="flex flex-col items-center text-center gap-4">
+              <div className="w-14 h-14 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center">
+                <LogIn className="w-7 h-7 text-primary" />
               </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-semibold text-foreground">
-                  Algum problema? Fala com a gente
+              <div>
+                <h3 className="text-lg font-bold text-foreground">
+                  Já tem uma conta?
                 </h3>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Se o email não chegou, se clicou e deu erro, qualquer dúvida — estamos aqui.
+                <p className="text-sm text-muted-foreground mt-1">
+                  Entre direto no Jarvis e comece a usar agora mesmo.
                 </p>
-                <a
-                  href="https://wa.me/5511954643833"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 mt-3 text-sm font-medium text-primary hover:text-primary/80 transition-colors"
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  Suporte via WhatsApp
-                </a>
               </div>
+              <Link to="/login" className="w-full sm:w-auto">
+                <Button
+                  size="lg"
+                  className="w-full sm:w-auto font-semibold gap-2 px-8 shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
+                >
+                  Entrar no Jarvis
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>
-
-        {/* CTA alternativo: ja tem conta */}
-        <div className="text-center">
-          <p className="text-xs text-muted-foreground">
-            Já tem uma conta?{" "}
-            <Link to="/login" className="text-primary hover:underline font-medium">
-              Entrar no Jarvis
-            </Link>
-          </p>
-        </div>
       </div>
     </main>
   );
