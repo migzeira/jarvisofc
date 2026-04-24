@@ -204,7 +204,24 @@ export default function Obrigado() {
                   </div>
                 </div>
               </div>
-            ) : null}
+            ) : (
+              <div className="rounded-lg bg-accent/40 border border-border p-4">
+                <div className="flex items-start gap-3">
+                  <Mail className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
+                      Email da compra
+                    </p>
+                    <p className="text-sm font-medium text-foreground mt-1">
+                      Verifique o email que você cadastrou na compra.
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      É pra este email que enviamos o link de acesso.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Proximos passos */}
             <div>
