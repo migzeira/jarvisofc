@@ -96,13 +96,19 @@ export async function extractTransactions(
 Cada item: { "amount": número, "description": string, "type": "expense" ou "income", "category": uma de [${catList}], "installments": número ou null }
 
 REGRAS IMPORTANTES:
-1. Se detectar padrão "NÚMERO CATEGORIA" (ex: "340 gasolina", "200 pedagio", "100 bar"), assuma que é um GASTO (expense).
-   - Exemplos: "340 gasolina" = R$ 340 em transporte; "100 uber" = R$ 100 em transporte; "50 netflix" = R$ 50 em lazer
+1. EXPENSE vs INCOME — decida pelo CONTEXTO da mensagem:
+   - INCOME (recebimento): se o texto tem "salário", "salario", "renda", "receita", "rendimento",
+     "freelance", "freela", "bônus", "bonus", "13o", "13º", "décimo terceiro", "recebimento",
+     "pagamento único", "recebi", "ganhei", "entrou", "caiu na conta", "comissão", "venda",
+     "cliente pagou", "caiu", "creditou".
+   - EXPENSE (gasto): qualquer outro padrão sem palavras de income; padrão "NÚMERO CATEGORIA"
+     (ex: "340 gasolina", "100 uber", "50 netflix") sem contexto de income → assuma EXPENSE.
 2. Escolha a categoria que melhor descreve. Se nenhuma encaixa exatamente, mapeie para a mais próxima:
    - bar, pub, balada → lazer
    - pedagio, estacionamento → transporte
    - uber, 99, taxi → transporte
    - açai, pizza, hamburguer → alimentacao
+   - salário, freelance, freela, bônus, 13o, comissão, venda → trabalho
    - Se ainda assim não encaixar, use "outros"
 3. Usuário com categorias personalizadas? Use elas quando fizer sentido.
 
@@ -110,17 +116,30 @@ REGRAS IMPORTANTES:
    - Retorne o amount como o VALOR TOTAL da compra (NÃO divida pelo número de parcelas)
    - Preencha "installments" com o número de parcelas (ex: 3, 6, 12)
    - Se NÃO detectar parcelamento: "installments" deve ser null
+   - Parcelamento só faz sentido para EXPENSE; para INCOME use installments: null
+
+5. Valores com sufixo "k" significam milhares: "20k" = 20000, "1.5k" = 1500, "3k" = 3000.
 
 Texto: "${text}"
 
-Exemplos:
+Exemplos EXPENSE:
 "340 gasolina" → { "amount": 340, "description": "Gasolina", "type": "expense", "category": "transporte", "installments": null }
 "gastei 200 de gasolina" → { "amount": 200, "description": "Gasolina", "type": "expense", "category": "transporte", "installments": null }
 "comprei celular 300 em 3x" → { "amount": 300, "description": "Celular", "type": "expense", "category": "outros", "installments": 3 }
 "sofá 1200 parcelado em 12x" → { "amount": 1200, "description": "Sofá", "type": "expense", "category": "outros", "installments": 12 }
 "comprei tv 2000 em 10 vezes" → { "amount": 2000, "description": "TV", "type": "expense", "category": "outros", "installments": 10 }
 "paguei 500 no mercado" → { "amount": 500, "description": "Mercado", "type": "expense", "category": "alimentacao", "installments": null }
+
+Exemplos INCOME:
+"salário 20k" → { "amount": 20000, "description": "Salário", "type": "income", "category": "trabalho", "installments": null }
+"salario 8000" → { "amount": 8000, "description": "Salário", "type": "income", "category": "trabalho", "installments": null }
 "recebi 1000 de freela" → { "amount": 1000, "description": "Freela", "type": "income", "category": "trabalho", "installments": null }
+"freelance 1500" → { "amount": 1500, "description": "Freelance", "type": "income", "category": "trabalho", "installments": null }
+"bonus 500" → { "amount": 500, "description": "Bônus", "type": "income", "category": "trabalho", "installments": null }
+"13o de 8000" → { "amount": 8000, "description": "13º salário", "type": "income", "category": "trabalho", "installments": null }
+"pagamento único 20k registra hoje" → { "amount": 20000, "description": "Pagamento único", "type": "income", "category": "outros", "installments": null }
+"registra receita de 20k hoje" → { "amount": 20000, "description": "Receita", "type": "income", "category": "outros", "installments": null }
+"recebi 5000 do cliente" → { "amount": 5000, "description": "Cliente", "type": "income", "category": "trabalho", "installments": null }
 
 Responda SOMENTE com o JSON, sem explicações.`;
 

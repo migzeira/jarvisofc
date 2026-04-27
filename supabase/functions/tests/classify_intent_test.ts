@@ -905,3 +905,137 @@ Deno.test("regressão - isReminderAtTime('só na hora') ainda retorna true", () 
 Deno.test("regressão - parseMinutes('30 min') ainda retorna 30", () => {
   assertEquals(parseMinutes("30 min"), 30);
 });
+
+// ─────────────────────────────────────────────
+// finance_record — formato sem verbo (substantivo + número)
+// (cobre o bug do Guilherme: "salário 20k" virou ai_chat,
+//  "registra receita de 20k hoje" virou notes_save)
+// ─────────────────────────────────────────────
+
+// ── Salário / renda / receita / freelance / bônus + número ──
+
+Deno.test("finance_record - 'salário 20k' → finance_record", () => {
+  assertEquals(classifyIntent("salário 20k"), "finance_record");
+});
+
+Deno.test("finance_record - 'salario 20000' → finance_record", () => {
+  assertEquals(classifyIntent("salario 20000"), "finance_record");
+});
+
+Deno.test("finance_record - 'salário de 20000' → finance_record", () => {
+  assertEquals(classifyIntent("salário de 20000"), "finance_record");
+});
+
+Deno.test("finance_record - 'salário de R$ 5000' → finance_record", () => {
+  assertEquals(classifyIntent("salário de R$ 5000"), "finance_record");
+});
+
+Deno.test("finance_record - 'renda 5000' → finance_record", () => {
+  assertEquals(classifyIntent("renda 5000"), "finance_record");
+});
+
+Deno.test("finance_record - 'receita 5000' → finance_record", () => {
+  assertEquals(classifyIntent("receita 5000"), "finance_record");
+});
+
+Deno.test("finance_record - 'freelance 1500' → finance_record", () => {
+  assertEquals(classifyIntent("freelance 1500"), "finance_record");
+});
+
+Deno.test("finance_record - 'freela 800' → finance_record", () => {
+  assertEquals(classifyIntent("freela 800"), "finance_record");
+});
+
+Deno.test("finance_record - 'bonus 500' → finance_record", () => {
+  assertEquals(classifyIntent("bonus 500"), "finance_record");
+});
+
+Deno.test("finance_record - 'rendimento 200' → finance_record", () => {
+  assertEquals(classifyIntent("rendimento 200"), "finance_record");
+});
+
+Deno.test("finance_record - 'pagamento único 20k registra hoje' → finance_record", () => {
+  assertEquals(classifyIntent("pagamento único 20k registra hoje"), "finance_record");
+});
+
+Deno.test("finance_record - 'recebimento 5000' → finance_record", () => {
+  assertEquals(classifyIntent("recebimento 5000"), "finance_record");
+});
+
+// ── "registra/salva/anota" + tipo financeiro ──
+
+Deno.test("finance_record - 'registra receita de 20k hoje' → finance_record (não notes_save!)", () => {
+  assertEquals(classifyIntent("registra receita de 20k hoje"), "finance_record");
+});
+
+Deno.test("finance_record - 'registra salário 20k' → finance_record", () => {
+  assertEquals(classifyIntent("registra salário 20k"), "finance_record");
+});
+
+Deno.test("finance_record - 'salva uma despesa de 50' → finance_record", () => {
+  assertEquals(classifyIntent("salva uma despesa de 50"), "finance_record");
+});
+
+Deno.test("finance_record - 'anota um gasto de 100' → finance_record", () => {
+  assertEquals(classifyIntent("anota um gasto de 100"), "finance_record");
+});
+
+Deno.test("finance_record - 'registra pagamento de 500' → finance_record", () => {
+  assertEquals(classifyIntent("registra pagamento de 500"), "finance_record");
+});
+
+Deno.test("finance_record - 'registra recebimento 1000' → finance_record", () => {
+  assertEquals(classifyIntent("registra recebimento 1000"), "finance_record");
+});
+
+// ── REGRESSÃO: notes_save continua pegando textos sem padrão financeiro claro ──
+
+Deno.test("regressão - 'anota a receita de bolo' continua notes_save (sem número direto)", () => {
+  assertEquals(classifyIntent("anota a receita de bolo"), "notes_save");
+});
+
+Deno.test("regressão - 'anota o salário do João' continua notes_save (não começa com salário)", () => {
+  assertEquals(classifyIntent("anota o salário do João"), "notes_save");
+});
+
+Deno.test("regressão - 'registra uma anotação importante' continua notes_save", () => {
+  assertEquals(classifyIntent("registra uma anotação importante"), "notes_save");
+});
+
+Deno.test("regressão - 'anota essa ideia' continua notes_save", () => {
+  assertEquals(classifyIntent("anota essa ideia"), "notes_save");
+});
+
+// ── REGRESSÃO: finance_record com verbo (regex original) intacto ──
+
+Deno.test("regressão - 'gastei 50 no almoço' continua finance_record", () => {
+  assertEquals(classifyIntent("gastei 50 no almoço"), "finance_record");
+});
+
+Deno.test("regressão - 'paguei 1500 de aluguel' continua finance_record", () => {
+  assertEquals(classifyIntent("paguei 1500 de aluguel"), "finance_record");
+});
+
+Deno.test("regressão - 'recebi meu salário' continua finance_record", () => {
+  assertEquals(classifyIntent("recebi meu salário"), "finance_record");
+});
+
+// ── REGRESSÃO: recurring_create continua disparando antes (palavra-chave + "todo mês") ──
+
+Deno.test("regressão - 'salário 8000 todo mês' continua recurring_create", () => {
+  assertEquals(classifyIntent("salário 8000 todo mês"), "recurring_create");
+});
+
+Deno.test("regressão - 'aluguel 1500 todo dia 5' continua recurring_create", () => {
+  assertEquals(classifyIntent("aluguel 1500 todo dia 5"), "recurring_create");
+});
+
+// ── REGRESSÃO: finance_report continua disparando antes (com "quanto", "meus gastos" etc.) ──
+
+Deno.test("regressão - 'quanto recebi esse mês' continua finance_report", () => {
+  assertEquals(classifyIntent("quanto recebi esse mês"), "finance_report");
+});
+
+Deno.test("regressão - 'meus gastos do mês' continua finance_report", () => {
+  assertEquals(classifyIntent("meus gastos do mês"), "finance_report");
+});

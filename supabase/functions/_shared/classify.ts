@@ -175,7 +175,18 @@ export function classifyIntent(msg: string): Intent {
   )
     return "finance_report";
 
-  // Registro financeiro — expandido
+  // Registro financeiro — formato SEM verbo explícito (substantivo + número).
+  // Cobre casos como "salário 20k", "renda 5000", "freelance 1500", "pagamento único 20k",
+  // "registra receita de 20k hoje" — antes seriam capturados por notes_save por engano.
+  // Restritivo de propósito: exige a palavra-chave NO INÍCIO + número próximo,
+  // ou "registra/salva/anota" + tipo financeiro explícito.
+  if (
+    /^(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|pagamento\s+unico)\s+(de\s+)?(r\$\s*)?\d/.test(m) ||
+    /^(registra|registrar|salva|salvar|anota|anotar)\s+(uma?\s+)?(receita|despesa|gasto|salario|renda|rendimento|pagamento|ganho|recebimento|entrada)\b/.test(m)
+  )
+    return "finance_record";
+
+  // Registro financeiro — expandido (formato com verbo)
   if (
     /gastei|comprei|paguei|recebi|ganhei|custou|vale |custa |despesa|despendi|gasei|gasto|gasta|sai|saiu|de quanto/.test(m)
   )
