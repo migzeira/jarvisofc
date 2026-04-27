@@ -1,9 +1,249 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
 const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
 const GROQ_KEY = Deno.env.get("GROQ_API_KEY") ?? "";
+const OPENAI_KEY_ENV = Deno.env.get("OPENAI_API_KEY") ?? ""; // fallback secundário se não estiver em app_settings
+
+// Cliente Supabase interno (usa service_role) pra ler app_settings e gravar ai_usage_log.
+// Lazy: só cria se as env vars existirem (evita quebrar testes locais).
+const _aiSupabase = (() => {
+  const url = Deno.env.get("SUPABASE_URL") ?? "";
+  const srk = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (!url || !srk) return null;
+  return createClient(url, srk);
+})();
 
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+// ─────────────────────────────────────────────
+// AI ROUTER — Claude (default) + OpenAI (opcional, mais barato pra chat)
+// ─────────────────────────────────────────────
+// Comportamento:
+//   - Default: usa Claude (zero mudança vs comportamento original)
+//   - Se admin definir ai_chat_provider="openai" + openai_api_key no painel,
+//     funções migradas (assistantChat / classifyReminderWithAI /
+//     analyzeForwardedContent) chamam GPT-4o-mini.
+//   - Se OpenAI falhar, fallback automático pra Claude (sem afetar UX).
+//   - Cada chamada é logada em public.ai_usage_log pra acompanhar custo.
+// ─────────────────────────────────────────────
+
+type AIProvider = "claude" | "openai";
+
+interface AIConfig {
+  provider: AIProvider;
+  openaiKey: string;
+}
+
+// Cache em memória (60s) — evita ler app_settings a cada chamada.
+let _aiConfigCache: AIConfig | null = null;
+let _aiConfigCacheExpiry = 0;
+const AI_CONFIG_TTL_MS = 60_000;
+
+async function getAIConfig(): Promise<AIConfig> {
+  const now = Date.now();
+  if (_aiConfigCache && now < _aiConfigCacheExpiry) return _aiConfigCache;
+
+  const fallback: AIConfig = { provider: "claude", openaiKey: OPENAI_KEY_ENV };
+
+  if (!_aiSupabase) {
+    _aiConfigCache = fallback;
+    _aiConfigCacheExpiry = now + AI_CONFIG_TTL_MS;
+    return fallback;
+  }
+
+  try {
+    const { data } = await _aiSupabase
+      .from("app_settings")
+      .select("key, value")
+      .in("key", ["ai_chat_provider", "openai_api_key"]);
+
+    const map = new Map<string, string>();
+    for (const row of data ?? []) {
+      if (row?.key) map.set(row.key, String(row.value ?? ""));
+    }
+
+    const providerRaw = (map.get("ai_chat_provider") ?? "").toLowerCase().trim();
+    const provider: AIProvider = providerRaw === "openai" ? "openai" : "claude";
+    const openaiKey = (map.get("openai_api_key") ?? "").trim() || OPENAI_KEY_ENV;
+
+    const cfg: AIConfig = { provider, openaiKey };
+    _aiConfigCache = cfg;
+    _aiConfigCacheExpiry = now + AI_CONFIG_TTL_MS;
+    return cfg;
+  } catch (e) {
+    console.error("[ai-config] erro lendo app_settings, usando default Claude:", e);
+    _aiConfigCache = fallback;
+    _aiConfigCacheExpiry = now + AI_CONFIG_TTL_MS;
+    return fallback;
+  }
+}
+
+interface AIUsageEntry {
+  provider: AIProvider;
+  functionName: string;
+  model?: string;
+  tokensIn?: number;
+  tokensOut?: number;
+  fallbackUsed?: boolean;
+  errorMessage?: string;
+  durationMs?: number;
+}
+
+function logAIUsage(entry: AIUsageEntry): void {
+  if (!_aiSupabase) return;
+  // Fire-and-forget: nunca bloqueia o fluxo principal.
+  _aiSupabase
+    .from("ai_usage_log")
+    .insert({
+      provider: entry.provider,
+      function_name: entry.functionName,
+      model: entry.model ?? null,
+      tokens_in: entry.tokensIn ?? null,
+      tokens_out: entry.tokensOut ?? null,
+      fallback_used: entry.fallbackUsed ?? false,
+      error_message: entry.errorMessage ?? null,
+      duration_ms: entry.durationMs ?? null,
+    })
+    .then(() => {})
+    .catch(() => {}); // silent — telemetria não pode quebrar IA
+}
+
+/** Chamada à OpenAI (gpt-4o-mini). Retorna { text, tokensIn, tokensOut } ou throw. */
+async function chatOpenAI(
+  messages: ChatMessage[],
+  systemPrompt: string | undefined,
+  jsonMode: boolean,
+  apiKey: string
+): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+  const fullMessages: Array<{ role: string; content: string }> = [];
+  if (systemPrompt) fullMessages.push({ role: "system", content: systemPrompt });
+  for (const m of messages) fullMessages.push({ role: m.role, content: m.content });
+
+  const body: Record<string, unknown> = {
+    model: Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini",
+    messages: fullMessages,
+    max_tokens: 500,
+  };
+  if (jsonMode) {
+    // OpenAI requer "json" mencionado no prompt quando response_format é json_object.
+    // Adicionamos hint discreto se não estiver presente.
+    body.response_format = { type: "json_object" };
+    const lastIsUser = fullMessages[fullMessages.length - 1]?.role === "user";
+    const lastContent = String(fullMessages[fullMessages.length - 1]?.content ?? "");
+    if (lastIsUser && !/json/i.test(lastContent)) {
+      fullMessages[fullMessages.length - 1].content = lastContent + "\n\nResponda em JSON válido.";
+    }
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25_000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`OpenAI ${res.status}: ${errText.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    const text = String(data?.choices?.[0]?.message?.content ?? "");
+    const tokensIn = Number(data?.usage?.prompt_tokens ?? 0);
+    const tokensOut = Number(data?.usage?.completion_tokens ?? 0);
+    return { text, tokensIn, tokensOut };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("OpenAI timeout after 25s");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Wrapper público pras 3 funções migradas (assistantChat, classifyReminderWithAI,
+ * analyzeForwardedContent). Tenta OpenAI se configurado; se falhar, cai pro Claude
+ * automaticamente. Loga uso pra ai_usage_log (fire-and-forget).
+ *
+ * Mantém comportamento original quando provider="claude" (default).
+ */
+export async function chatWithProvider(
+  messages: ChatMessage[],
+  systemPrompt: string | undefined,
+  jsonMode: boolean,
+  functionName: string
+): Promise<string> {
+  const cfg = await getAIConfig();
+  const useOpenAI = cfg.provider === "openai" && cfg.openaiKey.length > 0;
+
+  // Tenta OpenAI primeiro (se configurado)
+  if (useOpenAI) {
+    const start = Date.now();
+    try {
+      const result = await chatOpenAI(messages, systemPrompt, jsonMode, cfg.openaiKey);
+      logAIUsage({
+        provider: "openai",
+        functionName,
+        model: Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini",
+        tokensIn: result.tokensIn,
+        tokensOut: result.tokensOut,
+        durationMs: Date.now() - start,
+      });
+      return result.text;
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.error(`[ai-fallback] OpenAI falhou em ${functionName}: ${errMsg} → tentando Claude`);
+      logAIUsage({
+        provider: "openai",
+        functionName,
+        model: Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini",
+        errorMessage: errMsg,
+        durationMs: Date.now() - start,
+      });
+      // Continua e tenta Claude abaixo
+    }
+  }
+
+  // Claude (default OU fallback)
+  const startClaude = Date.now();
+  try {
+    const text = await chat(messages, systemPrompt, jsonMode);
+    logAIUsage({
+      provider: "claude",
+      functionName,
+      model: Deno.env.get("CLAUDE_MODEL") ?? "claude-haiku-4-5-20251001",
+      fallbackUsed: useOpenAI, // se chegamos aqui depois de OpenAI falhar, é fallback
+      durationMs: Date.now() - startClaude,
+    });
+    return text;
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    logAIUsage({
+      provider: "claude",
+      functionName,
+      model: Deno.env.get("CLAUDE_MODEL") ?? "claude-haiku-4-5-20251001",
+      fallbackUsed: useOpenAI,
+      errorMessage: errMsg,
+      durationMs: Date.now() - startClaude,
+    });
+    throw e;
+  }
+}
+
+/** Limpa o cache de config (chamar manualmente em testes ou após mudança imediata). */
+export function _resetAIConfigCache(): void {
+  _aiConfigCache = null;
+  _aiConfigCacheExpiry = 0;
 }
 
 /** Chamada simples ao Claude para extração de dados ou chat */
@@ -624,7 +864,14 @@ JSON:
 {"action":"...","confidence":0.0,"data":{...}}`;
 
   try {
-    const result = await chat([{ role: "user", content: prompt }], system);
+    // Roteado: usa OpenAI se admin configurou (ai_chat_provider="openai"),
+    // senão Claude. Fallback automático se OpenAI falhar.
+    const result = await chatWithProvider(
+      [{ role: "user", content: prompt }],
+      system,
+      false,
+      "analyzeForwardedContent"
+    );
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return fallback;
     const parsed = JSON.parse(jsonMatch[0]) as ShadowAnalysis;
@@ -762,7 +1009,8 @@ ${genderRule}`;
     { role: "user", content: userMessage },
   ];
 
-  return await chat(messages, systemPrompt);
+  // Roteado: usa OpenAI se admin configurou, senão Claude. Fallback se falhar.
+  return await chatWithProvider(messages, systemPrompt, false, "assistantChat");
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -897,7 +1145,11 @@ export async function classifyReminderWithAI(
   message: string,
   eventTitle: string | null = null
 ): Promise<ReminderAIResult> {
-  if (!ANTHROPIC_KEY) return { kind: "unknown" };
+  // Aceita Anthropic OU OpenAI — chatWithProvider escolhe. Se nenhuma config existir
+  // E ambos os providers falharem, o catch mais abaixo retorna { kind: "unknown" }.
+  if (!ANTHROPIC_KEY && !OPENAI_KEY_ENV) {
+    // Pode ainda ter openai_api_key em app_settings — tenta mesmo assim, catch trata.
+  }
 
   const safeMsg = (message ?? "").slice(0, 200);
   const titleLine = eventTitle ? `Evento em questão: "${eventTitle}"\n` : "";
@@ -925,10 +1177,12 @@ Exemplos:
 "talvez" → {"kind": "unknown", "minutes": null}`;
 
   try {
-    const raw = await chat(
+    // Roteado: usa OpenAI se admin configurou, senão Claude. Fallback se falhar.
+    const raw = await chatWithProvider(
       [{ role: "user", content: safeMsg }],
       system,
-      true
+      true,
+      "classifyReminderWithAI"
     );
     const cleaned = raw.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(cleaned) as { kind?: string; minutes?: number | null };

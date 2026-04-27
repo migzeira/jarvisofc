@@ -937,6 +937,18 @@ export default function AdminPanel() {
         if (isNaN(n) || n < 1 || n > 90) return "Número entre 1 e 90";
         return null;
       }
+      case "openai_api_key": {
+        // Aceita "sk-..." (formato user) ou "sk-proj-..." (formato project key).
+        // Também aceita o valor mascarado (••••) — significa "manter valor atual".
+        if (v.includes("•")) return null;
+        if (!/^sk-[A-Za-z0-9_-]{20,}$/.test(v)) return "Deve começar com 'sk-' (ex: sk-proj-abc123...)";
+        return null;
+      }
+      case "ai_chat_provider": {
+        const lower = v.toLowerCase();
+        if (lower !== "claude" && lower !== "openai") return "Use 'claude' ou 'openai'";
+        return null;
+      }
       default:
         return null;
     }
@@ -953,6 +965,9 @@ export default function AdminPanel() {
     { key: "renewal_link_annual", label: "Link de Renovação — Plano Anual", type: "text", hint: "Checkout Kirvano enviado nos lembretes de clientes do plano anual" },
     { key: "renewal_reminders_enabled", label: "Lembretes de Renovação Ativos", type: "text", hint: "'true' envia lembretes automáticos; 'false' desativa" },
     { key: "overdue_grace_days", label: "Dias de Tolerância (OVERDUE)", type: "text", hint: "Grace period quando Kirvano sinaliza atraso. Default: 7" },
+    // Inteligência Artificial — roteamento Claude/OpenAI
+    { key: "openai_api_key", label: "OpenAI API Key", type: "password", hint: "Cola a key (sk-proj-... ou sk-...). Usado quando Provider de Chat = 'openai'. Fallback automático pra Claude se OpenAI falhar." },
+    { key: "ai_chat_provider", label: "Provider de Chat", type: "text", hint: "'claude' (default, mais robusto) ou 'openai' (mais barato — usa GPT-4o-mini em chat geral, modo sombra e fallback de lembrete). Extrações estruturadas continuam sempre no Claude." },
   ];
 
   // Calcula erros por campo e se o form é submetível.
@@ -1648,6 +1663,7 @@ export default function AdminPanel() {
                 { title: "Google OAuth (Calendar + Sheets)", keys: ["google_client_id", "google_client_secret"] },
                 { title: "Notion OAuth", keys: ["notion_client_id", "notion_client_secret"] },
                 { title: "Renovação & Cobrança", keys: ["renewal_link_monthly", "renewal_link_annual", "renewal_reminders_enabled", "overdue_grace_days"] },
+                { title: "Inteligência Artificial", keys: ["ai_chat_provider", "openai_api_key"] },
               ];
               const renderField = (key: string) => {
                 const f = SETTINGS_FIELDS.find(x => x.key === key);

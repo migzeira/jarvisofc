@@ -33,7 +33,15 @@ const ALLOWED_KEYS = [
   "renewal_link_annual",
   "renewal_reminders_enabled",
   "overdue_grace_days",
+  // Roteamento de IA — permite usar OpenAI (mais barato) em tarefas de chat
+  // simples mantendo Claude pra extrações estruturadas críticas.
+  "openai_api_key",        // mascarado na exibição (lógica abaixo)
+  "ai_chat_provider",      // "claude" (default) | "openai"
 ];
+
+// Keys cuja value deve ser mascarada quando exibida no painel.
+// "secret" cobre google_client_secret e notion_client_secret automaticamente.
+const SECRET_KEY_NAMES = new Set(["openai_api_key"]);
 
 serve(async (req) => {
   const CORS = getCorsHeaders(req);
@@ -74,14 +82,18 @@ serve(async (req) => {
       .from("app_settings")
       .select("key, value");
 
-    // Mascara secrets na exibição
-    const masked = (data ?? []).map((row) => ({
-      key: row.key,
-      value: row.key.includes("secret") && row.value
-        ? row.value.slice(0, 4) + "••••••••" + row.value.slice(-4)
-        : row.value,
-      configured: row.value.length > 0,
-    }));
+    // Mascara secrets na exibição (chaves contendo "secret" + lista explícita
+    // SECRET_KEY_NAMES — ex: openai_api_key, que não tem "secret" no nome)
+    const masked = (data ?? []).map((row) => {
+      const isSecret = row.key.includes("secret") || SECRET_KEY_NAMES.has(row.key);
+      return {
+        key: row.key,
+        value: isSecret && row.value && row.value.length >= 8
+          ? row.value.slice(0, 4) + "••••••••" + row.value.slice(-4)
+          : row.value,
+        configured: (row.value ?? "").length > 0,
+      };
+    });
 
     return new Response(JSON.stringify(masked), {
       headers: { ...CORS, "Content-Type": "application/json" },
