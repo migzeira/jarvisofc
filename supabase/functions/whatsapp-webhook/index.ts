@@ -3762,16 +3762,21 @@ serve(async (req) => {
         return new Response("OK");
       }
 
+      // Normaliza whitespace (Whisper às vezes retorna espaços duplos / quebras de linha
+      // / pontuação extra que quebram regex de classificação que esperam espaço único).
+      const normalizedTranscription = transcription.replace(/\s+/g, " ").trim();
+      console.log(`[audio-transcribed] raw=${JSON.stringify(transcription)} normalized=${JSON.stringify(normalizedTranscription)}`);
+
       // Se audio encaminhado → Modo Sombra: classificar via analyzeForwardedContent
       if (isForwarded) {
-        const shadowResult = await handleShadowMode(replyTo, transcription, null, lid, messageId, pushName);
+        const shadowResult = await handleShadowMode(replyTo, normalizedTranscription, null, lid, messageId, pushName);
         return new Response(JSON.stringify({ ok: true, shadow: true, debug: shadowResult }), {
           headers: { "Content-Type": "application/json" },
         });
       }
 
-      const debugResult = await processMessage(replyTo, transcription, lid, messageId, pushName, transcription);
-      return new Response(JSON.stringify({ ok: true, transcription, debug: debugResult }), {
+      const debugResult = await processMessage(replyTo, normalizedTranscription, lid, messageId, pushName, normalizedTranscription);
+      return new Response(JSON.stringify({ ok: true, transcription: normalizedTranscription, debug: debugResult }), {
         headers: { "Content-Type": "application/json" },
       });
     } else {
@@ -5945,7 +5950,7 @@ async function handleSendToContact(
   agentName: string,
   userNickname: string | null,
   pushName: string,
-): Promise<string> {
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
   // ─── Detecta agendamento APENAS na parte de entrega (antes do conteúdo) ──
@@ -5981,7 +5986,7 @@ async function handleSendToContact(
   // Capitaliza o primeiro char após o prefixo para aceitar "pra cibele" e "pra Cibele"
   const prefixMatch = /\b(?:pra|para|pro|ao?)\s+/i.exec(text);
   if (!prefixMatch) {
-    return "Não identifiquei para quem enviar. Tente: _Manda pra [Nome] dizendo [mensagem]_";
+    return { response: "Não identifiquei para quem enviar. Tente: _Manda pra [Nome] dizendo [mensagem]_" };
   }
   const rawAfterPrefix = text.slice(prefixMatch.index + prefixMatch[0].length);
   // Normaliza para Title Case: "cibele" → "Cibele", "CIBELE" → "Cibele", "CIBELE SILVA" → "Cibele Silva"
@@ -6000,7 +6005,7 @@ async function handleSendToContact(
     remaining = remaining.slice(t[0].length);
   }
   if (nameTokens.length === 0) {
-    return "Não identifiquei para quem enviar. Tente: _Manda pra [Nome] dizendo [mensagem]_";
+    return { response: "Não identifiquei para quem enviar. Tente: _Manda pra [Nome] dizendo [mensagem]_" };
   }
   const contactName = nameTokens.join(" ");
 
@@ -6029,11 +6034,12 @@ async function handleSendToContact(
       const lista = allFirstNameMatches
         .map((c, i) => `*${i + 1}.* ${c.name}`)
         .join("\n");
-      return (
-        `Encontrei ${allFirstNameMatches.length} contatos com o nome *${firstName}*:\n\n` +
-        `${lista}\n\n` +
-        `Para qual deles você quer enviar? Responda com o número ou o nome completo.`
-      );
+      return {
+        response:
+          `Encontrei ${allFirstNameMatches.length} contatos com o nome *${firstName}*:\n\n` +
+          `${lista}\n\n` +
+          `Para qual deles você quer enviar? Responda com o número ou o nome completo.`,
+      };
     }
   }
 
@@ -6042,7 +6048,9 @@ async function handleSendToContact(
     const { data: allContacts } = await supabase
       .from("contacts").select("name").eq("user_id", userId).limit(10);
     const lista = allContacts?.map(c => `• ${c.name}`).join("\n") || "_Nenhum contato salvo_";
-    return `Não encontrei *${contactName}* nos seus contatos.\n\n*Seus contatos:*\n${lista}\n\nPara adicionar: compartilhe o contato ou diga _"Salva o contato [Nome]: [número]"_ 📇`;
+    return {
+      response: `Não encontrei *${contactName}* nos seus contatos.\n\n*Seus contatos:*\n${lista}\n\nPara adicionar: compartilhe o contato ou diga _"Salva o contato [Nome]: [número]"_ 📇`,
+    };
   }
 
   // Extrai conteúdo da mensagem
@@ -6086,19 +6094,16 @@ async function handleSendToContact(
     `_Ex: Responder: Ok, estarei lá!_` +
     buildJarvisCTA(senderName, userPhone);
 
+  // ── Preview + pedido de confirmação (em vez de enviar direto) ────────────
+  // Garante que o usuário sempre confirme antes do Jarvis enviar mensagem
+  // pra alguém. Reduz risco de envio errado por mal-entendido na transcrição.
+  const fromPhoneDigits = userProfile?.phone_number?.replace(/\D/g, "") ?? replyTo.replace(/\D/g, "");
+  const toPhoneDigits   = (found.phone as string).replace(/\D/g, "");
+
+  let scheduleLabel = "";
   if (scheduledAt) {
-    await supabase.from("reminders").insert({
-      user_id: userId,
-      whatsapp_number: found.phone,
-      title: `Mensagem para ${found.name}`,
-      message: outgoing,
-      send_at: scheduledAt,
-      recurrence: "none",
-      source: "send_to_contact",
-      status: "pending",
-    });
     const sendAtDate = new Date(scheduledAt);
-    const timeLabel = sendAtDate.toLocaleString("pt-BR", {
+    scheduleLabel = sendAtDate.toLocaleString("pt-BR", {
       timeZone: userTz,
       hour: "2-digit",
       minute: "2-digit",
@@ -6106,14 +6111,88 @@ async function handleSendToContact(
       day: "2-digit",
       month: "short",
     });
-    return `✅ Agendado! Vou mandar a mensagem pra *${found.name}* ${timeLabel}. 📅`;
   }
 
-  await sendText(found.phone, outgoing);
+  const previewHeader = scheduledAt
+    ? `📨 *Confirma o envio agendado pra ${scheduleLabel}?*`
+    : `📨 *Confirma o envio?*`;
+
+  const preview =
+    `${previewHeader}\n\n` +
+    `Para: *${found.name}*\n` +
+    `Mensagem: _"${msgContent}"_\n\n` +
+    `Responda *sim* pra enviar ou *não* pra cancelar.`;
+
+  return {
+    response: preview,
+    pendingAction: "send_to_contact_confirm",
+    pendingContext: {
+      foundPhone: found.phone as string,
+      foundName: found.name as string,
+      outgoing,
+      msgContent,
+      fromPhoneDigits,
+      toPhoneDigits,
+      senderName,
+      agentName,
+      scheduledAt: scheduledAt ?? null,
+      scheduleLabel,
+    },
+  };
+}
+
+// ── Helper: executa o envio (ou agendamento) confirmado pelo usuário ─────────
+// Usado quando pending_action === "send_to_contact_confirm" e usuário disse "sim".
+// Encapsula sendText em try/catch real — se falhar, retorna erro pro user em
+// vez de fingir que enviou.
+async function executeSendToContact(
+  userId: string,
+  ctx: Record<string, unknown>,
+): Promise<string> {
+  const foundPhone     = String(ctx.foundPhone ?? "");
+  const foundName      = String(ctx.foundName ?? "contato");
+  const outgoing       = String(ctx.outgoing ?? "");
+  const msgContent     = String(ctx.msgContent ?? "");
+  const fromPhoneDigits = String(ctx.fromPhoneDigits ?? "");
+  const toPhoneDigits   = String(ctx.toPhoneDigits ?? "");
+  const senderName     = String(ctx.senderName ?? "");
+  const agentName      = String(ctx.agentName ?? "");
+  const scheduledAt    = ctx.scheduledAt ? String(ctx.scheduledAt) : null;
+  const scheduleLabel  = String(ctx.scheduleLabel ?? "");
+
+  if (!foundPhone || !outgoing) {
+    return "⚠️ Não consegui recuperar os dados da mensagem. Tenta de novo.";
+  }
+
+  // Caso agendado — cria reminder e retorna confirmação
+  if (scheduledAt) {
+    try {
+      await supabase.from("reminders").insert({
+        user_id: userId,
+        whatsapp_number: foundPhone,
+        title: `Mensagem para ${foundName}`,
+        message: outgoing,
+        send_at: scheduledAt,
+        recurrence: "none",
+        source: "send_to_contact",
+        status: "pending",
+      });
+    } catch (e) {
+      console.error("[send_to_contact_confirm] falha ao agendar:", e);
+      return `⚠️ Não consegui agendar a mensagem pra *${foundName}*. Tenta de novo daqui a pouco.`;
+    }
+    return `✅ Agendado! Vou mandar a mensagem pra *${foundName}* ${scheduleLabel}. 📅`;
+  }
+
+  // Envio imediato — try/catch explícito que reporta erro real
+  try {
+    await sendText(foundPhone, outgoing);
+  } catch (e) {
+    console.error("[send_to_contact_confirm] sendText falhou:", e);
+    return `⚠️ Não consegui enviar a mensagem pra *${foundName}*. O número pode estar incorreto ou o WhatsApp dele indisponível. Confere o contato e tenta de novo.`;
+  }
 
   // Registra relay_request: se o contato responder, Jarvis repassa automaticamente
-  const fromPhoneDigits = userProfile?.phone_number?.replace(/\D/g, "") ?? replyTo.replace(/\D/g, "");
-  const toPhoneDigits   = (found.phone as string).replace(/\D/g, "");
   if (fromPhoneDigits && toPhoneDigits) {
     supabase.from("relay_requests").insert({
       from_user_id:     userId,
@@ -6127,7 +6206,7 @@ async function handleSendToContact(
     }).then(() => {}).catch(() => {}); // fire-and-forget — nao bloqueia o fluxo
   }
 
-  return `✅ Mensagem enviada pra *${found.name}*!`;
+  return `✅ Mensagem enviada pra *${foundName}*!`;
 }
 
 /** Formata data YYYY-MM-DD em português legível */
@@ -7836,11 +7915,17 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
       if (jarvisSends && contactText) {
         // Jarvis executa o envio — reutiliza handleSendToContact com o texto original do lembrete
-        responseText = await handleSendToContact(
+        const sendResult = await handleSendToContact(
           profile.id, sendPhone || replyTo, contactText, userTz, agentName, userNickname, pushName
         );
+        responseText  = sendResult.response;
+        // Propaga pending state pra etapa de confirmação (não resetar aqui)
+        pendingAction = sendResult.pendingAction;
+        pendingContext = sendResult.pendingContext;
       } else if (meSends) {
         responseText = "Ok, você envia! ✌️ Me avisa se precisar de mais alguma coisa.";
+        pendingAction = undefined;
+        pendingContext = undefined;
       } else {
         // Não reconheceu — repete a pergunta
         const opts =
@@ -7848,9 +7933,9 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           `*1.* 🤖 Jarvis envia\n` +
           `*2.* ✉️ Eu mesmo envio`;
         responseText = opts;
+        pendingAction = undefined;
+        pendingContext = undefined;
       }
-      pendingAction = undefined;
-      pendingContext = undefined;
 
     } else if (intent === "list_contacts") {
       // Usa a coluna correta "phone" (não phone_number — schema contacts tem phone)
@@ -7934,9 +8019,30 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       pendingContext = orderResult.pendingContext;
 
     } else if (intent === "send_to_contact") {
-      responseText = await handleSendToContact(
+      const sendResult = await handleSendToContact(
         profile.id, sendPhone || replyTo, text, userTz, agentName, userNickname, pushName
       );
+      responseText  = sendResult.response;
+      pendingAction = sendResult.pendingAction;
+      pendingContext = sendResult.pendingContext;
+
+    } else if (session?.pending_action === "send_to_contact_confirm") {
+      // Etapa de confirmação do envio — usuário responde "sim" / "não".
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const msgLow = text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+      const yes = /^(sim|s|claro|pode|por favor|com certeza|envia|enviar|manda|mandar|envia ai|manda ai|isso|exato|confirma|confirmo|confirmado|ok|okay|beleza|blz|bora|positivo|fechado|combinado|yes|yep|y|1)\b/.test(msgLow);
+      const no  = /^(nao|n|cancela|cancelar|nao envia|nao enviar|nao manda|nao mandar|deixa pra la|pode esquecer|melhor nao|nope|nah|2)\b/.test(msgLow);
+
+      if (yes) {
+        responseText = await executeSendToContact(profile.id, ctx);
+      } else if (no) {
+        responseText = `❌ Envio cancelado. A mensagem pra *${String(ctx.foundName ?? "contato")}* não foi enviada.`;
+      } else {
+        // Não entendeu — repete a pergunta e MANTÉM o pending pra próxima resposta
+        responseText = `Não entendi 😅 Responda *sim* pra enviar a mensagem pra *${String(ctx.foundName ?? "contato")}* ou *não* pra cancelar.`;
+        pendingAction = "send_to_contact_confirm";
+        pendingContext = ctx;
+      }
 
     } else if (intent === "schedule_meeting") {
       const meetResult = await handleScheduleMeeting(

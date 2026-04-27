@@ -56,10 +56,14 @@ export type Intent =
   | "ai_chat";
 
 export function classifyIntent(msg: string): Intent {
+  // Normalize: lowercase + remove acentos + colapsa whitespace m\u00faltiplo (essencial para
+  // \u00e1udio transcrito pelo Whisper, que pode vir com espa\u00e7os duplos, tabs ou \n no meio).
   const m = msg
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
   // Saudação simples — deve ser primeira verificação (antes de qualquer outro intent)
   if (
@@ -236,9 +240,9 @@ export function classifyIntent(msg: string): Intent {
   if (
     (// "manda uma mensagem [agora/já/aqui/...] pra João dizendo..."
      // .{0,25}? permite palavras intermediárias entre "mensagem" e "pra/pro"
-     /\b(manda(r)?|envia(r)?|fala(r)?|diz(er)?|avisa(r)?|escreve(r)?)\s+(uma?\s+)?(mensagem|msg)?.{0,25}?(pra|para|pro|ao)\s+\w/i.test(m) ||
-    /\b(fala(r)?|diz(er)?|avisa(r)?)\s+(pra|para|pro|ao)\s+\w+\s+(que|dizendo|falando|sobre)/i.test(m) ||
-    /\b(manda(r)?|envia(r)?)\s+(pra|para|pro|ao)\s+\w+\s+(dizendo|falando|contando)/i.test(m)) &&
+     /\b(manda(r)?|envia(r)?|fala(r)?|diz(er)?|avisa(r)?|escreve(r)?|pergunta(r)?|questiona(r)?)\s+(uma?\s+)?(mensagem|msg)?.{0,25}?(pra|para|pro|ao)\s+\w/i.test(m) ||
+    /\b(fala(r)?|diz(er)?|avisa(r)?|pergunta(r)?|questiona(r)?)\s+(pra|para|pro|ao)\s+\w+\s+(que|dizendo|falando|sobre|perguntando|questionando|indagando)/i.test(m) ||
+    /\b(manda(r)?|envia(r)?)\s+(pra|para|pro|ao)\s+\w+\s+(dizendo|falando|contando|perguntando|questionando|indagando)/i.test(m)) &&
     !/\b(lembrete|reminder|me avisa|me lembra|agenda|marcar)\b/i.test(m)
   )
     return "send_to_contact";

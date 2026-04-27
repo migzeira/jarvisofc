@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "react-router-dom";
 import {
   Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2,
-  TrendingDown, Bell, BellRing, Plus, ChevronRight,
+  TrendingDown, TrendingUp, Bell, BellRing, Plus, ChevronRight,
   MessageSquare, Clock, Zap, Smartphone, AlertTriangle, XCircle, ExternalLink,
   X, Lock, CheckCircle,
 } from "lucide-react";
@@ -102,7 +102,7 @@ export default function DashboardHome() {
   const { user } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [agentConfig, setAgentConfig] = useState<any>(null);
-  const [stats, setStats] = useState({ expenses: 0, events: 0, notes: 0, reminders: 0 });
+  const [stats, setStats] = useState({ expenses: 0, incomes: 0, events: 0, notes: 0, reminders: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
   const [chartPeriod, setChartPeriod] = useState<7 | 15 | 30>(7);
   const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
@@ -189,13 +189,14 @@ export default function DashboardHome() {
     const nowIso = now.toISOString();
 
     const [
-      profileRes, agentRes, expensesRes, eventsRes, notesCountRes,
+      profileRes, agentRes, expensesRes, incomesRes, eventsRes, notesCountRes,
       upcomingRes, remindersRes, recentNotesRes,
       recentTransRes, recentEventsRes,
     ] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user!.id).single(),
       supabase.from("agent_configs").select("*").eq("user_id", user!.id).single(),
       supabase.from("transactions").select("amount").eq("user_id", user!.id).eq("type", "expense").gte("transaction_date", monthStart).lte("transaction_date", monthEnd),
+      supabase.from("transactions").select("amount").eq("user_id", user!.id).eq("type", "income").gte("transaction_date", monthStart).lte("transaction_date", monthEnd),
       supabase.from("events").select("id").eq("user_id", user!.id).gte("event_date", format(now, "yyyy-MM-dd")).lte("event_date", weekEnd),
       // Usa count head pra pegar só o total de notas (sem carregar os IDs).
       // Economiza payload quando user tem centenas de notas.
@@ -217,6 +218,7 @@ export default function DashboardHome() {
     const reminderCount = remindersRes.data?.length ?? 0;
     setStats({
       expenses: expensesRes.data?.reduce((s, t) => s + Number(t.amount), 0) ?? 0,
+      incomes: incomesRes.data?.reduce((s, t) => s + Number(t.amount), 0) ?? 0,
       events: eventsRes.data?.length ?? 0,
       // notesCountRes usa { count: 'exact', head: true } → lê do campo .count
       notes: (notesCountRes as any).count ?? 0,
@@ -589,8 +591,8 @@ export default function DashboardHome() {
 
       </div>
 
-      {/* ── Stats (4 cards) ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* ── Stats (5 cards: gastos, receitas, compromissos, anotações, lembretes) ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <Card className="bg-card border-border">
           <CardContent className="pt-5 pb-4">
             <div className="flex items-center justify-between">
@@ -600,6 +602,19 @@ export default function DashboardHome() {
               </div>
               <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
                 <Wallet className="h-5 w-5 text-emerald-400" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-card border-border">
+          <CardContent className="pt-5 pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Receitas no mês</p>
+                <p className="text-2xl font-bold mt-1">R$ {stats.incomes.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              </div>
+              <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                <TrendingUp className="h-5 w-5 text-emerald-400" />
               </div>
             </div>
           </CardContent>
