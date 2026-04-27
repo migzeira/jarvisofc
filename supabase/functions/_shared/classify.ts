@@ -510,3 +510,132 @@ export function parseMinutes(msg: string): number | null {
   if (numMatch) return parseInt(numMatch[1], 10);
   return null;
 }
+
+// ─────────────────────────────────────────────
+// REMINDER ANSWER — combined parser
+// ─────────────────────────────────────────────
+// Detects intent (accept / decline / at_time) AND advance time in a single pass.
+// Handles natural variations: "sim me avisa antes", "sim 30 min antes",
+// "claro, uma hora antes", "pode avisar", "só na hora", "não precisa", etc.
+// Used by agenda_create, agenda_edit and reminder_set follow-ups.
+
+export type ReminderAnswer =
+  | { kind: "accept_with_time"; minutes: number }
+  | { kind: "accept_no_time" }
+  | { kind: "at_time" }
+  | { kind: "decline" }
+  | { kind: "unknown" };
+
+const WORD_TO_NUM: Record<string, number> = {
+  "uma": 1, "um": 1, "duas": 2, "dois": 2, "tres": 3,
+  "quatro": 4, "cinco": 5, "seis": 6, "sete": 7, "oito": 8,
+  "nove": 9, "dez": 10,
+};
+
+const WORD_TO_MIN: Record<string, number> = {
+  "quinze": 15, "vinte": 20, "trinta": 30, "quarenta": 40,
+  "cinquenta": 50, "sessenta": 60, "noventa": 90,
+};
+
+function extractAdvanceMinutes(m: string): number | null {
+  // Compostos primeiro (antes de match de "hora" ou "meia")
+  if (/\bhora\s+e\s+meia\b/.test(m)) return 90;
+  if (/\bmeia\s+hora\b/.test(m)) return 30;
+
+  // "uma hora", "duas horas", "tres horas"...
+  const wordHour = m.match(/\b(uma|um|duas|dois|tres|quatro|cinco|seis|sete|oito|nove|dez)\s+hora(?:s)?\b/);
+  if (wordHour) {
+    const n = WORD_TO_NUM[wordHour[1]];
+    if (n !== undefined) return n * 60;
+  }
+
+  // "quinze minutos", "trinta minutos"...
+  const wordMin = m.match(/\b(quinze|vinte|trinta|quarenta|cinquenta|sessenta|noventa)\s+minuto(?:s)?\b/);
+  if (wordMin) {
+    const n = WORD_TO_MIN[wordMin[1]];
+    if (n !== undefined) return n;
+  }
+
+  // "1.5h", "2h", "1h30" — número + h
+  const hoursMatch = m.match(/\b(\d+(?:[.,]\d+)?)\s*h(?:ora(?:s)?)?\b/);
+  if (hoursMatch) {
+    return Math.round(parseFloat(hoursMatch[1].replace(",", ".")) * 60);
+  }
+
+  // "30 min", "30 minutos", "30min"
+  const minMatch = m.match(/\b(\d+)\s*(?:m|min|minuto|minutos)\b/);
+  if (minMatch) return parseInt(minMatch[1], 10);
+
+  // Número + "antes" (ex: "30 antes")
+  const numAntes = m.match(/\b(\d{1,3})\b[^\d]{0,15}\bantes\b/);
+  if (numAntes) return parseInt(numAntes[1], 10);
+
+  return null;
+}
+
+function hasAffirmativeWord(m: string): boolean {
+  // Palavra afirmativa em qualquer posição
+  if (/\b(sim|claro|certeza|com certeza|obvio|obviamente|positivo|afirmativo|ok|okay|beleza|blz|bora|isso|exato|perfeito|fechado|combinado|yes|yep|sure|please|por favor)\b/.test(m)) {
+    return true;
+  }
+  // "pode" / "manda" sozinho ou no início (resposta curta de aceite)
+  if (/^(pode|manda|mande|envia|envie|quero|queria)[\s.,!?]*$/.test(m)) {
+    return true;
+  }
+  // Verbos que indicam aceite no contexto da pergunta ("me avisa", "pode lembrar"...)
+  if (/\b(me\s+(avisa|avise|notifica|lembra|lembre)|pode\s+(avisar|lembrar)|pode\s+me\s+(avisar|lembrar)|quero\s+(ser\s+)?(lembrado|avisado|notificado))\b/.test(m)) {
+    return true;
+  }
+  // "avisa antes", "lembra antes" sem pronome
+  if (/^\s*(avisa|avise|lembra|lembre|notifica)\s+(antes|com antecedencia|antecipado)\b/.test(m)) {
+    return true;
+  }
+  return false;
+}
+
+function isDeclineAnswer(m: string): boolean {
+  // Recusa exclusiva: a mensagem inteira gira em torno de negar o lembrete
+  if (/^(nao|n|nope|nah)[\s,.!]*$/.test(m)) return true;
+  if (/^(nao|n)\s+(precisa|preciso|quero|obrigado|obg|valeu)\b/.test(m)) return true;
+  if (/^(sem|nem|dispensa|dispenso|deixa|tanto faz|tudo bem|ta tranquilo|ta bom)\b.*$/.test(m) &&
+      !/\b(antes|antecedencia|me avisa|me lembra|na hora)\b/.test(m)) return true;
+  if (/\b(nao precisa|nem precisa|sem lembrete|sem aviso|nao quero lembrete|deixa pra la|pode esquecer|melhor nao|pode nao)\b/.test(m)) return true;
+  return false;
+}
+
+function isAtTimeAnswer(m: string): boolean {
+  // "só na hora", "na hora exata", "no horário", "no momento"
+  if (/\b(so na hora|so no horario|na hora exata|no horario exato|no horario|no momento|quando chegar a hora|quando for a hora|exatamente na hora|so quando comecar)\b/.test(m)) return true;
+  // "(sim) me avisa na hora", "avisa só na hora"
+  if (/\b(me\s+)?(avisa|avise|notifica|lembra|lembre)\s+(so\s+)?na hora\b/.test(m)) return true;
+  // "na hora" sozinho
+  if (/^na hora[\s,.!]*$/.test(m)) return true;
+  return false;
+}
+
+/**
+ * Combined parser for the "Quer que eu te lembre antes?" answer.
+ * Replaces the chain of isReminderAccept / isReminderAtTime / isReminderDecline / parseMinutes
+ * inside the waiting_reminder_answer handlers, capturing intent + time in a single call.
+ */
+export function parseReminderAnswer(msg: string): ReminderAnswer {
+  if (!msg || !msg.trim()) return { kind: "unknown" };
+  const m = msg.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+
+  // 1. DECLINE — recusa explícita tem prioridade
+  if (isDeclineAnswer(m)) return { kind: "decline" };
+
+  // 2. AT_TIME — "só na hora" / "me avisa na hora" antes de extrair número
+  if (isAtTimeAnswer(m)) return { kind: "at_time" };
+
+  // 3. ACCEPT_WITH_TIME — extrai tempo de antecedência (ex: "sim 30 min antes")
+  const minutes = extractAdvanceMinutes(m);
+  if (minutes !== null && minutes > 0) {
+    return { kind: "accept_with_time", minutes };
+  }
+
+  // 4. ACCEPT_NO_TIME — afirmação genérica sem tempo específico
+  if (hasAffirmativeWord(m)) return { kind: "accept_no_time" };
+
+  return { kind: "unknown" };
+}

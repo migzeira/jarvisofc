@@ -15,13 +15,14 @@ import {
   extractStatementFromImage,
   parseReminderIntent,
   analyzeForwardedContent,
+  classifyReminderWithAI,
   type ChatMessage,
   type ExtractedEvent,
   type StatementExtraction,
   type ShadowAnalysis,
 } from "../_shared/openai.ts";
 import { logError, fromThrown } from "../_shared/logger.ts";
-import { type Intent, classifyIntent, isReminderDecline, isReminderAtTime, isReminderAccept, parseMinutes } from "../_shared/classify.ts";
+import { type Intent, classifyIntent, isReminderDecline, isReminderAtTime, isReminderAccept, parseMinutes, parseReminderAnswer } from "../_shared/classify.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -1866,58 +1867,54 @@ async function handleAgendaCreate(
       "button:advance_30min": 30,
       "button:advance_1h":    60,
       "button:advance_confirm_no": 0,   // "Só na hora"
-      "1": 15, "2": 30, "3": 60,        // fallback para texto numerado (Baileys)
+      "2": 0,                            // texto numerado: opção 2 = só na hora
     };
     if (agendaButtonMap[msgLowRem] !== undefined) {
       const mins = agendaButtonMap[msgLowRem];
       const finalDataBtn = { ...partial, reminder_minutes: mins } as unknown as ExtractedEvent;
       return await createEventAndConfirm(userId, phone, finalDataBtn, recurrenceFromCtx, language, userNickname, userTz);
     }
-    if (msgLowRem === "button:advance_confirm_yes" || msgLowRem === "1" || isReminderAccept(message)) {
-      // Aceitou — envia botões de tempo
-      sendButtons(
-        phone,
-        "Com quanto tempo antes? ⏱️",
-        `Lembrete para: "${(partial as Record<string,unknown>).title ?? "evento"}"`,
-        [
-          { id: "advance_15min", text: "15 minutos" },
-          { id: "advance_30min", text: "30 minutos" },
-          { id: "advance_1h",    text: "1 hora" },
-        ]
-      ).catch(() => {});
+
+    // Parser unificado (regex) — captura intenção + tempo na mesma passada
+    const eventTitle = (partial as Record<string, unknown>).title as string | undefined;
+    let answer = parseReminderAnswer(message);
+
+    // Fallback "1" do texto numerado → equivale a aceitar (sem tempo definido ainda)
+    if (answer.kind === "unknown" && (msgLowRem === "1" || msgLowRem === "button:advance_confirm_yes")) {
+      answer = { kind: "accept_no_time" };
+    }
+
+    // Fallback IA — só quando o regex não soube classificar
+    if (answer.kind === "unknown") {
+      const aiResult = await classifyReminderWithAI(message, eventTitle ?? null);
+      if (aiResult.kind !== "unknown") answer = aiResult;
+    }
+
+    // Aplica decisão final
+    if (answer.kind === "accept_with_time") {
+      const finalData = { ...partial, reminder_minutes: answer.minutes } as unknown as ExtractedEvent;
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
+    }
+    if (answer.kind === "at_time") {
+      const finalData = { ...partial, reminder_minutes: 0 } as unknown as ExtractedEvent;
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
+    }
+    if (answer.kind === "decline") {
+      const finalData = { ...partial, reminder_minutes: null } as unknown as ExtractedEvent;
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
+    }
+    if (answer.kind === "accept_no_time") {
+      // Aceitou mas não disse quanto tempo — pergunta abertamente, sem botão fake
       return {
-        response: "",
+        response: `Beleza! Com quanto tempo de antecedência? ⏱️\n_Ex: "30 minutos antes", "1 hora antes", "2 horas antes" — ou diga "só na hora"._`,
         pendingAction: "agenda_create",
         pendingContext: { partial, step: "waiting_reminder_minutes" },
       };
     }
-    // "só na hora" ou "não precisa"
-    if (isReminderAtTime(message)) {
-      const finalData = { ...partial, reminder_minutes: 0 } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
-    }
-    if (isReminderDecline(message)) {
-      const finalData = { ...partial, reminder_minutes: null } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
-    }
-    // Já veio com tempo especificado (ex: "30 minutos antes", "2 horas antes")
-    const minutesInAnswer = parseMinutes(message);
-    if (minutesInAnswer !== null && message.match(/\d|hora|minuto|meia/)) {
-      const finalData = { ...partial, reminder_minutes: minutesInAnswer } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
-    }
-    // Resposta ambígua — reenvia botões
-    sendButtons(
-      phone,
-      "Quer que eu te lembre antes? ⏱️",
-      `Evento: "${(partial as Record<string,unknown>).title ?? "evento"}"`,
-      [
-        { id: "advance_confirm_yes", text: "⏰ Sim, me avisa" },
-        { id: "advance_confirm_no",  text: "✅ Só na hora" },
-      ]
-    ).catch(() => {});
+
+    // unknown final — pede reformulação clara em texto livre
     return {
-      response: "",
+      response: `Não entendi 100% 😅 Me diz de um jeito direto:\n• _"me avisa 30 minutos antes"_ (ou outro tempo)\n• _"só na hora"_\n• _"não precisa"_`,
       pendingAction: "agenda_create",
       pendingContext: { partial, step: "waiting_reminder_answer" },
     };
@@ -2691,50 +2688,43 @@ async function handleAgendaEdit(
     const fuBtnMap: Record<string, number | null> = {
       "button:advance_15min": 15, "button:advance_30min": 30,
       "button:advance_1h": 60,   "button:advance_confirm_no": 0,
-      "1": 15, "2": 30, "3": 60,  // fallback para texto numerado (Baileys)
+      "2": 0,                     // texto numerado: opcao 2 = so na hora
     };
     if (fuBtnMap[msgLowFU] !== undefined) {
       return await finalizeEdit(userId, phone, ctx, fuBtnMap[msgLowFU], userTz);
     }
-    if (msgLowFU === "button:advance_confirm_yes" || msgLowFU === "1" || isReminderAccept(message)) {
-      sendButtons(
-        phone,
-        "Com quanto tempo antes? ⏱️",
-        `Evento: "${(ctx as Record<string,unknown>).event_title ?? "evento"}"`,
-        [
-          { id: "advance_15min", text: "15 minutos" },
-          { id: "advance_30min", text: "30 minutos" },
-          { id: "advance_1h",    text: "1 hora" },
-        ]
-      ).catch(() => {});
+
+    const eventTitleFU = (ctx as Record<string, unknown>).event_title as string | undefined;
+    let answerFU = parseReminderAnswer(message);
+
+    if (answerFU.kind === "unknown" && (msgLowFU === "1" || msgLowFU === "button:advance_confirm_yes")) {
+      answerFU = { kind: "accept_no_time" };
+    }
+
+    if (answerFU.kind === "unknown") {
+      const aiResultFU = await classifyReminderWithAI(message, eventTitleFU ?? null);
+      if (aiResultFU.kind !== "unknown") answerFU = aiResultFU;
+    }
+
+    if (answerFU.kind === "accept_with_time") {
+      return await finalizeEdit(userId, phone, ctx, answerFU.minutes, userTz);
+    }
+    if (answerFU.kind === "at_time") {
+      return await finalizeEdit(userId, phone, ctx, 0, userTz);
+    }
+    if (answerFU.kind === "decline") {
+      return await finalizeEdit(userId, phone, ctx, null, userTz);
+    }
+    if (answerFU.kind === "accept_no_time") {
       return {
-        response: "",
+        response: `Beleza! Com quanto tempo de antecedência? ⏱️\n_Ex: "30 minutos antes", "1 hora antes", "2 horas antes" — ou diga "só na hora"._`,
         pendingAction: "agenda_edit",
         pendingContext: { ...ctx, step: "waiting_reminder_minutes" },
       };
     }
-    if (isReminderAtTime(message)) {
-      return await finalizeEdit(userId, phone, ctx, 0, userTz);
-    }
-    if (isReminderDecline(message)) {
-      return await finalizeEdit(userId, phone, ctx, null, userTz);
-    }
-    const minutesInAnswer = parseMinutes(message);
-    if (minutesInAnswer !== null && message.match(/\d|hora|minuto|meia/)) {
-      return await finalizeEdit(userId, phone, ctx, minutesInAnswer, userTz);
-    }
-    // Reenvia botões
-    sendButtons(
-      phone,
-      "Quer que eu te lembre antes? ⏱️",
-      `Evento: "${(ctx as Record<string,unknown>).event_title ?? "evento"}"`,
-      [
-        { id: "advance_confirm_yes", text: "⏰ Sim, me avisa antes" },
-        { id: "advance_confirm_no",  text: "✅ Só na hora" },
-      ]
-    ).catch(() => {});
+
     return {
-      response: "",
+      response: `Não entendi 100% 😅 Me diz de um jeito direto:\n• _"me avisa 30 minutos antes"_ (ou outro tempo)\n• _"só na hora"_\n• _"não precisa"_`,
       pendingAction: "agenda_edit",
       pendingContext: { ...ctx, step: "waiting_reminder_answer" },
     };
@@ -4184,33 +4174,27 @@ async function handleReminderSet(
       return await saveReminder(userId, phone, updatedParsed, remindAt, 0, lang, userNickname, userTz);
     }
 
-    // "só na hora" / "na hora" → 0 min de antecedência (avisa exatamente no horário)
-    if (isReminderAtTime(message)) {
+    // Parser unificado: detecta intencao + tempo na mesma passada
+    const reminderTitle = (parsed as Record<string, unknown>).title as string | undefined;
+    let answerAdv = parseReminderAnswer(message);
+
+    if (answerAdv.kind === "unknown") {
+      const aiAdv = await classifyReminderWithAI(message, reminderTitle ?? null);
+      if (aiAdv.kind !== "unknown") answerAdv = aiAdv;
+    }
+
+    if (answerAdv.kind === "accept_with_time") {
+      const advancedTime = new Date(remindAt.getTime() - answerAdv.minutes * 60 * 1000);
+      return await saveReminder(userId, phone, parsed, advancedTime, answerAdv.minutes, lang, userNickname, userTz);
+    }
+    // "so na hora" ou "nao precisa" → 0 min de antecedencia (avisa no horario exato)
+    if (answerAdv.kind === "at_time" || answerAdv.kind === "decline") {
       return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz);
     }
-    // "não precisa" → avisa na hora mesmo (sem antecedência adicional)
-    if (isReminderDecline(message)) {
-      return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz);
-    }
-    // Tenta extrair minutos de antecedência
-    const advanceMin = parseMinutes(message);
-    if (advanceMin !== null && advanceMin > 0) {
-      const advancedTime = new Date(remindAt.getTime() - advanceMin * 60 * 1000);
-      return await saveReminder(userId, phone, parsed, advancedTime, advanceMin, lang, userNickname, userTz);
-    }
-    // Não entendeu → reenvia botões
-    sendButtons(
-      phone,
-      "Com quanto tempo antes?",
-      `Vou te avisar antes de: "${(parsed as Record<string, unknown>).title}"`,
-      [
-        { id: "advance_15min", text: "15 minutos" },
-        { id: "advance_30min", text: "30 minutos" },
-        { id: "advance_1h",    text: "1 hora" },
-      ]
-    ).catch(() => {});
+
+    // accept_no_time ou unknown → pede o tempo especifico em texto livre
     return {
-      response: "",
+      response: `Quanto tempo antes? ⏱️\n_Ex: "15 minutos antes", "30 minutos antes", "1 hora antes" — ou "só na hora"._`,
       pendingAction: "reminder_set",
       pendingContext: ctx,
     };

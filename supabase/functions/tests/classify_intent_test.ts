@@ -9,6 +9,7 @@ import {
   isReminderAtTime,
   isReminderAccept,
   parseMinutes,
+  parseReminderAnswer,
 } from "../_shared/classify.ts";
 
 // ─────────────────────────────────────────────
@@ -711,4 +712,196 @@ Deno.test("classifyIntent regressão: 'marcar reunião amanha' ainda é agenda_c
 // budget_set ainda pega
 Deno.test("classifyIntent regressão: 'quero gastar no maximo 500 em alimentacao'", () => {
   assertEquals(classifyIntent("quero gastar no maximo 500 em alimentacao"), "budget_set");
+});
+
+// ─────────────────────────────────────────────
+// parseReminderAnswer — parser unificado de resposta
+// (cobre o bug do Guilherme: "sim me avisa antes" caía em loop)
+// ─────────────────────────────────────────────
+
+// ── ACCEPT_NO_TIME (afirmação sem tempo específico) ──
+
+Deno.test("parseReminderAnswer - 'sim, me avisa antes' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("sim, me avisa antes").kind, "accept_no_time");
+});
+
+Deno.test("parseReminderAnswer - 'sim me avisa antes' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("sim me avisa antes").kind, "accept_no_time");
+});
+
+Deno.test("parseReminderAnswer - 'sim avisa antes' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("sim avisa antes").kind, "accept_no_time");
+});
+
+Deno.test("parseReminderAnswer - 'sim me avisa' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("sim me avisa").kind, "accept_no_time");
+});
+
+Deno.test("parseReminderAnswer - 'claro' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("claro").kind, "accept_no_time");
+});
+
+Deno.test("parseReminderAnswer - 'pode me avisar' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("pode me avisar").kind, "accept_no_time");
+});
+
+Deno.test("parseReminderAnswer - 'pode' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("pode").kind, "accept_no_time");
+});
+
+Deno.test("parseReminderAnswer - 'beleza' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("beleza").kind, "accept_no_time");
+});
+
+Deno.test("parseReminderAnswer - 'ok me avisa antes' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("ok me avisa antes").kind, "accept_no_time");
+});
+
+Deno.test("parseReminderAnswer - 'quero ser lembrado' → accept_no_time", () => {
+  assertEquals(parseReminderAnswer("quero ser lembrado").kind, "accept_no_time");
+});
+
+// ── ACCEPT_WITH_TIME (afirmação + tempo na mesma frase) ──
+
+Deno.test("parseReminderAnswer - 'sim me avisa 30 min antes' → accept_with_time, 30", () => {
+  const r = parseReminderAnswer("sim me avisa 30 min antes");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 30);
+});
+
+Deno.test("parseReminderAnswer - 'sim, 2 horas antes' → accept_with_time, 120", () => {
+  const r = parseReminderAnswer("sim, 2 horas antes");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 120);
+});
+
+Deno.test("parseReminderAnswer - 'sim, uma hora antes' → accept_with_time, 60", () => {
+  const r = parseReminderAnswer("sim, uma hora antes");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 60);
+});
+
+Deno.test("parseReminderAnswer - 'me avisa 15min antes' → accept_with_time, 15", () => {
+  const r = parseReminderAnswer("me avisa 15min antes");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 15);
+});
+
+Deno.test("parseReminderAnswer - 'claro, 30 minutos antes' → accept_with_time, 30", () => {
+  const r = parseReminderAnswer("claro, 30 minutos antes");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 30);
+});
+
+Deno.test("parseReminderAnswer - 'meia hora antes' → accept_with_time, 30", () => {
+  const r = parseReminderAnswer("meia hora antes");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 30);
+});
+
+Deno.test("parseReminderAnswer - 'hora e meia antes' → accept_with_time, 90", () => {
+  const r = parseReminderAnswer("hora e meia antes");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 90);
+});
+
+Deno.test("parseReminderAnswer - 'duas horas antes' → accept_with_time, 120", () => {
+  const r = parseReminderAnswer("duas horas antes");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 120);
+});
+
+Deno.test("parseReminderAnswer - 'manda 15min antes blz' → accept_with_time, 15", () => {
+  const r = parseReminderAnswer("manda 15min antes blz");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 15);
+});
+
+Deno.test("parseReminderAnswer - '1h antes' → accept_with_time, 60", () => {
+  const r = parseReminderAnswer("1h antes");
+  assertEquals(r.kind, "accept_with_time");
+  if (r.kind === "accept_with_time") assertEquals(r.minutes, 60);
+});
+
+// ── AT_TIME (avisar exatamente no horário) ──
+
+Deno.test("parseReminderAnswer - 'só na hora' → at_time", () => {
+  assertEquals(parseReminderAnswer("só na hora").kind, "at_time");
+});
+
+Deno.test("parseReminderAnswer - 'sim me avisa na hora' → at_time", () => {
+  assertEquals(parseReminderAnswer("sim me avisa na hora").kind, "at_time");
+});
+
+Deno.test("parseReminderAnswer - 'no horário' → at_time", () => {
+  assertEquals(parseReminderAnswer("no horário").kind, "at_time");
+});
+
+Deno.test("parseReminderAnswer - 'na hora' → at_time", () => {
+  assertEquals(parseReminderAnswer("na hora").kind, "at_time");
+});
+
+Deno.test("parseReminderAnswer - 'avisa na hora exata' → at_time", () => {
+  assertEquals(parseReminderAnswer("avisa na hora exata").kind, "at_time");
+});
+
+// ── DECLINE (recusa) ──
+
+Deno.test("parseReminderAnswer - 'não' → decline", () => {
+  assertEquals(parseReminderAnswer("não").kind, "decline");
+});
+
+Deno.test("parseReminderAnswer - 'não precisa' → decline", () => {
+  assertEquals(parseReminderAnswer("não precisa").kind, "decline");
+});
+
+Deno.test("parseReminderAnswer - 'nem precisa' → decline", () => {
+  assertEquals(parseReminderAnswer("nem precisa").kind, "decline");
+});
+
+Deno.test("parseReminderAnswer - 'dispensa' → decline", () => {
+  assertEquals(parseReminderAnswer("dispensa").kind, "decline");
+});
+
+Deno.test("parseReminderAnswer - 'deixa pra lá' → decline", () => {
+  assertEquals(parseReminderAnswer("deixa pra lá").kind, "decline");
+});
+
+Deno.test("parseReminderAnswer - 'sem lembrete' → decline", () => {
+  assertEquals(parseReminderAnswer("sem lembrete").kind, "decline");
+});
+
+Deno.test("parseReminderAnswer - 'pode esquecer' → decline", () => {
+  assertEquals(parseReminderAnswer("pode esquecer").kind, "decline");
+});
+
+// ── UNKNOWN (resposta ambígua que precisa de fallback IA ou pergunta) ──
+
+Deno.test("parseReminderAnswer - 'talvez' → unknown", () => {
+  assertEquals(parseReminderAnswer("talvez").kind, "unknown");
+});
+
+Deno.test("parseReminderAnswer - '' (vazio) → unknown", () => {
+  assertEquals(parseReminderAnswer("").kind, "unknown");
+});
+
+Deno.test("parseReminderAnswer - resposta sem sentido → unknown", () => {
+  assertEquals(parseReminderAnswer("xyzabc").kind, "unknown");
+});
+
+// ── REGRESSÃO: garantir que funções antigas continuam funcionando ──
+Deno.test("regressão - isReminderAccept('sim') ainda retorna true", () => {
+  assertEquals(isReminderAccept("sim"), true);
+});
+
+Deno.test("regressão - isReminderDecline('não precisa') ainda retorna true", () => {
+  assertEquals(isReminderDecline("não precisa"), true);
+});
+
+Deno.test("regressão - isReminderAtTime('só na hora') ainda retorna true", () => {
+  assertEquals(isReminderAtTime("só na hora"), true);
+});
+
+Deno.test("regressão - parseMinutes('30 min') ainda retorna 30", () => {
+  assertEquals(parseMinutes("30 min"), 30);
 });

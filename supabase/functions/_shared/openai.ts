@@ -859,3 +859,72 @@ Pedido: "${message}"`;
     return null;
   }
 }
+
+// ─────────────────────────────────────────────
+// REMINDER ANSWER — IA fallback
+// ─────────────────────────────────────────────
+// Usado quando parseReminderAnswer (regex) retorna "unknown".
+// Custo baixo: ~50-80 tokens, modelo Haiku, timeout curto.
+// Garante que respostas exóticas como "vai que esquece, me pega 1h antes" sejam entendidas.
+
+export type ReminderAIResult =
+  | { kind: "accept_with_time"; minutes: number }
+  | { kind: "accept_no_time" }
+  | { kind: "at_time" }
+  | { kind: "decline" }
+  | { kind: "unknown" };
+
+export async function classifyReminderWithAI(
+  message: string,
+  eventTitle: string | null = null
+): Promise<ReminderAIResult> {
+  if (!ANTHROPIC_KEY) return { kind: "unknown" };
+
+  const safeMsg = (message ?? "").slice(0, 200);
+  const titleLine = eventTitle ? `Evento em questão: "${eventTitle}"\n` : "";
+
+  const system = `Você classifica respostas curtas a uma pergunta de lembrete.
+Contexto: o assistente acabou de perguntar "Quer que eu te lembre antes do evento?".
+${titleLine}Classifique a resposta do usuário em UMA das categorias e responda APENAS com JSON válido (sem markdown).
+
+Categorias:
+- "accept_with_time": aceita lembrete E informa tempo de antecedência (ex: "sim 2h antes", "claro, 30 min").
+- "accept_no_time":   aceita lembrete SEM informar tempo (ex: "sim me avisa antes", "claro", "pode").
+- "at_time":          quer aviso só na hora exata do evento (ex: "só na hora", "no horário").
+- "decline":          recusa lembrete (ex: "não precisa", "deixa pra lá").
+- "unknown":          não dá pra inferir com confiança.
+
+Formato de resposta:
+{"kind": "<categoria>", "minutes": <número ou null>}
+
+Exemplos:
+"sim me avisa antes" → {"kind": "accept_no_time", "minutes": null}
+"sim, 2 horas antes" → {"kind": "accept_with_time", "minutes": 120}
+"manda 15min antes blz" → {"kind": "accept_with_time", "minutes": 15}
+"só na hora" → {"kind": "at_time", "minutes": null}
+"deixa pra lá" → {"kind": "decline", "minutes": null}
+"talvez" → {"kind": "unknown", "minutes": null}`;
+
+  try {
+    const raw = await chat(
+      [{ role: "user", content: safeMsg }],
+      system,
+      true
+    );
+    const cleaned = raw.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleaned) as { kind?: string; minutes?: number | null };
+
+    const kind = parsed.kind;
+    const minutes = typeof parsed.minutes === "number" ? parsed.minutes : null;
+
+    if (kind === "accept_with_time" && minutes !== null && minutes > 0) {
+      return { kind: "accept_with_time", minutes };
+    }
+    if (kind === "accept_no_time") return { kind: "accept_no_time" };
+    if (kind === "at_time") return { kind: "at_time" };
+    if (kind === "decline") return { kind: "decline" };
+    return { kind: "unknown" };
+  } catch {
+    return { kind: "unknown" };
+  }
+}
