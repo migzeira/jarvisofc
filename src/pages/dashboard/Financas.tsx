@@ -62,6 +62,25 @@ function getCat(name: string) {
   return CAT[name?.toLowerCase()] ?? { emoji: "💳", color: "#6b7280", label: name };
 }
 
+/**
+ * Normaliza nome de categoria pra comparação:
+ * - lowercase
+ * - remove acentos (Alimentação → alimentacao)
+ * - trim
+ *
+ * Necessário porque transactions.category é salvo lowercase+sem-acento
+ * (extractTransactions força isso) mas categories.name preserva o nome
+ * original ("Alimentação", "Saúde", "Educação"). Sem normalizar acento,
+ * o filtro retorna 0 resultados.
+ */
+function normCat(name: unknown): string {
+  return String(name ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim();
+}
+
 // Lista de nomes default — usada pra distinguir categorias custom
 const DEFAULT_CATEGORY_NAMES = Object.keys(CAT);
 
@@ -184,8 +203,8 @@ export default function Financas() {
    * (categorias custom têm icon + color próprios), depois cai no CAT estático.
    */
   const getCatDynamic = (name: string) => {
-    const key = (name ?? "").toLowerCase().trim();
-    const fromDB = categories.find((c: any) => String(c.name ?? "").toLowerCase().trim() === key);
+    const key = normCat(name);
+    const fromDB = categories.find((c: any) => normCat(c.name) === key);
     if (fromDB) {
       const colorObj = CATEGORY_COLORS.find((c) => c.key === fromDB.color);
       // Se categoria do banco tem cor mas é default, usa cor do CAT estático
@@ -204,7 +223,7 @@ export default function Financas() {
   const customCategoryNames = new Set(
     categories
       .filter((c: any) => !c.is_default)
-      .map((c: any) => String(c.name ?? "").toLowerCase().trim())
+      .map((c: any) => normCat(c.name))
   );
 
   /** Lista de categorias pra dropdowns do TransactionEditModal */
@@ -217,14 +236,14 @@ export default function Financas() {
     ...categories
       .filter((c: any) => !c.is_default)
       .map((c: any) => ({
-        name: String(c.name ?? "").toLowerCase().trim(),
+        name: normCat(c.name),
         label: c.name,
         icon: c.icon || "🏷️",
       })),
   ];
 
   const handleEditCategory = (categoryName: string) => {
-    const cat = categories.find((c: any) => String(c.name ?? "").toLowerCase().trim() === categoryName.toLowerCase().trim());
+    const cat = categories.find((c: any) => normCat(c.name) === normCat(categoryName));
     if (!cat || cat.is_default) return;
     setCategoryToEdit(cat as CategoryRow);
     setCategoryModalOpen(true);
@@ -467,15 +486,12 @@ export default function Financas() {
   });
 
   // Further filtered for Transactions list
-  // Categoria: compara lowercase pra evitar mismatch entre "Lazer" (categories.name)
-  // e "lazer" (transactions.category) — extractTransactions sempre salva lowercase.
+  // Categoria: usa normCat() pra comparar (lowercase + sem acento) — necessário
+  // porque transactions.category é "alimentacao"/"saude" mas categories.name é
+  // "Alimentação"/"Saúde". Sem normalizar acento, filtro retorna 0 results.
   const filteredTx = periodTx.filter(t => {
     if (filterType !== "all" && t.type !== filterType) return false;
-    if (filterCat !== "all") {
-      const txCat = String(t.category ?? "").toLowerCase().trim();
-      const wanted = filterCat.toLowerCase().trim();
-      if (txCat !== wanted) return false;
-    }
+    if (filterCat !== "all" && normCat(t.category) !== normCat(filterCat)) return false;
     if (searchTx && !t.description.toLowerCase().includes(searchTx.toLowerCase())) return false;
     return true;
   });
@@ -968,7 +984,7 @@ export default function Financas() {
                   {pieData.slice(0, 5).map(cat => {
                     const pct = totalExpenses > 0 ? (cat.value / totalExpenses) * 100 : 0;
                     const conf = getCatDynamic(cat.name);
-                    const isCustom = customCategoryNames.has(cat.name.toLowerCase().trim());
+                    const isCustom = customCategoryNames.has(normCat(cat.name));
                     return (
                       <div key={cat.name} className="space-y-1">
                         <div className="flex items-center justify-between text-sm">
@@ -999,14 +1015,14 @@ export default function Financas() {
                   })}
 
                   {/* Lista categorias custom QUE NÃO TÊM gastos (não aparecem no ranking) */}
-                  {categories.filter((c: any) => !c.is_default && !pieData.some(p => p.name.toLowerCase() === String(c.name ?? "").toLowerCase())).length > 0 && (
+                  {categories.filter((c: any) => !c.is_default && !pieData.some(p => normCat(p.name) === normCat(c.name))).length > 0 && (
                     <div className="pt-3 mt-3 border-t border-border/40">
                       <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">
                         Suas categorias (sem gastos no período)
                       </p>
                       <div className="flex flex-wrap gap-1.5">
                         {categories
-                          .filter((c: any) => !c.is_default && !pieData.some(p => p.name.toLowerCase() === String(c.name ?? "").toLowerCase()))
+                          .filter((c: any) => !c.is_default && !pieData.some(p => normCat(p.name) === normCat(c.name)))
                           .map((c: any) => {
                             const conf = getCatDynamic(c.name);
                             return (
@@ -1117,7 +1133,8 @@ export default function Financas() {
                 ))}
               </SelectContent>
             </Select>
-            {/* Category management */}
+            {/* Category management — só lista + edita/exclui custom + abre o
+                CategoryCreateModal pra criar nova (com emoji + cor) */}
             <Dialog open={catDialogOpen} onOpenChange={setCatDialogOpen}>
               <DialogTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-9 text-xs text-muted-foreground hover:text-foreground">
@@ -1125,37 +1142,53 @@ export default function Financas() {
                 </Button>
               </DialogTrigger>
               <DialogContent className="bg-card border-border">
-                <DialogHeader><DialogTitle>Gerenciar categorias</DialogTitle></DialogHeader>
+                <DialogHeader>
+                  <DialogTitle>Gerenciar categorias</DialogTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Defaults ficam protegidas. Customs podem ser editadas (emoji + cor) ou excluídas.
+                  </p>
+                </DialogHeader>
                 <div className="space-y-3">
-                  <div className="grid sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
+                  <div className="grid sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
                     {categories.map(c => {
-                      const total = transactions.filter(t => t.category === c.name && t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
-                      const conf = getCat(c.name);
+                      const conf = getCatDynamic(c.name);
                       return (
                         <div key={c.id} className="flex items-center justify-between p-2 rounded-lg border border-border bg-muted/30">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
                             <span className="text-base">{conf.emoji}</span>
-                            <div>
-                              <p className="text-sm font-medium capitalize">{c.name}</p>
-                              <p className="text-[10px] text-muted-foreground">R$ {brl(total)}</p>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium capitalize truncate">{c.name}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {c.is_default ? "Padrão" : "Personalizada"}
+                              </p>
                             </div>
                           </div>
                           {!c.is_default && (
-                            <button onClick={async () => {
-                              await supabase.from("categories").delete().eq("id", c.id);
-                              toast.success("Categoria removida"); loadData();
-                            }} className="text-muted-foreground hover:text-destructive transition-colors">
-                              <Trash2 className="h-3.5 w-3.5" />
+                            <button
+                              onClick={() => {
+                                setCatDialogOpen(false);
+                                handleEditCategory(c.name);
+                              }}
+                              className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                              title="Editar categoria"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
                             </button>
                           )}
                         </div>
                       );
                     })}
                   </div>
-                  <div className="flex gap-2 pt-2 border-t border-border">
-                    <Input value={newCat} onChange={e => setNewCat(e.target.value)} placeholder="Nova categoria..." className="h-9 text-sm" />
-                    <Button size="sm" className="h-9" onClick={handleAddCategory}>
-                      <Plus className="h-4 w-4" />
+                  <div className="flex justify-end pt-2 border-t border-border">
+                    <Button
+                      size="sm"
+                      className="bg-violet-600 hover:bg-violet-700"
+                      onClick={() => {
+                        setCatDialogOpen(false);
+                        handleNewCategory();
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-1.5" /> Nova categoria
                     </Button>
                   </div>
                 </div>
