@@ -192,7 +192,7 @@ export async function generateWeeklySummaryChartUrl(params: {
         },
         subtitle: {
           display: true,
-          text: `Compromissos: ${eventsDone}/${eventsCount}  |  Notas: ${notesCount}  |  Habitos: ${habitsCompleted}/${habitsTotal} (${habitsPct}%)  |  Score: ${productivityScore}%`,
+          text: `Compromissos: ${eventsDone}/${eventsCount}  |  Notas: ${notesCount}`,
           color: "#aaaaaa",
           font: { size: 11 },
           padding: { bottom: 10 },

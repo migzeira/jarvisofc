@@ -249,16 +249,6 @@ serve(async (req) => {
         lines.push(`📝 *Notas salvas:* ${notesCount}`);
       }
 
-      // Habitos
-      if (habitsTotal > 0) {
-        lines.push(`🎯 *Habitos:* ${habitsCompleted}/${habitsTotal} check-ins (${habitsTotal > 0 ? Math.round((habitsCompleted / habitsTotal) * 100) : 0}%)`);
-      }
-
-      // Score
-      lines.push("");
-      const scoreEmoji = productivityScore >= 80 ? "🏆" : productivityScore >= 60 ? "💪" : productivityScore >= 40 ? "📈" : "🌱";
-      lines.push(`${scoreEmoji} *Score de produtividade: ${productivityScore}%*`);
-
       // Proxima semana preview
       const { data: nextEvents } = await supabase
         .from("events")
