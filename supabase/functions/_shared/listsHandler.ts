@@ -31,30 +31,67 @@ interface ListRow {
  * Extrai o nome da lista da mensagem.
  * "cria lista de compras" → "compras"
  * "cria uma lista chamada mercado" → "mercado"
+ * "cria lista de mercado pra mim e adiciona arroz" → "mercado"
  * "adiciona X na lista de presentes natal" → "presentes natal"
  * "mostra minha lista de mercado" → "mercado"
  *
- * Retorna null se não identificar nome (caso "minha lista" sem nome).
+ * Estratégia conservadora: pega no MÁXIMO 3 palavras após "lista de/chamada/para",
+ * e CORTA em qualquer conector/verbo de comando (e, ou, pra, adiciona, etc.).
+ * Retorna null se não identificar nome.
  */
 export function parseListName(text: string): string | null {
   const t = text.trim();
 
-  // Padrões em ordem de especificidade
+  // Padrões em ordem de especificidade. Captura até pontuação ou fim de linha,
+  // depois cortamos em conectores/comandos pra ficar conservador.
   const patterns: RegExp[] = [
-    /\blista\s+chamada\s+([a-zA-ZÀ-ÿ0-9 _-]{1,60})/i,
-    /\blista\s+de\s+([a-zA-ZÀ-ÿ0-9 _-]{1,60})/i,
-    /\blista\s+para\s+([a-zA-ZÀ-ÿ0-9 _-]{1,60})/i,
-    /\blista\s+pra\s+([a-zA-ZÀ-ÿ0-9 _-]{1,60})/i,
+    /\blista\s+chamada\s+(.+?)(?=[.,!?;:\n]|$)/i,
+    /\blista\s+de\s+(.+?)(?=[.,!?;:\n]|$)/i,
+    /\blista\s+para\s+(.+?)(?=[.,!?;:\n]|$)/i,
+    /\blista\s+pra\s+(.+?)(?=[.,!?;:\n]|$)/i,
+  ];
+
+  // Palavras que CORTAM o nome (qualquer uma delas no meio = fim do nome).
+  // Ordem importa pouco — usamos regex pra cortar na PRIMEIRA ocorrência.
+  const STOP_WORDS = [
+    // Conectores de continuação que começam novo comando
+    "e adiciona", "e adicionar", "e coloca", "e colocar", "e bota", "e botar",
+    "e poe", "e põe", "e salva", "e salvar", "e grava", "e gravar",
+    "e guarda", "e guardar", "e inclui", "e incluir",
+    // Beneficiário / destino (não fazem parte do nome)
+    "pra mim", "para mim", "pro meu", "pra meu", "para meu", "pra minha", "para minha",
+    // Verbos de comando standalone
+    " adiciona ", " adicionar ", " acrescenta ", " coloca ", " colocar ",
+    " bota ", " botar ", " salva ", " salvar ", " grava ", " gravar ",
+    " guarda ", " guardar ", " inclui ", " incluir ",
+    // Preposições típicas que sinalizam novo trecho
+    " com os ", " com o ", " com a ", " com as ",
   ];
 
   for (const re of patterns) {
     const m = t.match(re);
     if (m && m[1]) {
-      // Limpa: remove pontuação no fim e palavras-conector finais
-      let name = m[1].trim()
-        .replace(/[.,!?;:]+$/, "")
-        .replace(/\s+(adicione|adicionar|coloca|bota|na|nas|no|salva|salvar|guarda|guardar|grava|gravar)\s+.*$/i, "")
-        .trim();
+      let name = m[1].trim();
+
+      // Corta na primeira stop-word encontrada (case-insensitive)
+      const lowerName = name.toLowerCase();
+      let cutAt = name.length;
+      for (const sw of STOP_WORDS) {
+        const idx = lowerName.indexOf(sw);
+        if (idx >= 0 && idx < cutAt) cutAt = idx;
+      }
+      name = name.slice(0, cutAt).trim();
+
+      // Limpa pontuação residual
+      name = name.replace(/[.,!?;:]+$/, "").trim();
+
+      // Limite conservador: máximo 3 palavras (cobre "presentes natal", "mercado central",
+      // "filmes pra assistir" mas evita pegar comando inteiro como nome)
+      const words = name.split(/\s+/).filter(Boolean);
+      if (words.length > 3) {
+        name = words.slice(0, 3).join(" ");
+      }
+
       // Garante limites do schema (1-60 chars)
       if (name.length >= 1 && name.length <= 60) return name.toLowerCase();
     }
@@ -79,7 +116,13 @@ export function parseItems(text: string): string[] {
   // Remove "lista de X:" no início se existir
   chunk = chunk.replace(/^.{0,40}\blista\s+(de\s+|chamada\s+)?\w+\s*:\s*/i, "");
 
-  // Remove verbo de adição inicial
+  // Remove "pra mim" / "para mim" iniciais (beneficiário, não item)
+  chunk = chunk.replace(/^(pra|para|pro)\s+(mim|meu|minha)\b[,\s]*/i, "");
+
+  // Remove "e " / "e tambem " / "e também " inicial (conectivos)
+  chunk = chunk.replace(/^(e|tambem|também)\s+/i, "");
+
+  // Remove verbo de adição inicial (com ou sem "e" prefixado)
   chunk = chunk.replace(
     /^(adiciona|adicionar|acrescenta|acrescentar|coloca|colocar|bota|botar|poe|poem|salva|salvar|grava|gravar|guarda|guardar|inclui|incluir|insere|inserir|anexa|anexar)\b\s*/i,
     ""
@@ -87,8 +130,10 @@ export function parseItems(text: string): string[] {
   // Remove "para a lista" / "pra lista" no fim ou começo
   chunk = chunk.replace(/\b(para|pra)\s+(a\s+)?lista\b.*$/i, "");
 
-  // Tira "tambem" / "também" iniciais
-  chunk = chunk.replace(/^(tambem|também|tb|tbm)\s+/i, "");
+  // Remove afirmações iniciais ("sim", "ok", "claro", "isso", "tambem")
+  // — quando user responde "Sim, arroz e feijão" pra pending_action list_await_items,
+  // o "Sim" não é item.
+  chunk = chunk.replace(/^(sim|claro|ok|certo|beleza|isso|isso ai|isso aí|aham|uhum|tambem|também|tb|tbm)[,\s]+/i, "");
 
   // Quebra por separadores: vírgula, ; , quebras de linha, " e " (último), " ou "
   // Cuidado com "e" — só split em " e " quando claramente separa itens.
@@ -234,6 +279,42 @@ export async function handleListCreate(
     return {
       response: "❌ Não consegui criar a lista agora. Tenta de novo em instantes?",
     };
+  }
+
+  // ─── Detecta itens na MESMA mensagem ─────────────────────────────────
+  // Ex: "cria lista de mercado e adiciona arroz, feijão, açúcar"
+  // Pega o trecho APÓS o nome da lista e parseia itens dali. Se tiver
+  // itens, insere de uma vez (UX: 1 mensagem ao invés de 2 idas e voltas).
+  const lowerText = text.toLowerCase();
+  const nameIdx = lowerText.indexOf(name);
+  const tailRaw = nameIdx >= 0 ? text.slice(nameIdx + name.length) : "";
+
+  // Só tenta parsear se tem indício de comando de adição no tail
+  const hasAddIntent = /\b(adiciona|adicionar|acrescenta|acrescentar|coloca|colocar|bota|botar|inclui|incluir|com\s+|\be\s+(arroz|feij|carne|leite|pao|pão|aç[uú]car|cafe|café|frut|legum|verdur|massa|pasta|sabao|sabão|detergent|papel))/i.test(tailRaw);
+
+  if (hasAddIntent) {
+    const items = parseItems(tailRaw);
+    if (items.length > 0) {
+      const rows = items.map((content, idx) => ({
+        list_id: (created as any).id,
+        content,
+        position: idx,
+        source: "whatsapp",
+      }));
+      const { error: itemsErr } = await (supabase as any).from("list_items").insert(rows);
+      if (!itemsErr) {
+        const itemsLine = items.map((i) => `• ${i}`).join("\n");
+        return {
+          response:
+            `✅ Lista *${(created as any).name}* criada com ${items.length} item${items.length === 1 ? "" : "s"}:\n${itemsLine}\n\n` +
+            `_Pra adicionar mais: "adiciona X, Y na lista de ${(created as any).name}"_`,
+          pendingAction: null,
+          pendingContext: null,
+        };
+      }
+      // Se falhou inserir itens, ainda confirma criação da lista (não perde o resultado)
+      console.error("[lists] handleListCreate combo-insert error:", itemsErr);
+    }
   }
 
   return {
