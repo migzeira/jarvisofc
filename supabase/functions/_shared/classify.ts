@@ -53,6 +53,13 @@ export type Intent =
   | "finance_delete_confirm"
   | "agenda_edit_choose"
   | "anota_ambiguous"
+  | "list_create"
+  | "list_add_items"
+  | "list_show"
+  | "list_show_all"
+  | "list_complete_item"
+  | "list_remove_item"
+  | "list_delete"
   | "ai_chat";
 
 export function classifyIntent(msg: string): Intent {
@@ -70,6 +77,70 @@ export function classifyIntent(msg: string): Intent {
     /^(oi|ola|olá|hello|hi|hey|bom dia|boa tarde|boa noite|hola|buenos dias|buenas tardes|buenas noches|good morning|good afternoon|good evening|good night|e ai|e aí|salve|fala|opa|tudo bem|tudo bom|como vai|como estas|como esta)[\s!,?.]*$/.test(m)
   )
     return "greeting";
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // LISTAS — todos os intents exigem a palavra "lista" pra desambiguar
+  // de notes/reminders/transações. Posicionados ANTES dos outros pra priorizar.
+  // Ordem importa: deletar item / deletar lista / mostrar / criar / adicionar.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Mostrar TODAS as listas — "minhas listas", "quais listas tenho"
+  if (
+    /^(quais|minhas|liste?|lista(r)?|mostra(r)?|ver|veja|mostre)\s+(s[ãa]o\s+)?(minhas\s+|as\s+)?listas\s*\??$/.test(m) ||
+    /^(minhas\s+)?listas\s*\??$/.test(m) ||
+    /\b(quais|que)\s+listas\s+(eu\s+)?(tenho|criei)\b/.test(m)
+  )
+    return "list_show_all";
+
+  // Marcar item como concluído na lista — "marca X como comprado/feito na lista"
+  // "comprei X (na lista de Y)", "ja comprei X"
+  if (
+    /\b(marca|marcar|risca|riscar|conclui|concluir)\b.{0,30}\b(na\s+lista|da\s+lista|lista\s+de)\b/.test(m) ||
+    /\b(ja\s+)?(comprei|comprado|feito|concluido|concluida)\b.{0,30}\b(na\s+lista|da\s+lista|lista\s+de)\b/.test(m)
+  )
+    return "list_complete_item";
+
+  // Remover item da lista (sem marcar como comprado, simplesmente tirar)
+  // "tira X da lista", "remove X da lista de Y", "apaga X da lista"
+  if (
+    /\b(tira|tirar|remove(r)?|apaga(r)?|deleta(r)?|exclui(r)?)\b.{0,30}\bda\s+lista\b/.test(m) ||
+    /\b(tira|tirar|remove(r)?|apaga(r)?|deleta(r)?|exclui(r)?)\b.{0,40}\bd[aoe]\s+(minha\s+)?lista\s+de\b/.test(m)
+  )
+    return "list_remove_item";
+
+  // Deletar a lista inteira — "apaga minha lista de compras", "deleta a lista X"
+  // Diferente do list_remove_item por não citar item específico antes.
+  if (
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|destroi)\s+(a\s+|minha\s+|essa\s+)?lista\s+(inteira|toda|de\s+\w+|chamada\s+\w+)?\s*$/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|minha\s+)?lista\s+(de\s+|chamada\s+)\w+\s*$/.test(m)
+  )
+    return "list_delete";
+
+  // Mostrar conteúdo de uma lista específica
+  // "mostra minha lista de compras", "o que tem na lista de mercado"
+  if (
+    /\b(mostra(r)?|ver|veja|abre|abrir|exib[ei]|liste?|listar)\s+(a\s+|minha\s+|essa\s+)?lista\s+(de\s+|chamada\s+)?\w+/.test(m) ||
+    /\b(o\s+que\s+tem|que\s+tem|quais?\s+itens?|o\s+que\s+esta)\s+(em|na|n[oa]\s+minha)?\s*lista\s+(de\s+)?/.test(m) ||
+    /\bminha\s+lista\s+(de\s+)?\w+\s*\??$/.test(m)
+  )
+    return "list_show";
+
+  // Criar lista — "cria lista de compras", "nova lista chamada X", "criar lista X"
+  if (
+    /\b(cria|criar|nova|fazer?|faz|monta(r)?|comeca(r)?)\s+(uma\s+)?(nova\s+)?lista\s+(de\s+|chamada\s+|para\s+|pra\s+)\w+/.test(m) ||
+    /^(cria|criar|nova|faz|fazer)\s+(uma\s+)?(nova\s+)?lista\b/.test(m) ||
+    /\bquero\s+(criar|fazer|montar|uma)\s+(uma\s+)?(nova\s+)?lista\b/.test(m)
+  )
+    return "list_create";
+
+  // Adicionar itens à lista existente — DEPOIS dos comandos acima pra não capturar
+  // "tira X da lista" antes. Detecta verbos de adição + menção de "lista".
+  if (
+    /\b(adiciona(r)?|acrescenta(r)?|coloca(r)?|bota(r)?|poe|poem|salva(r)?|grava(r)?|guarda(r)?|inclui(r)?|inserir|insere|anexa(r)?)\b.{0,80}\b(na\s+lista|n[aoe]\s+minha\s+lista|na\s+lista\s+de|para\s+(a\s+)?lista|pra\s+(a\s+)?lista)\b/.test(m) ||
+    /\b(na\s+lista|n[aoe]\s+minha\s+lista|na\s+lista\s+de)\b.{0,80}\b(adiciona(r)?|acrescenta(r)?|coloca(r)?|bota(r)?|inclui(r)?)\b/.test(m)
+  )
+    return "list_add_items";
+
 
   // Consultar orçamento/meta — verificado ANTES de budget_set para evitar falso positivo
   if (

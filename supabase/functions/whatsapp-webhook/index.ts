@@ -23,6 +23,15 @@ import {
 } from "../_shared/openai.ts";
 import { logError, fromThrown } from "../_shared/logger.ts";
 import { type Intent, classifyIntent, isReminderDecline, isReminderAtTime, isReminderAccept, parseMinutes, parseReminderAnswer } from "../_shared/classify.ts";
+import {
+  handleListCreate,
+  handleListAddItems,
+  handleListShow,
+  handleListShowAll,
+  handleListCompleteItem,
+  handleListRemoveItem,
+  handleListDelete,
+} from "../_shared/listsHandler.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -6720,6 +6729,13 @@ function getHumanizedError(intent: string): string {
     case "habit_create":     return "⚠️ Não consegui criar o hábito. Ex: _quero hábito de exercício todo dia às 7h_";
     case "habit_checkin":    return "⚠️ Não consegui registrar. Tente enviar _feito_ quando completar um hábito.";
     case "finance_report":  return "⚠️ Não consegui gerar o relatório financeiro agora. Tente de novo em instantes.";
+    case "list_create":      return "⚠️ Não consegui criar a lista. Ex: _cria lista de compras_";
+    case "list_add_items":   return "⚠️ Não consegui adicionar itens. Ex: _adiciona arroz, feijão na lista de compras_";
+    case "list_show":
+    case "list_show_all":    return "⚠️ Não consegui mostrar a lista agora. Tente de novo em instantes.";
+    case "list_complete_item":
+    case "list_remove_item":
+    case "list_delete":      return "⚠️ Não consegui mexer na lista. Tente de novo em instantes.";
     default:                return "⚠️ Ops, algo deu errado por aqui. Pode tentar de novo? 🙏";
   }
 }
@@ -7663,6 +7679,54 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (session?.pending_action === "anota_await_content_reminder") {
       const r = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
       responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
+    } else if (session?.pending_action === "list_await_name") {
+      // Usuário disse "cria lista" sem nome — agora ele mandou o nome
+      const r = await handleListCreate(supabase as any, profile.id, `cria lista de ${text}`);
+      responseText = r.response;
+      pendingAction = r.pendingAction ?? null;
+      pendingContext = r.pendingContext ?? null;
+    } else if (session?.pending_action === "list_await_items") {
+      // Sequência natural após criar lista: user manda os itens
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const r = await handleListAddItems(supabase as any, profile.id, text, ctx);
+      responseText = r.response;
+      pendingAction = r.pendingAction ?? null;
+      pendingContext = r.pendingContext ?? null;
+    } else if (intent === "list_create") {
+      const r = await handleListCreate(supabase as any, profile.id, text);
+      responseText = r.response;
+      pendingAction = r.pendingAction ?? null;
+      pendingContext = r.pendingContext ?? null;
+    } else if (intent === "list_add_items") {
+      const r = await handleListAddItems(supabase as any, profile.id, text);
+      responseText = r.response;
+      pendingAction = r.pendingAction ?? null;
+      pendingContext = r.pendingContext ?? null;
+    } else if (intent === "list_show") {
+      const r = await handleListShow(supabase as any, profile.id, text);
+      responseText = r.response;
+      pendingAction = r.pendingAction ?? null;
+      pendingContext = r.pendingContext ?? null;
+    } else if (intent === "list_show_all") {
+      const r = await handleListShowAll(supabase as any, profile.id);
+      responseText = r.response;
+      pendingAction = r.pendingAction ?? null;
+      pendingContext = r.pendingContext ?? null;
+    } else if (intent === "list_complete_item") {
+      const r = await handleListCompleteItem(supabase as any, profile.id, text);
+      responseText = r.response;
+      pendingAction = r.pendingAction ?? null;
+      pendingContext = r.pendingContext ?? null;
+    } else if (intent === "list_remove_item") {
+      const r = await handleListRemoveItem(supabase as any, profile.id, text);
+      responseText = r.response;
+      pendingAction = r.pendingAction ?? null;
+      pendingContext = r.pendingContext ?? null;
+    } else if (intent === "list_delete") {
+      const r = await handleListDelete(supabase as any, profile.id, text);
+      responseText = r.response;
+      pendingAction = r.pendingAction ?? null;
+      pendingContext = r.pendingContext ?? null;
     } else if (intent === "notes_save") {
       const notesResult = await handleNotesSave(profile.id, sendPhone || replyTo, text, session, config, userTz);
       responseText = notesResult.response;

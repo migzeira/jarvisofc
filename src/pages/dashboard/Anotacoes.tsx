@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
@@ -15,9 +15,12 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Plus, StickyNote, Search, Trash2, Pencil, Copy, MessageCircle, X } from "lucide-react";
+import { Plus, StickyNote, Search, Trash2, Pencil, Copy, MessageCircle, X, ListChecks } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { CreateListDialog } from "@/components/lists/CreateListDialog";
+import { ListCard, type ListSummary } from "@/components/lists/ListCard";
+import { ListDetailModal } from "@/components/lists/ListDetailModal";
 
 // ─── Accent colors (determinísticos por ID da nota) ─────────────────────────
 const ACCENTS = [
@@ -151,6 +154,11 @@ export default function Anotacoes() {
   // View/expand dialog
   const [viewNote, setViewNote] = useState<Note | null>(null);
 
+  // ─── Lists state ───
+  const [lists, setLists] = useState<ListSummary[]>([]);
+  const [createListOpen, setCreateListOpen] = useState(false);
+  const [detailList, setDetailList] = useState<ListSummary | null>(null);
+
   useEffect(() => { if (user) loadData(); }, [user]);
 
   // Reload quando a aba volta ao foco (ex: nota criada pelo WhatsApp com página já aberta)
@@ -161,25 +169,100 @@ export default function Anotacoes() {
   }, [user]);
 
   const { triggerLive, isLive } = useRealtimeBadge();
+  // list_items NÃO entra no realtime sync porque não tem coluna user_id (filtro
+  // do useRealtimeSync exige user_id=eq.X). O backend bumpa lists.updated_at em
+  // qualquer mudança nos itens, então mudanças aparecem via realtime de lists.
   useRealtimeSync(
-    ["notes"],
+    ["notes", "lists"],
     user?.id,
     () => { loadData(); triggerLive(); }
   );
 
   const loadData = async () => {
-    // Limit defensivo de 500. Volume típico é <100 notas por cliente.
-    // Sem limit, um cliente com anos de histórico puxava tudo pro browser.
-    const { data, error } = await supabase
-      .from("notes")
-      .select("*")
-      .eq("user_id", user!.id)
-      .order("created_at", { ascending: false })
-      .limit(500);
-    if (!error) {
-      setNotes(data ?? []);
+    if (!user) return;
+
+    // Notes + Lists em paralelo
+    const [notesRes, listsRes] = await Promise.all([
+      supabase
+        .from("notes")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(500),
+      supabase
+        .from("lists")
+        .select("id, name, source, created_at, updated_at")
+        .eq("user_id", user.id)
+        .is("archived_at", null)
+        .order("updated_at", { ascending: false })
+        .limit(100),
+    ]);
+
+    if (!notesRes.error) setNotes(notesRes.data ?? []);
+
+    // Para cada lista, busca itens (apenas IDs + completed + content + position pra preview)
+    const listRows = (listsRes.data ?? []) as Array<{
+      id: string;
+      name: string;
+      source: string;
+      created_at: string;
+      updated_at: string;
+    }>;
+
+    if (listRows.length > 0) {
+      const listIds = listRows.map((l) => l.id);
+      const { data: itemsData } = await supabase
+        .from("list_items")
+        .select("list_id, content, completed, position, created_at")
+        .in("list_id", listIds)
+        .order("completed", { ascending: true })
+        .order("position", { ascending: true })
+        .order("created_at", { ascending: true });
+
+      const itemsByList = new Map<string, Array<{
+        content: string;
+        completed: boolean;
+      }>>();
+      for (const it of (itemsData ?? []) as Array<{
+        list_id: string;
+        content: string;
+        completed: boolean;
+      }>) {
+        if (!itemsByList.has(it.list_id)) itemsByList.set(it.list_id, []);
+        itemsByList.get(it.list_id)!.push({ content: it.content, completed: it.completed });
+      }
+
+      const summaries: ListSummary[] = listRows.map((l) => {
+        const its = itemsByList.get(l.id) ?? [];
+        const pending = its.filter((i) => !i.completed);
+        return {
+          id: l.id,
+          name: l.name,
+          source: l.source,
+          created_at: l.created_at,
+          updated_at: l.updated_at,
+          total_items: its.length,
+          pending_items: pending.length,
+          preview: pending.slice(0, 3).map((p) => p.content),
+        };
+      });
+      setLists(summaries);
+    } else {
+      setLists([]);
     }
+
     setLoading(false);
+  };
+
+  const handleListDelete = async (id: string) => {
+    const list = lists.find((l) => l.id === id);
+    if (!window.confirm(`Apagar a lista "${list?.name ?? ""}"? (Os itens dela ficam arquivados)`)) return;
+    const { error } = await supabase
+      .from("lists")
+      .update({ archived_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) toast.error("Erro ao apagar lista");
+    else { toast.success("Lista arquivada"); loadData(); }
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -233,6 +316,18 @@ export default function Anotacoes() {
     return !q || n.title?.toLowerCase().includes(q) || n.content.toLowerCase().includes(q);
   });
 
+  // Listas filtradas (busca cobre nome + preview dos itens)
+  const filteredLists = useMemo(() => {
+    const q = search.toLowerCase();
+    if (!q) return lists;
+    return lists.filter((l) => {
+      if (l.name.toLowerCase().includes(q)) return true;
+      return l.preview.some((p) => p.toLowerCase().includes(q));
+    });
+  }, [lists, search]);
+
+  const totalCount = filtered.length + filteredLists.length;
+
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -252,14 +347,19 @@ export default function Anotacoes() {
             <LiveBadge isLive={isLive} className="ml-2" />
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {notes.length > 0
-              ? `${notes.length} anotaç${notes.length === 1 ? "ão" : "ões"} salva${notes.length === 1 ? "" : "s"}`
-              : "Ideias, lembretes e informações salvos pelo Jarvis"}
+            {notes.length + lists.length > 0
+              ? `${notes.length} anotaç${notes.length === 1 ? "ão" : "ões"} • ${lists.length} lista${lists.length === 1 ? "" : "s"}`
+              : "Ideias, lembretes e listas salvas pelo Jarvis"}
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} className="gap-2">
-          <Plus className="h-4 w-4" /> Nova anotação
-        </Button>
+        <div className="flex gap-2 flex-wrap">
+          <Button onClick={() => setCreateListOpen(true)} variant="outline" className="gap-2">
+            <ListChecks className="h-4 w-4" /> Nova lista
+          </Button>
+          <Button onClick={() => setCreateOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" /> Nova anotação
+          </Button>
+        </div>
       </div>
 
       {/* Search */}
@@ -283,16 +383,24 @@ export default function Anotacoes() {
 
       {search && (
         <p className="text-xs text-muted-foreground -mt-2">
-          {filtered.length === 0 ? "Nenhum resultado" : `${filtered.length} resultado${filtered.length !== 1 ? "s" : ""} para "${search}"`}
+          {totalCount === 0 ? "Nenhum resultado" : `${totalCount} resultado${totalCount !== 1 ? "s" : ""} para "${search}"`}
         </p>
       )}
 
-      {/* Notes grid */}
-      {filtered.length > 0 ? (
+      {/* Grid: listas primeiro, anotações depois (mantém na mesma malha visual) */}
+      {totalCount > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredLists.map((l) => (
+            <ListCard
+              key={`list-${l.id}`}
+              list={l}
+              onClick={setDetailList}
+              onDelete={handleListDelete}
+            />
+          ))}
           {filtered.map(n => (
             <NoteCard
-              key={n.id}
+              key={`note-${n.id}`}
               note={n}
               onDelete={handleDelete}
               onEdit={openEdit}
@@ -305,19 +413,25 @@ export default function Anotacoes() {
           <CardContent className="py-16 text-center">
             <div className="flex justify-center mb-4 gap-3 opacity-20">
               <StickyNote className="h-10 w-10" />
+              <ListChecks className="h-10 w-10" />
             </div>
             <p className="text-muted-foreground font-medium">
-              {search ? `Nada encontrado para "${search}"` : "Nenhuma anotação ainda"}
+              {search ? `Nada encontrado para "${search}"` : "Nenhuma anotação ou lista ainda"}
             </p>
             <p className="text-sm text-muted-foreground/60 mt-2 max-w-sm mx-auto">
               {search
                 ? "Tente buscar por outro termo."
-                : 'Crie uma acima ou diga no WhatsApp: "anota que preciso ligar pro João" ou "salva minha senha do email: xyz123"'}
+                : 'Crie acima ou diga no WhatsApp: "anota que preciso ligar pro João" ou "cria lista de compras"'}
             </p>
             {!search && (
-              <Button variant="outline" className="mt-4 gap-2" onClick={() => setCreateOpen(true)}>
-                <Plus className="h-4 w-4" /> Criar primeira anotação
-              </Button>
+              <div className="flex gap-2 justify-center mt-4 flex-wrap">
+                <Button variant="outline" className="gap-2" onClick={() => setCreateListOpen(true)}>
+                  <ListChecks className="h-4 w-4" /> Criar lista
+                </Button>
+                <Button className="gap-2" onClick={() => setCreateOpen(true)}>
+                  <Plus className="h-4 w-4" /> Criar anotação
+                </Button>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -404,6 +518,36 @@ export default function Anotacoes() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* ── Create List Dialog ── */}
+      <CreateListDialog
+        open={createListOpen}
+        onOpenChange={setCreateListOpen}
+        onCreated={(id, name) => {
+          loadData();
+          // Abre direto pro user já adicionar itens
+          setDetailList({
+            id,
+            name,
+            source: "manual",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            total_items: 0,
+            pending_items: 0,
+            preview: [],
+          });
+        }}
+      />
+
+      {/* ── List Detail Modal ── */}
+      <ListDetailModal
+        open={!!detailList}
+        onOpenChange={(o) => { if (!o) setDetailList(null); }}
+        listId={detailList?.id ?? null}
+        listName={detailList?.name ?? ""}
+        listSource={detailList?.source}
+        onChanged={loadData}
+      />
 
       {/* ── View/Expand Dialog ── */}
       {viewNote && (

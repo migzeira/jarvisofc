@@ -825,6 +825,85 @@ export type Database = {
           },
         ]
       }
+      lists: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          id: string
+          name: string
+          source: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          source?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          source?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lists_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      list_items: {
+        Row: {
+          completed: boolean
+          completed_at: string | null
+          content: string
+          created_at: string
+          id: string
+          list_id: string
+          position: number
+          source: string
+        }
+        Insert: {
+          completed?: boolean
+          completed_at?: string | null
+          content: string
+          created_at?: string
+          id?: string
+          list_id: string
+          position?: number
+          source?: string
+        }
+        Update: {
+          completed?: boolean
+          completed_at?: string | null
+          content?: string
+          created_at?: string
+          id?: string
+          list_id?: string
+          position?: number
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "list_items_list_id_fkey"
+            columns: ["list_id"]
+            isOneToOne: false
+            referencedRelation: "lists"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notes: {
         Row: {
           content: string
