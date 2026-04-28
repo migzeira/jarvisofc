@@ -1,4 +1,4 @@
-import { Home, Wallet, CalendarDays, StickyNote, Settings, LogOut, Shield, Bell, X, Zap, BookUser, BookOpen, Sparkles } from "lucide-react";
+import { Home, Wallet, CalendarDays, StickyNote, Settings, LogOut, Shield, Bell, X, Zap, BookUser, BookOpen, Sparkles, Bug, HelpCircle, ChevronDown } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import logoEscrita from "@/assets/logo_escrita.webp";
 import logoIcon from "@/assets/logo_icon.webp";
@@ -9,6 +9,14 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useState } from "react";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { TriggerPhrasesModal } from "@/components/TriggerPhrasesModal";
+import { BugReportModal } from "@/components/BugReportModal";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Sidebar,
   SidebarContent,
@@ -58,6 +66,16 @@ export function AppSidebar() {
 
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [triggerPhrasesOpen, setTriggerPhrasesOpen] = useState(false);
+  const [bugReportOpen, setBugReportOpen] = useState(false);
+  const [helpMenuOpen, setHelpMenuOpen] = useState(false);
+
+  // Helper: fecha o dropdown e a sidebar mobile antes de abrir o modal
+  const openModalFromMenu = (open: () => void) => {
+    setHelpMenuOpen(false);
+    if (isMobile) setOpenMobile(false);
+    // pequeno delay pra animação do dropdown não conflitar com a do dialog
+    setTimeout(open, 50);
+  };
 
   return (
     <Sidebar collapsible="icon" className="border-r border-border bg-sidebar">
@@ -100,30 +118,57 @@ export function AppSidebar() {
             {!collapsed && <span>Painel Admin</span>}
           </Button>
         )}
-        <Button
-          variant="ghost"
-          className="w-full justify-start text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
-          onClick={() => setOnboardingOpen(true)}
-        >
-          <BookOpen className="h-4 w-4 mr-2 flex-shrink-0" />
-          {!collapsed && <span>Como usar o Jarvis</span>}
-        </Button>
-        <Button
-          variant="ghost"
-          className="w-full justify-start text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
-          onClick={() => setTriggerPhrasesOpen(true)}
-        >
-          <Sparkles className="h-4 w-4 mr-2 flex-shrink-0" />
-          {!collapsed && <span>Frases das Ações</span>}
-        </Button>
-        <Button variant="ghost" className="w-full justify-start text-muted-foreground hover:text-foreground" onClick={handleLogout}>
-          <LogOut className="h-4 w-4 mr-2 flex-shrink-0" />
-          {!collapsed && <span>Sair</span>}
-        </Button>
+        {/* Botão único "Ajuda & Conta" — agrupa: Como usar, Frases, Reportar bug, Sair */}
+        <DropdownMenu open={helpMenuOpen} onOpenChange={setHelpMenuOpen}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              className="w-full justify-start text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
+            >
+              <HelpCircle className="h-4 w-4 mr-2 flex-shrink-0" />
+              {!collapsed && (
+                <>
+                  <span className="flex-1 text-left">Ajuda & Conta</span>
+                  <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                </>
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            side="top"
+            className="w-56"
+          >
+            <DropdownMenuItem onSelect={() => openModalFromMenu(() => setOnboardingOpen(true))}>
+              <BookOpen className="h-4 w-4 mr-2 text-violet-400" />
+              Como usar o Jarvis
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openModalFromMenu(() => setTriggerPhrasesOpen(true))}>
+              <Sparkles className="h-4 w-4 mr-2 text-violet-400" />
+              Frases das Ações
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openModalFromMenu(() => setBugReportOpen(true))}>
+              <Bug className="h-4 w-4 mr-2 text-rose-400" />
+              Reportar bug
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => {
+                setHelpMenuOpen(false);
+                handleLogout();
+              }}
+              className="text-muted-foreground focus:text-foreground"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Sair
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </SidebarFooter>
 
       <OnboardingModal open={onboardingOpen} onClose={() => setOnboardingOpen(false)} />
       <TriggerPhrasesModal open={triggerPhrasesOpen} onClose={() => setTriggerPhrasesOpen(false)} />
+      <BugReportModal open={bugReportOpen} onOpenChange={setBugReportOpen} />
     </Sidebar>
   );
 }

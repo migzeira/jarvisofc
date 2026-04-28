@@ -15,8 +15,9 @@ import {
   Users, MessageSquare, Settings, Shield, Search, Eye, MessageCircle,
   Clock, CheckCircle, XCircle, RefreshCw, Download, CreditCard, AlertTriangle,
   TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Webhook, ChevronDown, ChevronUp, Link2, Link2Off,
-  Activity, BarChart3, UserCheck, UserX, Send, Copy, UserSearch,
+  Activity, BarChart3, UserCheck, UserX, Send, Copy, UserSearch, Bug, Mail,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { format, subDays } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { ptBR } from "date-fns/locale";
@@ -115,6 +116,15 @@ export default function AdminPanel() {
   // Kirvano UI state
   const [kirvanoExpandedId, setKirvanoExpandedId] = useState<string | null>(null);
   const [kirvanoLiveRefresh, setKirvanoLiveRefresh] = useState(false);
+
+  // Bug reports
+  const [bugReports, setBugReports] = useState<any[]>([]);
+  const [bugReportsLoading, setBugReportsLoading] = useState(false);
+  const [bugStatusFilter, setBugStatusFilter] = useState<"new" | "in_progress" | "resolved" | "wontfix" | "all">("new");
+  const [newBugCount, setNewBugCount] = useState(0);
+  const [expandedBugId, setExpandedBugId] = useState<string | null>(null);
+  const [bugAdminNotes, setBugAdminNotes] = useState<Record<string, string>>({});
+  const [bugSavingId, setBugSavingId] = useState<string | null>(null);
 
   // Analytics
   const [analytics, setAnalytics] = useState<any>(null);
@@ -478,6 +488,92 @@ export default function AdminPanel() {
     }
     if (data) { setKirvanoEvents(data); setKirvanoCount(count || 0); }
   };
+
+  // ── Bug Reports ────────────────────────────────────────────
+  const loadBugReports = useCallback(async () => {
+    setBugReportsLoading(true);
+    try {
+      let query = (supabase.from("bug_reports" as any).select("*") as any)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (bugStatusFilter !== "all") {
+        query = query.eq("status", bugStatusFilter);
+      }
+      const { data, error } = await query;
+      if (error) {
+        console.error("[admin] loadBugReports error:", error);
+        toast.error("Erro ao carregar bugs.");
+        setBugReports([]);
+      } else {
+        setBugReports((data as any[]) ?? []);
+      }
+    } finally {
+      setBugReportsLoading(false);
+    }
+  }, [bugStatusFilter]);
+
+  // Conta bugs com status="new" (pra badge no header da tab)
+  const refreshNewBugCount = useCallback(async () => {
+    const { count, error } = await (supabase
+      .from("bug_reports" as any)
+      .select("id", { count: "exact", head: true })
+      .eq("status", "new") as any);
+    if (!error) setNewBugCount(count ?? 0);
+  }, []);
+
+  const updateBugStatus = async (bugId: string, status: string) => {
+    setBugSavingId(bugId);
+    try {
+      const updates: Record<string, unknown> = { status };
+      if (bugAdminNotes[bugId] !== undefined) {
+        updates.admin_notes = bugAdminNotes[bugId];
+      }
+      const { error } = await (supabase
+        .from("bug_reports" as any)
+        .update(updates as any)
+        .eq("id", bugId) as any);
+      if (error) throw error;
+      toast.success(`Bug marcado como ${status}.`);
+      await Promise.all([loadBugReports(), refreshNewBugCount()]);
+    } catch (e) {
+      console.error("[admin] updateBugStatus error:", e);
+      toast.error("Erro ao atualizar status do bug.");
+    } finally {
+      setBugSavingId(null);
+    }
+  };
+
+  const saveBugNotes = async (bugId: string) => {
+    setBugSavingId(bugId);
+    try {
+      const { error } = await (supabase
+        .from("bug_reports" as any)
+        .update({ admin_notes: bugAdminNotes[bugId] ?? "" } as any)
+        .eq("id", bugId) as any);
+      if (error) throw error;
+      toast.success("Notas salvas.");
+      await loadBugReports();
+    } catch (e) {
+      console.error("[admin] saveBugNotes error:", e);
+      toast.error("Erro ao salvar notas.");
+    } finally {
+      setBugSavingId(null);
+    }
+  };
+
+  // Bug reports: recarrega quando filtro muda OU quando entra na tab.
+  // Posicionado AQUI (após declaração de loadBugReports) pra evitar TDZ.
+  useEffect(() => {
+    if (!loading && isAdmin && activeTab === "bugs") loadBugReports();
+  }, [activeTab, bugStatusFilter, loading, isAdmin, loadBugReports]);
+
+  // Badge contador de bugs novos: load inicial + refresh a cada 60s
+  useEffect(() => {
+    if (loading || !isAdmin) return;
+    refreshNewBugCount();
+    const t = setInterval(refreshNewBugCount, 60_000);
+    return () => clearInterval(t);
+  }, [loading, isAdmin, refreshNewBugCount]);
 
   // Export "tudo" com paginação por trás — fetcha todas as páginas do Supabase
   // respeitando os filtros ativos (data/busca/contexto), agrega, e passa pro
@@ -1066,6 +1162,12 @@ export default function AdminPanel() {
                 )}
               </TabsTrigger>
               <TabsTrigger value="errors" onClick={() => setKirvanoLiveRefresh(false)}><AlertTriangle className="h-4 w-4 mr-1" />Erros</TabsTrigger>
+              <TabsTrigger value="bugs" onClick={() => setKirvanoLiveRefresh(false)} className="relative">
+                <Bug className="h-4 w-4 mr-1" />Bugs
+                {newBugCount > 0 && (
+                  <span className="ml-1.5 bg-rose-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5">{newBugCount}</span>
+                )}
+              </TabsTrigger>
               <TabsTrigger value="settings" onClick={() => setKirvanoLiveRefresh(false)}><Settings className="h-4 w-4 mr-1" />Config</TabsTrigger>
               <TabsTrigger value="broadcast" onClick={() => { setKirvanoLiveRefresh(false); loadBroadcastUsers(); loadBroadcastHistory(); }}><Send className="h-4 w-4 mr-1" />Mensagem</TabsTrigger>
             </TabsList>
@@ -1651,6 +1753,166 @@ export default function AdminPanel() {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          {/* BUGS REPORTS */}
+          <TabsContent value="bugs">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Bug className="h-5 w-5 text-rose-400" /> Bugs e sugestões reportados pelos usuários
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Select value={bugStatusFilter} onValueChange={(v) => setBugStatusFilter(v as any)}>
+                      <SelectTrigger className="w-[180px] h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="new">🔴 Novos</SelectItem>
+                        <SelectItem value="in_progress">🟡 Em andamento</SelectItem>
+                        <SelectItem value="resolved">✅ Resolvidos</SelectItem>
+                        <SelectItem value="wontfix">⚪ Wontfix</SelectItem>
+                        <SelectItem value="all">📋 Todos</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button size="sm" variant="outline" onClick={() => loadBugReports()} disabled={bugReportsLoading}>
+                      <RefreshCw className={`h-4 w-4 ${bugReportsLoading ? "animate-spin" : ""}`} />
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Reportes enviados via menu "Ajuda & Conta → Reportar bug" no dashboard. Mude o status pra acompanhar o tratamento.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {bugReportsLoading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-20 w-full" />
+                  </div>
+                ) : bugReports.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">
+                    {bugStatusFilter === "new"
+                      ? "Nenhum bug novo no momento. 🎉"
+                      : "Nenhum reporte encontrado neste filtro."}
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {bugReports.map((b: any) => {
+                      const isExpanded = expandedBugId === b.id;
+                      const statusBadge: Record<string, { label: string; className: string }> = {
+                        new:         { label: "🔴 Novo",         className: "bg-rose-500/15 text-rose-300 border-rose-500/30" },
+                        in_progress: { label: "🟡 Em andamento", className: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
+                        resolved:    { label: "✅ Resolvido",    className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
+                        wontfix:     { label: "⚪ Wontfix",       className: "bg-muted text-muted-foreground" },
+                      };
+                      const sb = statusBadge[b.status as string] ?? { label: b.status, className: "" };
+                      const notesValue = bugAdminNotes[b.id] ?? b.admin_notes ?? "";
+                      const isSaving = bugSavingId === b.id;
+                      return (
+                        <Card key={b.id} className="bg-card border-border">
+                          <CardContent className="pt-4 pb-3 space-y-2">
+                            {/* Header: title + status */}
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-sm leading-tight">{b.title}</p>
+                                <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
+                                  <Users className="h-3 w-3" />
+                                  <span>{b.user_name || "—"}</span>
+                                  {b.user_email && (
+                                    <>
+                                      <span>·</span>
+                                      <Mail className="h-3 w-3" />
+                                      <span className="font-mono">{b.user_email}</span>
+                                    </>
+                                  )}
+                                  <span>·</span>
+                                  <Clock className="h-3 w-3" />
+                                  <span>{formatDate(b.created_at)}</span>
+                                </div>
+                              </div>
+                              <Badge className={sb.className}>{sb.label}</Badge>
+                            </div>
+
+                            {/* Description: clamp se não expandido */}
+                            <p
+                              className={`text-sm whitespace-pre-wrap leading-relaxed ${isExpanded ? "" : "line-clamp-3"}`}
+                            >
+                              {b.description}
+                            </p>
+
+                            {/* Toggle expand */}
+                            {b.description && b.description.length > 200 && (
+                              <button
+                                onClick={() => setExpandedBugId(isExpanded ? null : b.id)}
+                                className="text-xs text-violet-400 hover:text-violet-300"
+                              >
+                                {isExpanded ? "Mostrar menos" : "Ler tudo"}
+                              </button>
+                            )}
+
+                            {/* Expanded: admin notes + status buttons */}
+                            {isExpanded && (
+                              <div className="pt-3 mt-2 border-t border-border/40 space-y-2">
+                                <div>
+                                  <Label className="text-[11px] text-muted-foreground">Notas internas (só admin vê)</Label>
+                                  <Textarea
+                                    value={notesValue}
+                                    onChange={(e) => setBugAdminNotes((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                                    placeholder="Ex: já corrigido no commit X, aguardando deploy"
+                                    rows={2}
+                                    className="text-xs mt-1"
+                                    disabled={isSaving}
+                                  />
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="mt-2"
+                                    disabled={isSaving || (notesValue ?? "") === (b.admin_notes ?? "")}
+                                    onClick={() => saveBugNotes(b.id)}
+                                  >
+                                    Salvar notas
+                                  </Button>
+                                </div>
+                                <div className="flex flex-wrap gap-2 pt-1">
+                                  {b.status !== "in_progress" && (
+                                    <Button size="sm" variant="outline" disabled={isSaving} onClick={() => updateBugStatus(b.id, "in_progress")}>
+                                      🟡 Em andamento
+                                    </Button>
+                                  )}
+                                  {b.status !== "resolved" && (
+                                    <Button size="sm" variant="outline" disabled={isSaving} onClick={() => updateBugStatus(b.id, "resolved")} className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10">
+                                      ✅ Resolver
+                                    </Button>
+                                  )}
+                                  {b.status !== "wontfix" && (
+                                    <Button size="sm" variant="outline" disabled={isSaving} onClick={() => updateBugStatus(b.id, "wontfix")} className="text-muted-foreground">
+                                      ⚪ Wontfix
+                                    </Button>
+                                  )}
+                                  {b.status !== "new" && (
+                                    <Button size="sm" variant="ghost" disabled={isSaving} onClick={() => updateBugStatus(b.id, "new")}>
+                                      ↩️ Reabrir
+                                    </Button>
+                                  )}
+                                </div>
+                                {b.resolved_at && (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Encerrado em {formatDate(b.resolved_at)}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* SETTINGS */}
