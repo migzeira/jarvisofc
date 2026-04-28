@@ -1880,15 +1880,35 @@ export default function AdminPanel() {
                               {b.description}
                             </p>
 
-                            {/* Toggle expand */}
-                            {b.description && b.description.length > 200 && (
-                              <button
+                            {/* Botão Gerenciar (sempre visível) — abre painel de status/excluir */}
+                            <div className="flex items-center justify-between gap-2 pt-1">
+                              {b.description && b.description.length > 200 ? (
+                                <button
+                                  onClick={() => setExpandedBugId(isExpanded ? null : b.id)}
+                                  className="text-xs text-violet-400 hover:text-violet-300"
+                                >
+                                  {isExpanded ? "Mostrar menos" : "Ler tudo"}
+                                </button>
+                              ) : <span />}
+                              <Button
+                                size="sm"
+                                variant="outline"
                                 onClick={() => setExpandedBugId(isExpanded ? null : b.id)}
-                                className="text-xs text-violet-400 hover:text-violet-300"
+                                className="text-xs"
                               >
-                                {isExpanded ? "Mostrar menos" : "Ler tudo"}
-                              </button>
-                            )}
+                                {isExpanded ? (
+                                  <>
+                                    <ChevronUp className="h-3.5 w-3.5 mr-1" />
+                                    Fechar
+                                  </>
+                                ) : (
+                                  <>
+                                    <ChevronDown className="h-3.5 w-3.5 mr-1" />
+                                    Gerenciar
+                                  </>
+                                )}
+                              </Button>
+                            </div>
 
                             {/* Expanded: admin notes + status buttons */}
                             {isExpanded && (
