@@ -467,9 +467,15 @@ export default function Financas() {
   });
 
   // Further filtered for Transactions list
+  // Categoria: compara lowercase pra evitar mismatch entre "Lazer" (categories.name)
+  // e "lazer" (transactions.category) — extractTransactions sempre salva lowercase.
   const filteredTx = periodTx.filter(t => {
     if (filterType !== "all" && t.type !== filterType) return false;
-    if (filterCat !== "all" && t.category !== filterCat) return false;
+    if (filterCat !== "all") {
+      const txCat = String(t.category ?? "").toLowerCase().trim();
+      const wanted = filterCat.toLowerCase().trim();
+      if (txCat !== wanted) return false;
+    }
     if (searchTx && !t.description.toLowerCase().includes(searchTx.toLowerCase())) return false;
     return true;
   });
