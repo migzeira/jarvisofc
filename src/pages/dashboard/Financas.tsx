@@ -277,7 +277,7 @@ export default function Financas() {
 
   const loadData = async () => {
     const [txRes, catRes, recRes, budRes] = await Promise.all([
-      supabase.from("transactions").select("*").eq("user_id", user!.id).order("transaction_date", { ascending: false }).limit(500),
+      supabase.from("transactions").select("*").eq("user_id", user!.id).order("transaction_date", { ascending: false }).order("created_at", { ascending: false }).limit(500),
       supabase.from("categories").select("*").eq("user_id", user!.id).order("name"),
       (supabase.from("recurring_transactions" as any).select("*").eq("user_id", user!.id).order("next_date") as any),
       (supabase.from("budgets" as any).select("*").eq("user_id", user!.id).order("category") as any),
@@ -561,8 +561,14 @@ export default function Financas() {
     return acc;
   }, {});
 
-  // Recent 5 for overview widget
-  const recentFive = transactions.slice(0, 5);
+  // Recent 5 for overview widget — só transações ATÉ HOJE (parcelas futuras
+  // aparecem quando vencerem, "subindo" pra topo na data do vencimento).
+  // Como transactions já vem ordenado por transaction_date desc + created_at desc,
+  // basta filtrar e pegar os 5 primeiros: novas em cima, futuras escondidas.
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const recentFive = transactions
+    .filter((t: any) => String(t.transaction_date ?? "") <= todayStr)
+    .slice(0, 5);
 
   const freqLabel: Record<string, string> = { daily: "Diária", weekly: "Semanal", monthly: "Mensal", yearly: "Anual" };
 
@@ -931,6 +937,8 @@ export default function Financas() {
             </Card>
           </div>
 
+          {/* Ranking de categorias + Transações recentes — lado a lado em desktop */}
+          <div className="grid lg:grid-cols-2 gap-4 items-start">
           {/* Top 5 categories ranking */}
           {pieData.length > 0 && (
             <Card className="bg-card border-border">
@@ -1063,6 +1071,7 @@ export default function Financas() {
               </CardContent>
             </Card>
           )}
+          </div>
         </TabsContent>
 
         {/* ═══════════════════════════════════════
