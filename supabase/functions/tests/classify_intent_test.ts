@@ -1039,3 +1039,64 @@ Deno.test("regressão - 'quanto recebi esse mês' continua finance_report", () =
 Deno.test("regressão - 'meus gastos do mês' continua finance_report", () => {
   assertEquals(classifyIntent("meus gastos do mês"), "finance_report");
 });
+
+// ─────────────────────────────────────────────
+// finance_record — padrões C e D (NÚMERO primeiro)
+// (cobre o bug do Guilherme: "3000,00 de salário" caía em ai_chat)
+// ─────────────────────────────────────────────
+
+// ── Padrão C: NÚMERO + (de|em|com|do|da) + TIPO_INCOME ──
+
+Deno.test("finance_record - '3000,00 de salário' → finance_record", () => {
+  assertEquals(classifyIntent("3000,00 de salário"), "finance_record");
+});
+
+Deno.test("finance_record - '3000 de salário' → finance_record", () => {
+  assertEquals(classifyIntent("3000 de salário"), "finance_record");
+});
+
+Deno.test("finance_record - '3000.00 de salário' → finance_record", () => {
+  assertEquals(classifyIntent("3000.00 de salário"), "finance_record");
+});
+
+Deno.test("finance_record - '5000 de freelance' → finance_record", () => {
+  assertEquals(classifyIntent("5000 de freelance"), "finance_record");
+});
+
+Deno.test("finance_record - '5000 reais de salário' → finance_record", () => {
+  assertEquals(classifyIntent("5000 reais de salário"), "finance_record");
+});
+
+Deno.test("finance_record - '500 de bonus' → finance_record", () => {
+  assertEquals(classifyIntent("500 de bonus"), "finance_record");
+});
+
+Deno.test("finance_record - '200 de comissao' → finance_record", () => {
+  assertEquals(classifyIntent("200 de comissao"), "finance_record");
+});
+
+Deno.test("finance_record - 'R$ 3000 de salário' → finance_record", () => {
+  assertEquals(classifyIntent("R$ 3000 de salário"), "finance_record");
+});
+
+Deno.test("finance_record - '10000 da venda' → finance_record", () => {
+  assertEquals(classifyIntent("10000 da venda"), "finance_record");
+});
+
+// ── Padrão D: NÚMERO + TIPO_INCOME (sem preposição) ──
+
+Deno.test("finance_record - '3000 salário' → finance_record", () => {
+  assertEquals(classifyIntent("3000 salário"), "finance_record");
+});
+
+Deno.test("finance_record - '1500 freelance' → finance_record", () => {
+  assertEquals(classifyIntent("1500 freelance"), "finance_record");
+});
+
+Deno.test("finance_record - '500 bonus' → finance_record", () => {
+  assertEquals(classifyIntent("500 bonus"), "finance_record");
+});
+
+Deno.test("finance_record - '5000 reais salário' → finance_record", () => {
+  assertEquals(classifyIntent("5000 reais salário"), "finance_record");
+});

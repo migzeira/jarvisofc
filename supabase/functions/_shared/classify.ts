@@ -175,14 +175,22 @@ export function classifyIntent(msg: string): Intent {
   )
     return "finance_report";
 
-  // Registro financeiro — formato SEM verbo explícito (substantivo + número).
-  // Cobre casos como "salário 20k", "renda 5000", "freelance 1500", "pagamento único 20k",
-  // "registra receita de 20k hoje" — antes seriam capturados por notes_save por engano.
-  // Restritivo de propósito: exige a palavra-chave NO INÍCIO + número próximo,
-  // ou "registra/salva/anota" + tipo financeiro explícito.
+  // Registro financeiro — formato SEM verbo explícito.
+  // Cobre 4 padrões (todos ancorados em ^ pra evitar falso positivo em notas):
+  //   A) TIPO + número:                  "salário 20k" / "freelance 1500" / "salário de R$ 5000"
+  //   B) "registra/salva/anota" + tipo:  "registra receita de 20k hoje" / "salva uma despesa de 50"
+  //   C) número + (de|em|com|do|da) + TIPO: "3000,00 de salário" / "5000 reais de freelance"
+  //   D) número + TIPO (sem preposição): "3000 salário" / "1500 freelance"
+  // INCOME_KEYWORDS expandido pra cobrir comissão, venda, etc.
   if (
-    /^(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|pagamento\s+unico)\s+(de\s+)?(r\$\s*)?\d/.test(m) ||
-    /^(registra|registrar|salva|salvar|anota|anotar)\s+(uma?\s+)?(receita|despesa|gasto|salario|renda|rendimento|pagamento|ganho|recebimento|entrada)\b/.test(m)
+    // Padrão A: TIPO + número
+    /^(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|comissao|pagamento\s+unico)\s+(de\s+)?(r\$\s*)?\d/.test(m) ||
+    // Padrão B: "registra/salva/anota" + tipo financeiro
+    /^(registra|registrar|salva|salvar|anota|anotar)\s+(uma?\s+|um\s+)?(receita|despesa|gasto|salario|renda|rendimento|pagamento|ganho|recebimento|entrada|sa[íi]da|comissao|venda)\b/.test(m) ||
+    // Padrão C: NÚMERO (reais) (de|em|com|do|da) TIPO_INCOME
+    /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?(de|em|com|do|da)\s+(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|comissao|venda|pagamento)\b/.test(m) ||
+    // Padrão D: NÚMERO (reais) TIPO_INCOME (sem preposição)
+    /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|comissao)\b/.test(m)
   )
     return "finance_record";
 
