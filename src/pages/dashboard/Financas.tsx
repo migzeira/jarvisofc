@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { FinancialInsightCard } from "@/components/FinancialInsightCard";
 import { toast } from "sonner";
 import {
   Plus, TrendingDown, TrendingUp, Wallet, RefreshCw, Trash2, Download,
@@ -627,6 +628,9 @@ export default function Financas() {
             VISÃO GERAL
         ═══════════════════════════════════════ */}
         <TabsContent value="visao-geral" className="space-y-5 mt-5">
+
+          {/* Resumo Inteligente do Jarvis (gerado por IA, cache 4h) */}
+          <FinancialInsightCard />
 
           {/* Hero: 4 KPI cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
