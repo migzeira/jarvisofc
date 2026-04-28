@@ -199,7 +199,9 @@ serve(async (req) => {
       const userBriefingHour = (agentConfig?.briefing_hour as number) ?? 8;
       const userCurrentHour = currentHourInTz(userTz);
 
-      // Só envia se a hora atual no fuso do usuário bate com o horário configurado
+      // Só envia se a hora atual no fuso do usuário bate com o horário configurado.
+      // Comportamento padrão: WhatsApp guarda mensagens offline e entrega quando
+      // o user volta — essa é a feature default da plataforma. Não esperamos online.
       if (userCurrentHour !== userBriefingHour) {
         skipped++;
         continue;
@@ -272,11 +274,17 @@ serve(async (req) => {
       // Gera mensagem personalizada
       const message = await generateBriefingMessage(userName, scheduleLines, userLang, userTz);
 
-      // Envia via WhatsApp
-      await sendText(user.phone_number, message);
+      // Envia via WhatsApp e captura messageId pra correlacionar com delivery.
+      // warmUp=true: força refresh da sessão Signal antes do envio. Resolve
+      // o problema de mensagens em branco quando o user fica offline a noite
+      // toda — o cipher session fica dessincronizado e a msg chega vazia
+      // quando o WhatsApp finalmente entrega.
+      const briefingMessageId = await sendText(user.phone_number, message, { warmUp: true });
 
-      // Registra o briefing enviado (cria um registro na tabela reminders como tipo especial)
-      await supabase.from("reminders").insert({
+      // Registra o briefing enviado (cria um registro na tabela reminders como tipo especial).
+      // evolution_message_id permite que o webhook MESSAGES_UPDATE marque delivered_at depois,
+      // e o pre-flight check do próximo dia detecte se ficou sem entregar.
+      const briefingRow: Record<string, unknown> = {
         user_id: user.id,
         whatsapp_number: user.phone_number,
         title: "Resumo diário",
@@ -286,7 +294,11 @@ serve(async (req) => {
         source: "daily_briefing",
         status: "sent",
         sent_at: new Date().toISOString(),
-      });
+      };
+      if (briefingMessageId) {
+        briefingRow.evolution_message_id = briefingMessageId;
+      }
+      await supabase.from("reminders").insert(briefingRow as any);
 
       sent++;
       console.log(`[daily-briefing] ✅ Sent to user ${user.id}`);

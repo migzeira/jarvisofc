@@ -3581,8 +3581,65 @@ serve(async (req) => {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  // Apenas mensagens recebidas (não enviadas pelo bot)
+  // ── MESSAGES_UPDATE: rastreio de entrega de mensagens enviadas pelo bot ───
+  // Quando o WhatsApp confirma entrega/leitura de uma msg que NÓS enviamos,
+  // Evolution dispara messages.update com status DELIVERY_ACK / READ. Usamos
+  // pra setar delivered_at no reminder correspondente — habilita pre-flight
+  // check no daily-briefing (evita Baileys retry gerar 3 msgs em branco).
   const event = body.event as string;
+  if (event === "messages.update") {
+    try {
+      const rawUpdData = body.data;
+      const updArr = Array.isArray(rawUpdData) ? rawUpdData : [rawUpdData];
+      const deliveredIds: string[] = [];
+
+      for (const item of updArr) {
+        if (!item || typeof item !== "object") continue;
+        const obj = item as Record<string, unknown>;
+        // Status do Evolution v2: pode ser número (Baileys raw) ou string
+        // 3 = SERVER_ACK (saiu do servidor), 4 = DELIVERY_ACK (chegou ao device),
+        // 5 = READ (lido). Tratamos 4 e 5 como "entregue".
+        const rawStatus = (obj.status ?? "") as string | number;
+        const statusStr = String(rawStatus).toUpperCase();
+        const isDelivered =
+          statusStr === "DELIVERY_ACK" ||
+          statusStr === "READ" ||
+          statusStr === "PLAYED" ||
+          rawStatus === 4 ||
+          rawStatus === 5 ||
+          rawStatus === 6;
+        if (!isDelivered) continue;
+
+        // Extrai messageId — diferentes versões do Evolution usam keys diferentes
+        const key = obj.key as Record<string, unknown> | undefined;
+        const id =
+          (key?.id as string) ||
+          (obj.keyId as string) ||
+          (obj.messageId as string) ||
+          "";
+        if (id) deliveredIds.push(id);
+      }
+
+      if (deliveredIds.length > 0) {
+        // Atualiza delivered_at apenas em rows que ainda não foram marcadas.
+        // Usa .in() pra batch update num só round-trip. Falha silenciosa pra
+        // não bloquear webhook (delivery tracking é best-effort).
+        const { error: updErr } = await (supabase as any)
+          .from("reminders")
+          .update({ delivered_at: new Date().toISOString() })
+          .in("evolution_message_id", deliveredIds)
+          .is("delivered_at", null);
+        if (updErr) {
+          console.warn("[delivery-track] update failed:", updErr.message);
+        }
+      }
+    } catch (e) {
+      console.warn("[delivery-track] handler error:", (e as Error).message);
+    }
+    return new Response("OK");
+  }
+
+  // Apenas mensagens recebidas (não enviadas pelo bot)
   if (event !== "messages.upsert") {
     return new Response("OK");
   }

@@ -116,8 +116,52 @@ export async function resolveLidToPhone(lid: string): Promise<string | null> {
   return null;
 }
 
-/** Envia mensagem de texto via Evolution API */
-export async function sendText(to: string, text: string): Promise<void> {
+/**
+ * Força refresh da sessão Signal com o destino enviando um typing indicator
+ * (presence="composing"). Usado como "warm-up" antes de envios críticos para
+ * destinos que podem estar offline há muito tempo. Reduz drasticamente o
+ * problema de mensagens em branco causado por cipher session out-of-sync.
+ * Best-effort: se falhar, não joga — quem chama segue com envio.
+ */
+export async function sendPresence(
+  to: string,
+  presence: "available" | "unavailable" | "composing" | "recording" | "paused" = "composing",
+  delayMs = 1500
+): Promise<void> {
+  let number: string;
+  if (to.endsWith("@lid")) {
+    const resolved = await resolveLidToPhone(to);
+    number = resolved ? normalizePhone(resolved) : to;
+  } else if (to.includes("@")) {
+    number = to;
+  } else {
+    number = normalizePhone(to);
+  }
+
+  await evolutionPost(`/chat/sendPresence/${INSTANCE}`, {
+    number,
+    presence,
+    delay: delayMs,
+  });
+}
+
+/**
+ * Envia mensagem de texto via Evolution API.
+ * Retorna o messageId (key.id) gerado pelo Baileys, usado pra correlacionar
+ * com eventos MESSAGES_UPDATE no webhook (delivery tracking). Retorna null
+ * se o Evolution não devolver id — chamadas existentes que ignoram o retorno
+ * continuam funcionando idênticas (Promise<void> → Promise<string|null>).
+ *
+ * options.warmUp = true → força refresh da sessão Signal antes do envio
+ * (typing indicator + 700ms wait). Use em envios programados pra destinos
+ * que podem estar offline (daily-briefing, reminders agendados). NÃO usar em
+ * respostas a mensagens recebidas (user obviamente online, é só latência extra).
+ */
+export async function sendText(
+  to: string,
+  text: string,
+  options: { warmUp?: boolean } = {}
+): Promise<string | null> {
   let number: string;
 
   if (to.endsWith("@lid")) {
@@ -139,10 +183,35 @@ export async function sendText(to: string, text: string): Promise<void> {
     number = normalizePhone(to);
   }
 
-  await evolutionPost(`/message/sendText/${INSTANCE}`, {
+  // Warm-up: pinga presence pra forçar Baileys a estabelecer sessão fresca
+  // antes do envio real. Resolve o problema de "mensagem em branco" quando o
+  // destino está offline há horas/dias (cipher key dessincronizada). Custa
+  // ~800ms — só vale pra envios agendados, não pra resposta de chat ao vivo.
+  if (options.warmUp) {
+    try {
+      await evolutionPost(`/chat/sendPresence/${INSTANCE}`, {
+        number,
+        presence: "composing",
+        delay: 1500,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 700));
+    } catch (warmErr) {
+      console.warn(
+        "[sendText] warm-up failed, proceeding anyway:",
+        (warmErr as Error).message?.slice(0, 100)
+      );
+    }
+  }
+
+  const res = await evolutionPost(`/message/sendText/${INSTANCE}`, {
     number,
     textMessage: { text },
-  });
+  }) as Record<string, unknown> | null;
+
+  // Extrai messageId do response — Evolution v2 retorna { key: { id } }
+  const key = res?.key as Record<string, unknown> | undefined;
+  const id = (key?.id as string) ?? (res?.id as string) ?? null;
+  return id || null;
 }
 
 /**

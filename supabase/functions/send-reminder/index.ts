@@ -252,6 +252,54 @@ serve(async (_req) => {
 
   for (const reminder of reminders) {
     try {
+      // ─── Grace period: cancela reminders velhos demais (ex: internet voltou tarde) ──
+      // Evita entregar bom dia de 8h às 10h, ou hábito atrasado 1h.
+      // Reminders recorrentes ainda ganham próxima ocorrência (ciclo não quebra).
+      const GRACE_MS: Record<string, number> = {
+        daily_briefing:  60 * 60 * 1000,   // 1h  — bom dia: até 1h de tolerância
+        habit:           15 * 60 * 1000,   // 15min — hábitos: janela curta
+        scheduled_order: 10 * 60 * 1000,   // 10min — pedido: vence rápido
+      };
+      const DEFAULT_GRACE_MS = 30 * 60 * 1000; // 30min pra tudo mais
+      const ageMs = now.getTime() - new Date(reminder.send_at).getTime();
+      const graceMs = GRACE_MS[reminder.source ?? ""] ?? DEFAULT_GRACE_MS;
+
+      if (ageMs > graceMs) {
+        await supabase
+          .from("reminders")
+          .update({ status: "cancelled" } as any)
+          .eq("id", reminder.id);
+        console.log(
+          `[stale-skip] reminder=${reminder.id} source=${reminder.source} age=${Math.round(ageMs / 60000)}min grace=${Math.round(graceMs / 60000)}min`
+        );
+        // Recorrentes: avança para a próxima ocorrência no futuro
+        if (reminder.recurrence && reminder.recurrence !== "none") {
+          const sendAt = new Date(reminder.send_at);
+          let next = nextOccurrence(sendAt, reminder.recurrence, reminder.recurrence_value ?? null);
+          let iter = 0;
+          while (next && next.getTime() <= now.getTime() && iter < 100) {
+            next = nextOccurrence(next, reminder.recurrence, reminder.recurrence_value ?? null);
+            iter++;
+          }
+          if (next && next.getTime() > now.getTime()) {
+            const { error: nextErr } = await supabase.from("reminders").insert({
+              user_id:          reminder.user_id,
+              whatsapp_number:  reminder.whatsapp_number,
+              title:            reminder.title,
+              message:          reminder.message,
+              send_at:          next.toISOString(),
+              recurrence:       reminder.recurrence,
+              recurrence_value: reminder.recurrence_value,
+              source:           reminder.source ?? "whatsapp",
+              status:           "pending",
+              habit_id:         reminder.habit_id ?? null,
+            } as any);
+            if (!nextErr || nextErr.code === "23505") scheduled++;
+          }
+        }
+        continue;
+      }
+
       // ─── Guard: reminder de hábito só dispara se o hábito existir e estiver ativo ──
       if (reminder.source === "habit" && !reminder.habit_id) {
         // Zombie: reminder marcado como hábito mas sem habit_id (órfão de deleção antiga).
@@ -336,6 +384,11 @@ serve(async (_req) => {
       // ─── Resolve conteúdo dinâmico para hábitos preset ────────────────────
       const finalMessage = resolveHabitMessage(reminder.message ?? "");
 
+      // messageId retornado pelo Evolution. Usado pro webhook MESSAGES_UPDATE
+      // correlacionar a entrega (delivery tracking). null se for delegate ou
+      // se Evolution não devolver id.
+      let mainMessageId: string | null = null;
+
       if (isDelegateReminder) {
         const sessionPhone = String(reminder.whatsapp_number ?? "").replace(/\D/g, "");
         await sendButtons(
@@ -361,9 +414,12 @@ serve(async (_req) => {
       } else {
         // Envia mensagem principal. Se falhar, loga mas NÃO marca o reminder como failed
         // (o usuário já recebeu/vai receber — não queremos perder a lógica pós-envio).
+        // warmUp=true: força refresh da sessão Signal antes do envio. Reminders
+        // são enviados em horários programados onde o destino pode estar offline —
+        // sem o warm-up, o WhatsApp pode entregar a msg em branco quando ele voltar.
         let mainSendOk = true;
         try {
-          await sendText(reminder.whatsapp_number, finalMessage);
+          mainMessageId = await sendText(reminder.whatsapp_number, finalMessage, { warmUp: true });
         } catch (sendErr) {
           console.error(`[send-reminder] main sendText failed for ${reminder.id}:`, sendErr);
           mainSendOk = false;
@@ -473,10 +529,21 @@ serve(async (_req) => {
         }
       }
 
-      // Marca como enviado
+      // Marca como enviado. Se temos messageId do Evolution, grava pra que o
+      // webhook MESSAGES_UPDATE possa correlacionar e setar delivered_at depois.
+      // Coluna evolution_message_id é opcional (default NULL) — só inclui no
+      // update se temos valor, mantendo retro-compat caso a migration não tenha
+      // sido aplicada ainda.
+      const sentUpdate: Record<string, unknown> = {
+        status: "sent",
+        sent_at: now.toISOString(),
+      };
+      if (mainMessageId) {
+        sentUpdate.evolution_message_id = mainMessageId;
+      }
       await supabase
         .from("reminders")
-        .update({ status: "sent", sent_at: now.toISOString() })
+        .update(sentUpdate as any)
         .eq("id", reminder.id);
 
       sent++;
