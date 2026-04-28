@@ -50,6 +50,21 @@ export const CATEGORY_COLORS: Array<{ key: string; label: string; bg: string; ri
 const DEFAULT_COLOR = "violet";
 const DEFAULT_EMOJI = "🏷️";
 
+// Grade de emojis pré-selecionados, agrupados por contexto financeiro.
+// User clica num emoji pra escolher (ou cola um emoji próprio no input).
+const EMOJI_PICKER: Array<{ section: string; emojis: string[] }> = [
+  { section: "Casa & contas", emojis: ["🏠", "🏡", "🛏️", "💡", "🔧", "📺", "🚿", "🛒", "🛍️"] },
+  { section: "Alimentação",   emojis: ["🍔", "🍕", "🍣", "☕", "🥤", "🍺", "🍷", "🥗", "🍱", "🍞", "🍿", "🍦"] },
+  { section: "Transporte",    emojis: ["🚗", "🚕", "🛵", "⛽", "🚌", "🚇", "🚆", "✈️", "🚲", "🛴"] },
+  { section: "Saúde",         emojis: ["💊", "🏥", "🩺", "💉", "🦷", "👓", "🧘", "💪"] },
+  { section: "Lazer",         emojis: ["🎬", "🎮", "🎵", "⚽", "🎯", "🏖️", "🎉", "📚", "🎟️", "🎨"] },
+  { section: "Trabalho",      emojis: ["💼", "💻", "📱", "📊", "📈", "💰", "💵", "🪙", "💳"] },
+  { section: "Pessoas & pets",emojis: ["👤", "👥", "👨", "👩", "👶", "🐶", "🐱", "🐰", "🐦"] },
+  { section: "Compras & estilo", emojis: ["👕", "👟", "💄", "💍", "🎁", "🌹", "🛁", "✂️"] },
+  { section: "Educação",      emojis: ["🎓", "✏️", "📝", "📖", "🖊️", "🔬"] },
+  { section: "Outros",        emojis: ["🎁", "🌟", "⭐", "💎", "🏷️", "📦", "🔖", "🎀"] },
+];
+
 export function CategoryCreateModal({ open, onOpenChange, categoryToEdit, onSaved }: Props) {
   const { user } = useAuth();
   const isEdit = !!categoryToEdit;
@@ -195,24 +210,53 @@ export function CategoryCreateModal({ open, onOpenChange, categoryToEdit, onSave
             />
           </div>
 
-          {/* Emoji livre */}
+          {/* Emoji — grade de seleção rápida + input text livre como fallback */}
           <div className="space-y-1.5">
-            <Label htmlFor="cat-emoji" className="text-xs">Ícone (emoji)</Label>
-            <Input
-              id="cat-emoji"
-              placeholder="🏷️"
-              value={emoji}
-              onChange={(e) => {
-                // Limita a 4 chars (alguns emoji compostos têm 2-4 chars unicode)
-                const next = e.target.value.slice(0, 4);
-                setEmoji(next || DEFAULT_EMOJI);
-              }}
-              disabled={submitting || deleting}
-              className="text-2xl text-center font-emoji"
-            />
-            <p className="text-[10px] text-muted-foreground">
-              Cole um emoji do teclado: 🐶 🚗 💼 ⚽ 🎮 🛒 📚 🎯
-            </p>
+            <Label className="text-xs">Ícone (emoji)</Label>
+
+            {/* Grade de emojis pré-selecionados, agrupados por contexto */}
+            <div className="max-h-[180px] overflow-y-auto pr-1 space-y-2 rounded-md border border-border/40 p-2 bg-accent/10">
+              {EMOJI_PICKER.map((group) => (
+                <div key={group.section}>
+                  <p className="text-[9px] uppercase tracking-wider text-muted-foreground mb-1">
+                    {group.section}
+                  </p>
+                  <div className="grid grid-cols-9 gap-1">
+                    {group.emojis.map((e, idx) => (
+                      <button
+                        key={`${group.section}-${idx}`}
+                        type="button"
+                        onClick={() => setEmoji(e)}
+                        disabled={submitting || deleting}
+                        className={`h-8 w-8 rounded-md flex items-center justify-center text-lg transition-all hover:bg-accent/40 ${
+                          emoji === e ? "bg-violet-500/20 ring-1 ring-violet-400 scale-110" : ""
+                        }`}
+                      >
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Input livre — fallback pra colar emoji custom do teclado */}
+            <div className="flex items-center gap-2 pt-1">
+              <Input
+                id="cat-emoji"
+                placeholder="🏷️"
+                value={emoji}
+                onChange={(e) => {
+                  const next = e.target.value.slice(0, 4);
+                  setEmoji(next || DEFAULT_EMOJI);
+                }}
+                disabled={submitting || deleting}
+                className="text-xl text-center font-emoji w-20 shrink-0"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Ou cole um emoji custom do teclado (Win+. no Windows / Cmd+Ctrl+Espaço no Mac).
+              </p>
+            </div>
           </div>
 
           {/* Cor */}
