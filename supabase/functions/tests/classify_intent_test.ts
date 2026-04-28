@@ -1100,3 +1100,97 @@ Deno.test("finance_record - '500 bonus' → finance_record", () => {
 Deno.test("finance_record - '5000 reais salário' → finance_record", () => {
   assertEquals(classifyIntent("5000 reais salário"), "finance_record");
 });
+
+// ─────────────────────────────────────────────
+// finance_record — padrões E e F (NÚMERO + categoria EXPENSE)
+// (cobre o bug do Guilherme: "27,92 mercado" caía em ai_chat,
+//  "registra 27,92 mercado" virava nota)
+// ─────────────────────────────────────────────
+
+// ── Padrão E: NÚMERO + (preposição opcional) + CATEGORIA_EXPENSE ──
+
+Deno.test("finance_record - '27,92 mercado' → finance_record", () => {
+  assertEquals(classifyIntent("27,92 mercado"), "finance_record");
+});
+
+Deno.test("finance_record - '100 mercado' → finance_record", () => {
+  assertEquals(classifyIntent("100 mercado"), "finance_record");
+});
+
+Deno.test("finance_record - '50 uber' → finance_record", () => {
+  assertEquals(classifyIntent("50 uber"), "finance_record");
+});
+
+Deno.test("finance_record - '200 gasolina' → finance_record", () => {
+  assertEquals(classifyIntent("200 gasolina"), "finance_record");
+});
+
+Deno.test("finance_record - '30 farmacia' → finance_record", () => {
+  assertEquals(classifyIntent("30 farmacia"), "finance_record");
+});
+
+Deno.test("finance_record - '40 cinema' → finance_record", () => {
+  assertEquals(classifyIntent("40 cinema"), "finance_record");
+});
+
+Deno.test("finance_record - '27,92 no mercado' → finance_record", () => {
+  assertEquals(classifyIntent("27,92 no mercado"), "finance_record");
+});
+
+Deno.test("finance_record - '100 na farmácia' → finance_record", () => {
+  assertEquals(classifyIntent("100 na farmácia"), "finance_record");
+});
+
+Deno.test("finance_record - '50 do uber' → finance_record", () => {
+  assertEquals(classifyIntent("50 do uber"), "finance_record");
+});
+
+Deno.test("finance_record - 'R$ 50 no posto' → finance_record", () => {
+  assertEquals(classifyIntent("R$ 50 no posto"), "finance_record");
+});
+
+// ── Padrão E2: NÚMERO + preposição + palavra desconhecida ──
+
+Deno.test("finance_record - '100 no posto Shell' → finance_record", () => {
+  assertEquals(classifyIntent("100 no posto Shell"), "finance_record");
+});
+
+Deno.test("finance_record - '50 na lojinha do bairro' → finance_record", () => {
+  assertEquals(classifyIntent("50 na lojinha do bairro"), "finance_record");
+});
+
+// ── Padrão F: registra/salva/anota + NÚMERO com sinal financeiro ──
+
+Deno.test("finance_record - 'registra 27,92 mercado' → finance_record (não notes!)", () => {
+  assertEquals(classifyIntent("registra 27,92 mercado"), "finance_record");
+});
+
+Deno.test("finance_record - 'registra R$ 50 no posto' → finance_record", () => {
+  assertEquals(classifyIntent("registra R$ 50 no posto"), "finance_record");
+});
+
+Deno.test("finance_record - 'anota 100 reais farmácia' → finance_record", () => {
+  assertEquals(classifyIntent("anota 100 reais farmácia"), "finance_record");
+});
+
+Deno.test("finance_record - 'salva 50,00 mercado' → finance_record", () => {
+  assertEquals(classifyIntent("salva 50,00 mercado"), "finance_record");
+});
+
+Deno.test("finance_record - 'anota R$30 uber' → finance_record", () => {
+  assertEquals(classifyIntent("anota R$30 uber"), "finance_record");
+});
+
+Deno.test("finance_record - 'registra 100 no mercado' → finance_record", () => {
+  assertEquals(classifyIntent("registra 100 no mercado"), "finance_record");
+});
+
+// ── REGRESSÃO crítica: notes ambíguas continuam notes_save ──
+
+Deno.test("regressão - 'anota 5 ideias de presente' continua notes_save", () => {
+  assertEquals(classifyIntent("anota 5 ideias de presente"), "notes_save");
+});
+
+Deno.test("regressão - 'anota 3 livros que quero ler' continua notes_save", () => {
+  assertEquals(classifyIntent("anota 3 livros que quero ler"), "notes_save");
+});

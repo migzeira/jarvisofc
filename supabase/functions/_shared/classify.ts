@@ -176,21 +176,37 @@ export function classifyIntent(msg: string): Intent {
     return "finance_report";
 
   // Registro financeiro — formato SEM verbo explícito.
-  // Cobre 4 padrões (todos ancorados em ^ pra evitar falso positivo em notas):
-  //   A) TIPO + número:                  "salário 20k" / "freelance 1500" / "salário de R$ 5000"
-  //   B) "registra/salva/anota" + tipo:  "registra receita de 20k hoje" / "salva uma despesa de 50"
-  //   C) número + (de|em|com|do|da) + TIPO: "3000,00 de salário" / "5000 reais de freelance"
-  //   D) número + TIPO (sem preposição): "3000 salário" / "1500 freelance"
-  // INCOME_KEYWORDS expandido pra cobrir comissão, venda, etc.
+  // Cobre 6 padrões (todos ancorados em ^ pra evitar falso positivo em notas):
+  //   A) TIPO_INCOME + número:                "salário 20k" / "freelance 1500"
+  //   B) "registra/salva/anota" + tipo:       "registra receita de 20k" / "salva uma despesa de 50"
+  //   C) número + (preposição) + TIPO_INCOME: "3000,00 de salário" / "5000 reais de freelance"
+  //   D) número + TIPO_INCOME (sem preposição): "3000 salário" / "1500 freelance"
+  //   E) número + (preposição) + CATEGORIA_EXPENSE: "27,92 mercado" / "100 na farmácia" / "200 no posto"
+  //   F) "registra/salva/anota" + número COM SINAL FINANCEIRO (R$ / reais / decimal / categoria):
+  //      "registra 27,92 mercado" / "anota R$50 farmácia" / "salva 100 reais no uber"
   if (
-    // Padrão A: TIPO + número
+    // Padrão A: TIPO_INCOME + número
     /^(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|comissao|pagamento\s+unico)\s+(de\s+)?(r\$\s*)?\d/.test(m) ||
-    // Padrão B: "registra/salva/anota" + tipo financeiro
+    // Padrão B: "registra/salva/anota" + tipo financeiro explícito
     /^(registra|registrar|salva|salvar|anota|anotar)\s+(uma?\s+|um\s+)?(receita|despesa|gasto|salario|renda|rendimento|pagamento|ganho|recebimento|entrada|sa[íi]da|comissao|venda)\b/.test(m) ||
     // Padrão C: NÚMERO (reais) (de|em|com|do|da) TIPO_INCOME
     /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?(de|em|com|do|da)\s+(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|comissao|venda|pagamento)\b/.test(m) ||
     // Padrão D: NÚMERO (reais) TIPO_INCOME (sem preposição)
-    /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|comissao)\b/.test(m)
+    /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|comissao)\b/.test(m) ||
+    // Padrão E: NÚMERO + (preposição opcional) + CATEGORIA_EXPENSE inequívoca
+    // "27,92 mercado", "100 na farmácia", "50 do uber", "200 com gasolina"
+    // Lista intencionalmente conservadora — só categorias inequívocas de gasto.
+    // Palavras ambíguas (livro, presente, roupa, sapato) ficam fora pra não
+    // capturar notas tipo "anota 5 ideias de presente" / "anota 3 livros que quero ler".
+    /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?((no|na|nos|nas|do|da|dos|das|de|em|com|pra|para|pro)\s+)?(mercado|supermercado|sacolao|hortifruti|padaria|restaurante|lanchonete|sorveteria|acai|pizza|hamburguer|hamburgueria|ifood|rappi|delivery|uber|99|taxi|onibus|metro|gasolina|combustivel|posto|estacionamento|pedagio|farmacia|drogaria|remedio|medicamento|aluguel|condominio|luz|agua|internet|gas|energia|netflix|spotify|prime|disney|hbo|paramount|cinema|teatro|academia|gym|ginastica|barbearia|cabeleireiro|manicure|pedicure|petshop|veterinario|mensalidade)\b/.test(m) ||
+    // Padrão E2: NÚMERO + preposição + qualquer palavra (>=3 letras) — categoria genérica
+    // "100 no posto X", "50 na lojinha Y" — IA decide categoria
+    /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?(no|na|nos|nas|do|da|dos|das|em|com|pra|para|pro)\s+[a-z]{3,}/.test(m) ||
+    // Padrão F: "registra/salva/anota" + número COM sinal financeiro inequívoco
+    // (R$ explícito OU "reais" OU decimal X,XX) — sem isso, tratamos como nota
+    /^(registra|registrar|salva|salvar|anota|anotar)\s+(uma?\s+|um\s+)?(r\$\s*\d|\d+[.,]\d{2}\b|\d+\s*(reais|real)\b)/.test(m) ||
+    // Padrão F2: "registra/salva/anota" + número + categoria_expense inequívoca
+    /^(registra|registrar|salva|salvar|anota|anotar)\s+(uma?\s+|um\s+)?(r\$\s*)?\d[\d.,]*\s.*\b(mercado|supermercado|padaria|restaurante|lanchonete|acai|pizza|hamburguer|ifood|rappi|uber|99|taxi|gasolina|combustivel|posto|estacionamento|farmacia|drogaria|remedio|aluguel|condominio|netflix|spotify|cinema|academia|gym|barbearia|petshop)\b/.test(m)
   )
     return "finance_record";
 
