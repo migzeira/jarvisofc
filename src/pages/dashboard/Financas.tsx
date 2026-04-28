@@ -15,6 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { FinancialInsightCard } from "@/components/FinancialInsightCard";
+import { CategoryCreateModal, CATEGORY_COLORS, type CategoryRow } from "@/components/CategoryCreateModal";
+import { TransactionEditModal, type Transaction as TxEditType } from "@/components/TransactionEditModal";
 import { toast } from "sonner";
 import {
   Plus, TrendingDown, TrendingUp, Wallet, RefreshCw, Trash2, Download,
@@ -59,6 +61,23 @@ const CAT: Record<string, { emoji: string; color: string; label: string }> = {
 function getCat(name: string) {
   return CAT[name?.toLowerCase()] ?? { emoji: "💳", color: "#6b7280", label: name };
 }
+
+// Lista de nomes default — usada pra distinguir categorias custom
+const DEFAULT_CATEGORY_NAMES = Object.keys(CAT);
+
+// Mapeia paleta nominal (CategoryCreateModal) → hex (recharts/SVG)
+const CATEGORY_COLOR_HEX: Record<string, string> = {
+  violet: "#8b5cf6",
+  blue:   "#3b82f6",
+  green:  "#10b981",
+  yellow: "#eab308",
+  orange: "#f97316",
+  red:    "#ef4444",
+  pink:   "#ec4899",
+  amber:  "#b45309",
+  slate:  "#64748b",
+  cyan:   "#06b6d4",
+};
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -153,6 +172,82 @@ export default function Financas() {
 
   // ── Inline edit ──
   const [editingTxId, setEditingTxId] = useState<string | null>(null);
+
+  // ── Modais novos: criar/editar categoria + editar transação ──
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [categoryToEdit, setCategoryToEdit] = useState<CategoryRow | null>(null);
+  const [txEditModalOpen, setTxEditModalOpen] = useState(false);
+  const [txToEdit, setTxToEdit] = useState<TxEditType | null>(null);
+
+  /**
+   * Lookup dinâmico de categoria: primeiro tenta achar na lista do banco
+   * (categorias custom têm icon + color próprios), depois cai no CAT estático.
+   */
+  const getCatDynamic = (name: string) => {
+    const key = (name ?? "").toLowerCase().trim();
+    const fromDB = categories.find((c: any) => String(c.name ?? "").toLowerCase().trim() === key);
+    if (fromDB) {
+      const colorObj = CATEGORY_COLORS.find((c) => c.key === fromDB.color);
+      // Se categoria do banco tem cor mas é default, usa cor do CAT estático
+      const fallback = CAT[key];
+      return {
+        emoji: fromDB.icon || fallback?.emoji || "🏷️",
+        // Mapeia paleta nominal → hex pra usar em SVG/recharts
+        color: colorObj ? CATEGORY_COLOR_HEX[colorObj.key] : (fallback?.color ?? "#6b7280"),
+        label: fromDB.name,
+      };
+    }
+    return getCat(name);
+  };
+
+  /** Categorias custom (não-default) — usadas pra mostrar botão de editar e validar permissão */
+  const customCategoryNames = new Set(
+    categories
+      .filter((c: any) => !c.is_default)
+      .map((c: any) => String(c.name ?? "").toLowerCase().trim())
+  );
+
+  /** Lista de categorias pra dropdowns do TransactionEditModal */
+  const categoryOptionsForEdit = [
+    ...DEFAULT_CATEGORY_NAMES.map((name) => ({
+      name,
+      label: CAT[name]?.label ?? name,
+      icon: CAT[name]?.emoji,
+    })),
+    ...categories
+      .filter((c: any) => !c.is_default)
+      .map((c: any) => ({
+        name: String(c.name ?? "").toLowerCase().trim(),
+        label: c.name,
+        icon: c.icon || "🏷️",
+      })),
+  ];
+
+  const handleEditCategory = (categoryName: string) => {
+    const cat = categories.find((c: any) => String(c.name ?? "").toLowerCase().trim() === categoryName.toLowerCase().trim());
+    if (!cat || cat.is_default) return;
+    setCategoryToEdit(cat as CategoryRow);
+    setCategoryModalOpen(true);
+  };
+
+  const handleNewCategory = () => {
+    setCategoryToEdit(null);
+    setCategoryModalOpen(true);
+  };
+
+  const handleEditTransaction = (t: any) => {
+    setTxToEdit({
+      id: t.id,
+      description: t.description,
+      amount: Number(t.amount),
+      type: t.type,
+      category: t.category,
+      transaction_date: t.transaction_date,
+      source: t.source,
+      installment_group: t.installment_group,
+    });
+    setTxEditModalOpen(true);
+  };
   const [editForm, setEditForm]       = useState<Record<string, any>>({});
 
   // ── Forms ──
@@ -840,23 +935,43 @@ export default function Financas() {
           {pieData.length > 0 && (
             <Card className="bg-card border-border">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Target className="h-4 w-4 text-primary" /> Ranking de categorias
-                </CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Target className="h-4 w-4 text-primary" /> Ranking de categorias
+                  </CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleNewCategory}
+                    className="h-7 text-xs"
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Nova categoria
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
                   {pieData.slice(0, 5).map(cat => {
                     const pct = totalExpenses > 0 ? (cat.value / totalExpenses) * 100 : 0;
-                    const conf = getCat(cat.name);
+                    const conf = getCatDynamic(cat.name);
+                    const isCustom = customCategoryNames.has(cat.name.toLowerCase().trim());
                     return (
                       <div key={cat.name} className="space-y-1">
                         <div className="flex items-center justify-between text-sm">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
                             <span className="text-base">{conf.emoji}</span>
-                            <span className="font-medium capitalize">{cat.name}</span>
+                            <span className="font-medium capitalize truncate">{cat.name}</span>
+                            {isCustom && (
+                              <button
+                                onClick={() => handleEditCategory(cat.name)}
+                                className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded hover:bg-accent/40"
+                                title="Editar categoria"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                            )}
                           </div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3 shrink-0">
                             <span className="text-xs text-muted-foreground">{pct.toFixed(0)}%</span>
                             <span className="font-semibold tabular-nums w-28 text-right">R$ {brl(cat.value)}</span>
                           </div>
@@ -868,6 +983,34 @@ export default function Financas() {
                       </div>
                     );
                   })}
+
+                  {/* Lista categorias custom QUE NÃO TÊM gastos (não aparecem no ranking) */}
+                  {categories.filter((c: any) => !c.is_default && !pieData.some(p => p.name.toLowerCase() === String(c.name ?? "").toLowerCase())).length > 0 && (
+                    <div className="pt-3 mt-3 border-t border-border/40">
+                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">
+                        Suas categorias (sem gastos no período)
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {categories
+                          .filter((c: any) => !c.is_default && !pieData.some(p => p.name.toLowerCase() === String(c.name ?? "").toLowerCase()))
+                          .map((c: any) => {
+                            const conf = getCatDynamic(c.name);
+                            return (
+                              <button
+                                key={c.id}
+                                onClick={() => handleEditCategory(c.name)}
+                                className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md hover:bg-accent/40 transition-colors border border-border/40"
+                                title="Clique pra editar"
+                              >
+                                <span style={{ color: conf.color }}>●</span>
+                                <span>{conf.emoji}</span>
+                                <span className="capitalize">{c.name}</span>
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -887,9 +1030,14 @@ export default function Financas() {
               </CardHeader>
               <CardContent className="space-y-1.5">
                 {recentFive.map(t => {
-                  const conf = getCat(t.category);
+                  const conf = getCatDynamic(t.category);
                   return (
-                    <div key={t.id} className="flex items-center gap-3 py-1.5 px-2 rounded-lg hover:bg-accent/5 transition-colors">
+                    <button
+                      key={t.id}
+                      onClick={() => handleEditTransaction(t)}
+                      className="w-full flex items-center gap-3 py-1.5 px-2 rounded-lg hover:bg-accent/10 transition-colors text-left"
+                      title="Clique pra editar"
+                    >
                       <div className="w-1 h-7 rounded-full shrink-0" style={{ backgroundColor: conf.color }} />
                       <span className="text-base shrink-0">{conf.emoji}</span>
                       <div className="flex-1 min-w-0">
@@ -909,7 +1057,7 @@ export default function Financas() {
                       <p className={`text-sm font-bold tabular-nums shrink-0 ${t.type === "expense" ? "text-destructive" : "text-green-400"}`}>
                         {t.type === "expense" ? "−" : "+"}R$ {brl(Number(t.amount))}
                       </p>
-                    </div>
+                    </button>
                   );
                 })}
               </CardContent>
@@ -1408,6 +1556,34 @@ export default function Financas() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* ── Modal: criar/editar categoria custom ── */}
+      <CategoryCreateModal
+        open={categoryModalOpen}
+        onOpenChange={(o) => {
+          setCategoryModalOpen(o);
+          if (!o) setCategoryToEdit(null);
+        }}
+        categoryToEdit={categoryToEdit}
+        onSaved={() => {
+          // Recarrega categorias do banco depois de criar/editar/excluir
+          loadData();
+        }}
+      />
+
+      {/* ── Modal: editar transação (a partir das transações recentes) ── */}
+      <TransactionEditModal
+        open={txEditModalOpen}
+        onOpenChange={(o) => {
+          setTxEditModalOpen(o);
+          if (!o) setTxToEdit(null);
+        }}
+        transaction={txToEdit}
+        categoryOptions={categoryOptionsForEdit}
+        onSaved={() => {
+          loadData();
+        }}
+      />
     </div>
   );
 }

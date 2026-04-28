@@ -330,6 +330,11 @@ export async function extractTransactions(
     if (k && !seen.has(k)) { seen.add(k); allCats.push(c); }
   }
 
+  // Separa custom vs default pra explicar ao modelo no prompt
+  const defaultSet = new Set(DEFAULT_CATEGORIES.map((c) => c.toLowerCase().trim()));
+  const customCats = allCats.filter((c) => !defaultSet.has(c.toLowerCase().trim()));
+  const customList = customCats.join(", ");
+
   const catList = allCats.join(", ");
 
   const prompt = `Extraia transações financeiras do texto abaixo. Retorne JSON com array "transactions".
@@ -350,7 +355,14 @@ REGRAS IMPORTANTES:
    - açai, pizza, hamburguer → alimentacao
    - salário, freelance, freela, bônus, 13o, comissão, venda → trabalho
    - Se ainda assim não encaixar, use "outros"
-3. Usuário com categorias personalizadas? Use elas quando fizer sentido.
+3. CATEGORIAS PERSONALIZADAS DO USUÁRIO: ${customList || "(nenhuma)"}
+   - Se a mensagem mencionar alguma dessas categorias custom (ou variação ortográfica/fonética próxima), USE ELA.
+   - IMPORTANTE: considere variações fonéticas comuns em transcrição de áudio. Ex: se categoria é
+     "Cibele" e texto diz "Sibele" / "Cebele" / "Cybelle" → usar "Cibele" (são fonéticamente iguais).
+   - Considere também variações de acento: "Saúde" / "saude", "Pet" / "Petz" / "Pets".
+   - Match por contexto inteligente, não só palavra exata. Ex: se categoria é "Pet", texto "ração do petshop"
+     → usar "Pet" (contexto claro).
+   - Se NÃO houver match claro com nenhuma categoria custom OU default, use "outros".
 
 4. PARCELAMENTO — Se detectar padrões como "3x", "em 3 vezes", "parcelado em 6", "12x", "3 parcelas", "em 10 vezes":
    - Retorne o amount como o VALOR TOTAL da compra (NÃO divida pelo número de parcelas)

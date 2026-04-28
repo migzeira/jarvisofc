@@ -941,7 +941,7 @@ async function handleFinanceRecord(
         ? (config?.template_expense as string) ?? "🔴 *Gasto registrado{{name_tag}}!*\n📝 {{description}}\n💰 R$ {{amount}}"
         : (config?.template_income as string) ?? "🟢 *Receita registrada{{name_tag}}!*\n📝 {{description}}\n💰 R$ {{amount}}";
       const nick = (config?.user_nickname as string) || "";
-      return applyTemplate(tpl, {
+      let response = applyTemplate(tpl, {
         description: t.description,
         amount: t.amount.toFixed(2).replace(".", ","),
         category: t.category,
@@ -949,6 +949,15 @@ async function handleFinanceRecord(
         user_name: nick,
         name_tag: nick ? `, ${nick}` : "",
       });
+
+      // ── Mensagem adaptativa: se IA não conseguiu categorizar e caiu em "outros",
+      //    avisa o user de forma sutil que pode editar pelo painel.
+      //    Quando IA reconhece a categoria certa (default ou custom), não polui a resposta.
+      if (String(t.category ?? "").toLowerCase().trim() === "outros") {
+        response += "\n\n_Salvei em *Outros*. Se for outra categoria, abre o painel e altera com 1 clique 👍_";
+      }
+
+      return response;
     }
 
     const lines = normalTxs.map((t) => {
