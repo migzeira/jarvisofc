@@ -528,11 +528,18 @@ export default function AdminPanel() {
       if (bugAdminNotes[bugId] !== undefined) {
         updates.admin_notes = bugAdminNotes[bugId];
       }
-      const { error } = await (supabase
+      // .select() força retorno das rows afetadas → permite detectar update
+      // silencioso (0 rows = RLS bloqueou, profile.is_admin provavelmente false)
+      const { data, error } = await (supabase
         .from("bug_reports" as any)
         .update(updates as any)
-        .eq("id", bugId) as any);
+        .eq("id", bugId)
+        .select() as any);
       if (error) throw error;
+      if (!data || (Array.isArray(data) && data.length === 0)) {
+        toast.error("Sem permissão pra atualizar. Confirme que seu profile tem is_admin=true.");
+        return;
+      }
       toast.success(`Bug marcado como ${status}.`);
       await Promise.all([loadBugReports(), refreshNewBugCount()]);
     } catch (e) {
@@ -546,16 +553,46 @@ export default function AdminPanel() {
   const saveBugNotes = async (bugId: string) => {
     setBugSavingId(bugId);
     try {
-      const { error } = await (supabase
+      const { data, error } = await (supabase
         .from("bug_reports" as any)
         .update({ admin_notes: bugAdminNotes[bugId] ?? "" } as any)
-        .eq("id", bugId) as any);
+        .eq("id", bugId)
+        .select() as any);
       if (error) throw error;
+      if (!data || (Array.isArray(data) && data.length === 0)) {
+        toast.error("Sem permissão pra salvar notas. Confirme que seu profile tem is_admin=true.");
+        return;
+      }
       toast.success("Notas salvas.");
       await loadBugReports();
     } catch (e) {
       console.error("[admin] saveBugNotes error:", e);
       toast.error("Erro ao salvar notas.");
+    } finally {
+      setBugSavingId(null);
+    }
+  };
+
+  const deleteBug = async (bugId: string, title: string) => {
+    if (!confirm(`Excluir o reporte "${title}"? Essa ação não pode ser desfeita.`)) return;
+    setBugSavingId(bugId);
+    try {
+      const { data, error } = await (supabase
+        .from("bug_reports" as any)
+        .delete()
+        .eq("id", bugId)
+        .select() as any);
+      if (error) throw error;
+      if (!data || (Array.isArray(data) && data.length === 0)) {
+        toast.error("Sem permissão pra excluir. Confirme que seu profile tem is_admin=true.");
+        return;
+      }
+      toast.success("Reporte excluído.");
+      setExpandedBugId(null);
+      await Promise.all([loadBugReports(), refreshNewBugCount()]);
+    } catch (e) {
+      console.error("[admin] deleteBug error:", e);
+      toast.error("Erro ao excluir reporte.");
     } finally {
       setBugSavingId(null);
     }
@@ -1897,6 +1934,16 @@ export default function AdminPanel() {
                                       ↩️ Reabrir
                                     </Button>
                                   )}
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    disabled={isSaving}
+                                    onClick={() => deleteBug(b.id, b.title)}
+                                    className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 ml-auto"
+                                  >
+                                    <XCircle className="h-3.5 w-3.5 mr-1" />
+                                    Excluir
+                                  </Button>
                                 </div>
                                 {b.resolved_at && (
                                   <p className="text-[10px] text-muted-foreground">
