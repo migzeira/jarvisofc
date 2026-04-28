@@ -1213,3 +1213,112 @@ Exemplos:
     return { kind: "unknown" };
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// LISTS — extração de nome + itens via IA
+// Lida com fala natural (transcrição de áudio com palavras-conector
+// como "que eu quero assistir", "pra mim", "sabe", "tipo") que regex
+// puro não consegue parsear bem.
+// ─────────────────────────────────────────────────────────────
+
+export interface ListExtraction {
+  /** Nome curto e limpo da lista, ex: "filmes", "mercado", "presentes natal". null se não puder identificar. */
+  list_name: string | null;
+  /** Itens identificados (sem deduplicar nem normalizar — caller faz isso). */
+  items: string[];
+}
+
+/**
+ * Extrai nome de lista + itens de uma mensagem em linguagem natural.
+ * Cobertura ampla: comando direto ("cria lista X com Y, Z"), comando
+ * conversacional ("ó, queria fazer uma lista pra anotar os filme que
+ * eu quero assistir, tipo, X, Y e Z"), resposta a follow-up ("Sim,
+ * arroz feijão e açúcar"), etc.
+ *
+ * Retorna {list_name: null, items: []} se não conseguiu — caller faz
+ * fallback pra regex ou pede mais informação ao usuário.
+ *
+ * Custo: ~$0.0001 por chamada (Claude Haiku, ~200 tokens).
+ */
+export async function extractListIntent(
+  text: string,
+  knownLists: string[] = []
+): Promise<ListExtraction> {
+  const known = knownLists.length > 0
+    ? `\n\nListas que o usuário JÁ TEM: ${knownLists.map((l) => `"${l}"`).join(", ")}\n→ Se o texto mencionar uma dessas (mesmo com palavras extras), use exatamente o nome existente.`
+    : "";
+
+  const system =
+    `You are a list parser for a personal assistant in Brazilian Portuguese. Respond ONLY with valid JSON, no markdown, no explanations.`;
+
+  const prompt = `Extraia o NOME da lista e os ITENS de uma mensagem natural (provavelmente transcrição de áudio do WhatsApp).
+
+REGRAS DO NOME:
+- Curto (1-3 palavras), substantivo principal. Ex: "filmes", "compras", "mercado", "presentes natal", "feira".
+- Remova conectores ("que eu quero", "pra mim", "para minha", "tipo"), verbos ("assistir", "comprar", "fazer"), pronomes ("eu", "ele").
+- Se o usuário disser "lista de filme que eu quero assistir" → list_name é "filmes" (não "filme que eu quero assistir").
+- Se disser "lista pra mercado" → "mercado".
+- Se disser "lista de natal" / "presentes de natal" → "presentes natal" ou "natal".
+- Se NÃO tem nome claro (ex: "adiciona X na minha lista" sem nome), list_name = null.
+- Tudo lowercase.
+
+REGRAS DOS ITENS:
+- Lista os itens que o usuário quer adicionar/marcar/remover, na ordem que apareceram.
+- Limpe palavras-filler ("né", "tipo", "sabe", "ah", "eh", "então"), afirmações iniciais ("sim, ok, claro").
+- Cada item deve ser substantivo curto (1-5 palavras). Ex: "arroz", "feijão preto", "Coringa 2", "detergente ype".
+- Se o usuário disser "queria assistir Coringa, Duna e Oppenheimer" → items: ["Coringa", "Duna", "Oppenheimer"].
+- Se nenhum item for citado, items: [].
+- NÃO invente itens. Apenas extraia.${known}
+
+EXEMPLOS:
+- "cria lista de mercado pra mim e adiciona arroz, feijão e açúcar"
+  → {"list_name": "mercado", "items": ["arroz", "feijão", "açúcar"]}
+
+- "ó, queria fazer uma lista pra anotar os filme que eu quero assistir tipo Coringa, Duna e Oppenheimer"
+  → {"list_name": "filmes", "items": ["Coringa", "Duna", "Oppenheimer"]}
+
+- "Sim, arroz feijão e açúcar" (resposta a "quais itens?")
+  → {"list_name": null, "items": ["arroz", "feijão", "açúcar"]}
+
+- "adiciona detergente e papel higiênico na lista de compras"
+  → {"list_name": "compras", "items": ["detergente", "papel higiênico"]}
+
+- "tira arroz da lista de mercado"
+  → {"list_name": "mercado", "items": ["arroz"]}
+
+- "comprei o arroz e o feijão da lista de compras"
+  → {"list_name": "compras", "items": ["arroz", "feijão"]}
+
+- "mostra minha lista de compras"
+  → {"list_name": "compras", "items": []}
+
+Texto do usuário: "${text}"
+
+Responda SOMENTE com JSON no formato:
+{"list_name": "string ou null", "items": ["string", ...]}`;
+
+  try {
+    const result = await chat(
+      [{ role: "user", content: prompt }],
+      system,
+      true
+    );
+    const parsed = JSON.parse(result) as { list_name?: unknown; items?: unknown };
+
+    const list_name =
+      typeof parsed.list_name === "string" && parsed.list_name.trim().length > 0
+        ? parsed.list_name.trim().toLowerCase().slice(0, 60)
+        : null;
+
+    const items = Array.isArray(parsed.items)
+      ? (parsed.items as unknown[])
+          .filter((i) => typeof i === "string" && (i as string).trim().length > 0)
+          .map((i) => (i as string).trim().slice(0, 200))
+      : [];
+
+    return { list_name, items };
+  } catch (e) {
+    console.warn("[extractListIntent] AI parse failed, returning empty:", (e as Error).message?.slice(0, 100));
+    return { list_name: null, items: [] };
+  }
+}

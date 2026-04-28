@@ -5,10 +5,15 @@
  * { response, pendingAction?, pendingContext? } — mesmo contrato dos outros
  * handlers do whatsapp-webhook (ex: handleNotesSave, handleAgendaCreate).
  *
- * Não importa Evolution API direto — quem envia a resposta é o webhook.
+ * Estratégia de parsing:
+ * - PRIMEIRA TENTATIVA: extractListIntent via Claude (cobre fala natural,
+ *   transcrição de áudio com filler words, listas numeradas, bullets, etc.)
+ * - FALLBACK: regex local (mais rápido, cobre casos simples, usado se IA
+ *   falhar ou demorar)
  */
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { extractListIntent } from "./openai.ts";
 
 export interface ListHandlerResult {
   response: string;
@@ -60,12 +65,19 @@ export function parseListName(text: string): string | null {
     "e guarda", "e guardar", "e inclui", "e incluir",
     // Beneficiário / destino (não fazem parte do nome)
     "pra mim", "para mim", "pro meu", "pra meu", "para meu", "pra minha", "para minha",
+    // Subordinadas relativas — "que eu quero assistir", "que vou comprar"
+    "que eu", "que voce", "que vou", "que quero", "que preciso", "que tenho",
+    "pra eu", "para eu", "pra voce", "pra ver", "pra assistir", "pra comprar",
+    "pra fazer", "pra anotar", "para ver", "para assistir", "para comprar",
+    "para fazer", "para anotar",
     // Verbos de comando standalone
     " adiciona ", " adicionar ", " acrescenta ", " coloca ", " colocar ",
     " bota ", " botar ", " salva ", " salvar ", " grava ", " gravar ",
     " guarda ", " guardar ", " inclui ", " incluir ",
     // Preposições típicas que sinalizam novo trecho
     " com os ", " com o ", " com a ", " com as ",
+    // Conectores discursivos (filler de áudio)
+    " tipo ", " sabe ", " tipo assim ", " ne ", " né ",
   ];
 
   for (const re of patterns) {
@@ -135,11 +147,27 @@ export function parseItems(text: string): string[] {
   // o "Sim" não é item.
   chunk = chunk.replace(/^(sim|claro|ok|certo|beleza|isso|isso ai|isso aí|aham|uhum|tambem|também|tb|tbm)[,\s]+/i, "");
 
+  // Strip lista numerada/bullet inicial em cada item depois do split:
+  // "1) arroz, 2) feijão" / "- arroz - feijão" / "• X • Y"
+  // O regex de split já lida com vírgula/quebra de linha. Numeração e bullets
+  // são removidos depois, no .map.
+
   // Quebra por separadores: vírgula, ; , quebras de linha, " e " (último), " ou "
+  // Também split em bullets/numeração no início de "linha" virtual:
+  // "- arroz - feijão" → split em " - "
+  // "1) arroz 2) feijão" / "1. arroz 2. feijão" → split em "N)" ou "N."
   // Cuidado com "e" — só split em " e " quando claramente separa itens.
   const parts = chunk
-    .split(/\s*(?:,|;|\n|\r|\s+e\s+(?=[a-zA-ZÀ-ÿ])|\s+ou\s+(?=[a-zA-ZÀ-ÿ]))\s*/)
-    .map((p) => p.trim())
+    .split(/\s*(?:,|;|\n|\r|\s+e\s+(?=[a-zA-ZÀ-ÿ])|\s+ou\s+(?=[a-zA-ZÀ-ÿ])|\s+-\s+|\s+\*\s+|\s+•\s+|\s*\d+[.)]\s+)\s*/)
+    .map((p) =>
+      p
+        .trim()
+        // Tira bullet/número residual no início de cada item
+        .replace(/^([-*•]|\d+[.)])\s*/, "")
+        // Tira "primeiro/segundo/terceiro" iniciais (numeração verbal)
+        .replace(/^(primeiro|segundo|terceiro|quarto|quinto|por\s+último)[,\s]+/i, "")
+        .trim()
+    )
     .filter((p) => p.length > 0 && p.length <= 200);
 
   // Remove duplicatas case-insensitive preservando ordem
@@ -229,6 +257,47 @@ async function findList(
   return null;
 }
 
+/**
+ * Busca os nomes das listas ATIVAS do user (pra passar como contexto pra IA).
+ * Limit 30 — quem tem mais que isso é caso raro, e mais que 30 nomes deixa
+ * o prompt grande demais.
+ */
+async function getKnownListNames(supabase: SupabaseClient, userId: string): Promise<string[]> {
+  const { data } = await (supabase as any)
+    .from("lists")
+    .select("name")
+    .eq("user_id", userId)
+    .is("archived_at", null)
+    .order("updated_at", { ascending: false })
+    .limit(30);
+  return ((data as Array<{ name: string }>) ?? []).map((r) => r.name);
+}
+
+/**
+ * Extrai {list_name, items} usando IA primeiro, fallback regex se falhar.
+ * Retorno garantido: nunca lança, sempre devolve o melhor parse possível.
+ */
+async function smartParse(
+  text: string,
+  knownLists: string[]
+): Promise<{ list_name: string | null; items: string[] }> {
+  // Tenta IA — Claude Haiku, ~1-2s, ~$0.0001
+  try {
+    const ai = await extractListIntent(text, knownLists);
+    // Se a IA retornou pelo menos UM dos campos com valor útil, confia nela
+    if (ai.list_name || ai.items.length > 0) {
+      return ai;
+    }
+  } catch (e) {
+    console.warn("[listsHandler] AI extraction failed, falling back to regex:", (e as Error).message?.slice(0, 100));
+  }
+
+  // Fallback regex
+  const fallbackName = parseListName(text);
+  const fallbackItems = parseItems(text);
+  return { list_name: fallbackName, items: fallbackItems };
+}
+
 // ─────────────────────────────────────────────────────────────
 // Handlers
 // ─────────────────────────────────────────────────────────────
@@ -238,7 +307,11 @@ export async function handleListCreate(
   userId: string,
   text: string
 ): Promise<ListHandlerResult> {
-  const name = parseListName(text);
+  // Parse via IA (cobre fala natural) + fallback regex
+  const known = await getKnownListNames(supabase, userId);
+  const parsed = await smartParse(text, known);
+  const name = parsed.list_name;
+
   if (!name) {
     return {
       response: "📝 Como você quer chamar a lista? Ex: _\"cria lista de compras\"_ ou _\"nova lista chamada presentes natal\"_",
@@ -283,38 +356,39 @@ export async function handleListCreate(
 
   // ─── Detecta itens na MESMA mensagem ─────────────────────────────────
   // Ex: "cria lista de mercado e adiciona arroz, feijão, açúcar"
-  // Pega o trecho APÓS o nome da lista e parseia itens dali. Se tiver
-  // itens, insere de uma vez (UX: 1 mensagem ao invés de 2 idas e voltas).
-  const lowerText = text.toLowerCase();
-  const nameIdx = lowerText.indexOf(name);
-  const tailRaw = nameIdx >= 0 ? text.slice(nameIdx + name.length) : "";
-
-  // Só tenta parsear se tem indício de comando de adição no tail
-  const hasAddIntent = /\b(adiciona|adicionar|acrescenta|acrescentar|coloca|colocar|bota|botar|inclui|incluir|com\s+|\be\s+(arroz|feij|carne|leite|pao|pão|aç[uú]car|cafe|café|frut|legum|verdur|massa|pasta|sabao|sabão|detergent|papel))/i.test(tailRaw);
-
-  if (hasAddIntent) {
-    const items = parseItems(tailRaw);
-    if (items.length > 0) {
-      const rows = items.map((content, idx) => ({
-        list_id: (created as any).id,
-        content,
-        position: idx,
-        source: "whatsapp",
-      }));
-      const { error: itemsErr } = await (supabase as any).from("list_items").insert(rows);
-      if (!itemsErr) {
-        const itemsLine = items.map((i) => `• ${i}`).join("\n");
-        return {
-          response:
-            `✅ Lista *${(created as any).name}* criada com ${items.length} item${items.length === 1 ? "" : "s"}:\n${itemsLine}\n\n` +
-            `_Pra adicionar mais: "adiciona X, Y na lista de ${(created as any).name}"_`,
-          pendingAction: null,
-          pendingContext: null,
-        };
-      }
-      // Se falhou inserir itens, ainda confirma criação da lista (não perde o resultado)
-      console.error("[lists] handleListCreate combo-insert error:", itemsErr);
+  // A IA já extraiu os itens em parsed.items se eles vieram juntos. Se a IA
+  // não pegou (ou cuiu no fallback regex), usa parseItems no tail como reserva.
+  let items = parsed.items;
+  if (items.length === 0) {
+    const lowerText = text.toLowerCase();
+    const nameIdx = lowerText.indexOf(name);
+    const tailRaw = nameIdx >= 0 ? text.slice(nameIdx + name.length) : "";
+    const hasAddIntent = /\b(adiciona|adicionar|acrescenta|acrescentar|coloca|colocar|bota|botar|inclui|incluir|com\s+)/i.test(tailRaw);
+    if (hasAddIntent) {
+      items = parseItems(tailRaw);
     }
+  }
+
+  if (items.length > 0) {
+    const rows = items.map((content, idx) => ({
+      list_id: (created as any).id,
+      content,
+      position: idx,
+      source: "whatsapp",
+    }));
+    const { error: itemsErr } = await (supabase as any).from("list_items").insert(rows);
+    if (!itemsErr) {
+      const itemsLine = items.map((i) => `• ${i}`).join("\n");
+      return {
+        response:
+          `✅ Lista *${(created as any).name}* criada com ${items.length} item${items.length === 1 ? "" : "s"}:\n${itemsLine}\n\n` +
+          `_Pra adicionar mais: "adiciona X, Y na lista de ${(created as any).name}"_`,
+        pendingAction: null,
+        pendingContext: null,
+      };
+    }
+    // Se falhou inserir itens, ainda confirma criação da lista (não perde o resultado)
+    console.error("[lists] handleListCreate combo-insert error:", itemsErr);
   }
 
   return {
@@ -344,18 +418,21 @@ export async function handleListAddItems(
     if (data) list = data as ListRow;
   }
 
+  // Parse via IA — extrai nome (se citado) + itens. Listas conhecidas ajudam
+  // a IA a mapear referências vagas tipo "minha lista" pro nome real.
+  const known = await getKnownListNames(supabase, userId);
+  const parsed = await smartParse(text, known);
+
   if (!list) {
-    const name = parseListName(text);
-    list = await findList(supabase, userId, name);
+    list = await findList(supabase, userId, parsed.list_name);
   }
 
   if (!list) {
-    const name = parseListName(text);
-    if (name) {
+    if (parsed.list_name) {
       return {
         response:
-          `🤔 Não achei a lista *${name}*. Quer que eu crie ela?\n` +
-          `Manda: _"cria lista de ${name}"_`,
+          `🤔 Não achei a lista *${parsed.list_name}*. Quer que eu crie ela?\n` +
+          `Manda: _"cria lista de ${parsed.list_name}"_`,
       };
     }
     return {
@@ -365,7 +442,7 @@ export async function handleListAddItems(
     };
   }
 
-  const items = parseItems(text);
+  const items = parsed.items;
   if (items.length === 0) {
     return {
       response: `✏️ Quais itens? Manda separado por vírgula:\n_"adiciona arroz, feijão, óleo na lista de ${list.name}"_`,
@@ -417,12 +494,13 @@ export async function handleListShow(
   userId: string,
   text: string
 ): Promise<ListHandlerResult> {
-  const name = parseListName(text);
-  const list = await findList(supabase, userId, name);
+  const known = await getKnownListNames(supabase, userId);
+  const parsed = await smartParse(text, known);
+  const list = await findList(supabase, userId, parsed.list_name);
 
   if (!list) {
-    if (name) {
-      return { response: `🤔 Não achei a lista *${name}*. Quer criar? _"cria lista de ${name}"_` };
+    if (parsed.list_name) {
+      return { response: `🤔 Não achei a lista *${parsed.list_name}*. Quer criar? _"cria lista de ${parsed.list_name}"_` };
     }
     // Sem nome + várias listas → mostra todas pro user escolher
     return await handleListShowAll(supabase, userId);
@@ -517,19 +595,22 @@ export async function handleListCompleteItem(
   userId: string,
   text: string
 ): Promise<ListHandlerResult> {
-  const itemText = parseSingleItem(text);
+  // Parse via IA — extrai item-alvo (em items[0]) + nome da lista
+  const known = await getKnownListNames(supabase, userId);
+  const parsed = await smartParse(text, known);
+  const itemText = parsed.items[0] ?? parseSingleItem(text);
+
   if (!itemText) {
     return {
       response: "🤔 Qual item? Manda: _\"marca arroz como comprado na lista de compras\"_",
     };
   }
 
-  const name = parseListName(text);
-  const list = await findList(supabase, userId, name);
+  const list = await findList(supabase, userId, parsed.list_name);
   if (!list) {
     return {
-      response: name
-        ? `🤔 Não achei a lista *${name}*.`
+      response: parsed.list_name
+        ? `🤔 Não achei a lista *${parsed.list_name}*.`
         : "🤔 Em qual lista? Manda o nome: _\"comprei arroz na lista de compras\"_",
     };
   }
@@ -577,19 +658,21 @@ export async function handleListRemoveItem(
   userId: string,
   text: string
 ): Promise<ListHandlerResult> {
-  const itemText = parseSingleItem(text);
+  const known = await getKnownListNames(supabase, userId);
+  const parsed = await smartParse(text, known);
+  const itemText = parsed.items[0] ?? parseSingleItem(text);
+
   if (!itemText) {
     return {
       response: "🤔 Qual item tirar? Manda: _\"tira arroz da lista de compras\"_",
     };
   }
 
-  const name = parseListName(text);
-  const list = await findList(supabase, userId, name);
+  const list = await findList(supabase, userId, parsed.list_name);
   if (!list) {
     return {
-      response: name
-        ? `🤔 Não achei a lista *${name}*.`
+      response: parsed.list_name
+        ? `🤔 Não achei a lista *${parsed.list_name}*.`
         : "🤔 De qual lista? Manda o nome: _\"tira arroz da lista de compras\"_",
     };
   }
@@ -624,12 +707,14 @@ export async function handleListDelete(
   userId: string,
   text: string
 ): Promise<ListHandlerResult> {
-  const name = parseListName(text);
-  const list = await findList(supabase, userId, name);
+  const known = await getKnownListNames(supabase, userId);
+  const parsed = await smartParse(text, known);
+  const list = await findList(supabase, userId, parsed.list_name);
+
   if (!list) {
     return {
-      response: name
-        ? `🤔 Não achei a lista *${name}*.`
+      response: parsed.list_name
+        ? `🤔 Não achei a lista *${parsed.list_name}*.`
         : "🤔 Qual lista deletar? Manda: _\"apaga minha lista de compras\"_",
     };
   }
