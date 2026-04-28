@@ -113,6 +113,57 @@ const supabase = createClient(
 );
 
 // ─────────────────────────────────────────────
+// Helpers para filtro de target_days do hábito
+// (suporta "Desativar finais de semana": target_days = [1,2,3,4,5])
+// ─────────────────────────────────────────────
+
+/** Parse robusto do JSON target_days vindo do banco. Retorna array de 0-6. */
+function parseTargetDays(raw: unknown): number[] {
+  if (raw == null) return [];
+  let arr: unknown = raw;
+  if (typeof raw === "string") {
+    try { arr = JSON.parse(raw); } catch { return []; }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((x) => Number(x))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+}
+
+/** Calcula dia da semana (0=dom, 6=sáb) considerando o timezone do usuário. */
+function dayOfWeekInTz(date: Date, tz: string): number {
+  try {
+    const wd = date.toLocaleDateString("en-US", { timeZone: tz, weekday: "short" });
+    const map: Record<string, number> = {
+      Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    };
+    const v = map[wd];
+    return Number.isInteger(v) ? v : date.getUTCDay();
+  } catch {
+    return date.getUTCDay();
+  }
+}
+
+/** Cache em memória do timezone do usuário (válido durante a execução do cron). */
+const _tzCache = new Map<string, string>();
+async function getUserTz(userId: string): Promise<string> {
+  const cached = _tzCache.get(userId);
+  if (cached) return cached;
+  try {
+    const { data } = await supabase
+      .from("profiles")
+      .select("timezone")
+      .eq("id", userId)
+      .maybeSingle();
+    const tz = ((data as Record<string, unknown> | null)?.timezone as string) || "America/Sao_Paulo";
+    _tzCache.set(userId, tz);
+    return tz;
+  } catch {
+    return "America/Sao_Paulo";
+  }
+}
+
+// ─────────────────────────────────────────────
 // Calcula a próxima data de um lembrete recorrente
 // ─────────────────────────────────────────────
 function nextOccurrence(
@@ -214,7 +265,7 @@ serve(async (_req) => {
       if (reminder.habit_id) {
         const { data: habit } = await supabase
           .from("habits" as any)
-          .select("id, is_active")
+          .select("id, is_active, target_days")
           .eq("id", reminder.habit_id)
           .maybeSingle();
         if (!habit || !(habit as any).is_active) {
@@ -224,6 +275,55 @@ serve(async (_req) => {
             .update({ status: "cancelled" })
             .eq("id", reminder.id);
           continue;
+        }
+
+        // ─── Filtro target_days (ex: "Desativar finais de semana" = [1..5]) ───
+        // Se o hábito define dias específicos e HOJE não está na lista, pula
+        // o envio e reagenda pra próxima ocorrência num dia válido.
+        const targetDays = parseTargetDays((habit as any).target_days);
+        if (targetDays.length > 0 && targetDays.length < 7) {
+          const userTz = reminder.user_id ? await getUserTz(reminder.user_id) : "America/Sao_Paulo";
+          const todayDow = dayOfWeekInTz(now, userTz);
+          if (!targetDays.includes(todayDow)) {
+            console.log(
+              `[skip-day] habit=${reminder.habit_id} reminder=${reminder.id} dow=${todayDow} target=${JSON.stringify(targetDays)} tz=${userTz}`
+            );
+
+            // Cria próxima ocorrência num dia válido (max 8 iterações pra cobrir 1 semana inteira)
+            if (reminder.recurrence && reminder.recurrence !== "none") {
+              const sendAt = new Date(reminder.send_at);
+              let next: Date | null = nextOccurrence(sendAt, reminder.recurrence, reminder.recurrence_value ?? null);
+              let iter = 0;
+              while (next && !targetDays.includes(dayOfWeekInTz(next, userTz)) && iter < 8) {
+                next = nextOccurrence(next, reminder.recurrence, reminder.recurrence_value ?? null);
+                iter++;
+              }
+              if (next) {
+                const { error: nextErr } = await supabase.from("reminders").insert({
+                  user_id:          reminder.user_id,
+                  whatsapp_number:  reminder.whatsapp_number,
+                  title:            reminder.title,
+                  message:          reminder.message,
+                  send_at:          next.toISOString(),
+                  recurrence:       reminder.recurrence,
+                  recurrence_value: reminder.recurrence_value,
+                  source:           reminder.source ?? "habit",
+                  status:           "pending",
+                  habit_id:         reminder.habit_id ?? null,
+                } as any);
+                if (nextErr && nextErr.code !== "23505") {
+                  console.error(`[skip-day] failed to schedule next for ${reminder.id}:`, nextErr.message);
+                }
+              }
+            }
+
+            // Marca atual como sent (skip silencioso, sem erro)
+            await supabase
+              .from("reminders")
+              .update({ status: "sent", sent_at: now.toISOString() })
+              .eq("id", reminder.id);
+            continue;
+          }
         }
       }
 

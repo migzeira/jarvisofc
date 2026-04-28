@@ -275,6 +275,72 @@ function nextDailyUTC(localTimeHHMM: string): string {
   return new Date(candidateMs).toISOString();
 }
 
+// ─────────────────────────────────────────────
+// Helpers para "Desativar finais de semana"
+// ─────────────────────────────────────────────
+
+/** Parse robusto do JSON target_days vindo do banco. Retorna array de 0-6. */
+function parseTargetDays(raw: unknown): number[] {
+  if (raw == null) return [];
+  let arr: unknown = raw;
+  if (typeof raw === "string") {
+    try { arr = JSON.parse(raw); } catch { return []; }
+  }
+  if (!Array.isArray(arr)) return [];
+  return (arr as unknown[])
+    .map((x) => Number(x))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+}
+
+/** True se o hábito está com fim de semana desativado (target_days = [1,2,3,4,5]) */
+function isWeekendDisabled(targetDaysRaw: unknown): boolean {
+  const days = parseTargetDays(targetDaysRaw);
+  if (days.length !== 5) return false;
+  const set = new Set(days);
+  return [1, 2, 3, 4, 5].every((d) => set.has(d));
+}
+
+/**
+ * Próxima ocorrência diária em UTC, pulando dias fora de targetDays.
+ * Considera horário Brasil (UTC-3, mesmo padrão de nextDailyUTC).
+ */
+function nextValidDailyUTC(localTimeHHMM: string, targetDays: number[]): string {
+  const [lh, lm] = localTimeHHMM.split(":").map(Number);
+  const nowMs = Date.now();
+
+  // Default seguro: se targetDays vazio, usa todos os dias (= nextDailyUTC normal)
+  const validDays = targetDays.length === 0 ? [0, 1, 2, 3, 4, 5, 6] : targetDays;
+
+  // Iterar até 8 dias pra cobrir 1 semana inteira
+  for (let i = 0; i < 8; i++) {
+    const brBase = new Date(nowMs - 3 * 3_600_000);
+    const brYear = brBase.getUTCFullYear();
+    const brMonth = brBase.getUTCMonth();
+    const brDay = brBase.getUTCDate() + i;
+
+    let utcH = lh + 3;
+    let dayAdd = 0;
+    if (utcH >= 24) { utcH -= 24; dayAdd = 1; }
+
+    const candidateMs = Date.UTC(brYear, brMonth, brDay + dayAdd, utcH, lm, 0);
+    const candidate = new Date(candidateMs);
+
+    // Pra i=0 (hoje), precisa que ainda não tenha passado (grace 60s)
+    if (i === 0 && candidateMs < nowMs - 60_000) continue;
+
+    // Dia da semana no horário Brasil
+    const brCandidate = new Date(candidateMs - 3 * 3_600_000);
+    const dow = brCandidate.getUTCDay();
+
+    if (validDays.includes(dow)) {
+      return candidate.toISOString();
+    }
+  }
+
+  // Fallback (não deveria chegar aqui): retorna nextDailyUTC normal
+  return nextDailyUTC(localTimeHHMM);
+}
+
 /** Next UTC occurrence of a specific weekday + local time (weekly) */
 function nextWeeklyUTC(localTimeHHMM: string, targetDayOfWeek: number): string {
   const [lh, lm] = localTimeHHMM.split(":").map(Number);
@@ -768,6 +834,55 @@ export default function Habitos() {
     }
   };
 
+  /**
+   * Liga/desliga "Desativar finais de semana" pra um hábito.
+   * - disable=true  → target_days = [1,2,3,4,5] (Seg-Sex)
+   * - disable=false → target_days = [0,1,2,3,4,5,6] (todos os dias)
+   *
+   * Também limpa reminders pendentes do hábito e recria nas próximas
+   * datas válidas, garantindo que sábado/domingo não dispare.
+   */
+  const toggleWeekendDisabled = async (h: Habit, disable: boolean) => {
+    const newTargetDays = disable ? [1, 2, 3, 4, 5] : [0, 1, 2, 3, 4, 5, 6];
+    try {
+      // 1. Atualiza target_days no hábito
+      await (supabase.from("habits" as any).update({ target_days: newTargetDays } as any).eq("id", h.id) as any);
+
+      // 2. Limpa reminders pendentes do hábito
+      await (supabase.from("reminders" as any) as any)
+        .delete()
+        .eq("habit_id", h.id)
+        .eq("status", "pending");
+
+      // 3. Recria reminders apenas se hábito está ativo + tem telefone
+      if (h.is_active && userPhone) {
+        const times: string[] = Array.isArray(h.reminder_times)
+          ? (h.reminder_times as string[])
+          : h.reminder_times ? JSON.parse(h.reminder_times as string) : [];
+        const newReminders = times.map((t) => ({
+          user_id: user!.id,
+          habit_id: h.id,
+          whatsapp_number: userPhone,
+          title: h.name,
+          message: `⏰ Hora do seu hábito: *${h.name}*`,
+          send_at: nextValidDailyUTC(t, newTargetDays),
+          recurrence: "daily",
+          source: "habit",
+          status: "pending",
+        }));
+        if (newReminders.length > 0) {
+          await (supabase.from("reminders" as any).insert(newReminders as any) as any);
+        }
+      }
+
+      toast.success(disable ? "Hábito desativado nos finais de semana." : "Hábito reativado todos os dias.");
+      loadData();
+    } catch (err) {
+      console.error("[toggleWeekend] erro:", err);
+      toast.error("Erro ao atualizar hábito.");
+    }
+  };
+
   const openEditCustom = (h: Habit) => {
     setEditingCustom(h);
     const times = Array.isArray(h.reminder_times) ? h.reminder_times : JSON.parse(h.reminder_times as string);
@@ -887,6 +1002,19 @@ export default function Habitos() {
                     ) : (
                       <p className="text-[10px] text-muted-foreground">Aguardando lembrete 🔔</p>
                     )}
+
+                    {/* Toggle: desativar finais de semana */}
+                    <label
+                      className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-black/5 cursor-pointer text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                      title="Quando ativado, o hábito não dispara sábado nem domingo"
+                    >
+                      <span className="leading-tight">Desativar finais de semana</span>
+                      <Switch
+                        checked={isWeekendDisabled(activeHabit.target_days)}
+                        onCheckedChange={(v) => toggleWeekendDisabled(activeHabit, v)}
+                        className="scale-[0.65] origin-right"
+                      />
+                    </label>
                   </div>
                 )}
               </div>
@@ -995,6 +1123,19 @@ export default function Habitos() {
                       ) : (
                         <p className="text-[10px] text-muted-foreground">Aguardando lembrete 🔔</p>
                       )}
+
+                      {/* Toggle: desativar finais de semana */}
+                      <label
+                        className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-black/5 cursor-pointer text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                        title="Quando ativado, o hábito não dispara sábado nem domingo"
+                      >
+                        <span className="leading-tight">Desativar finais de semana</span>
+                        <Switch
+                          checked={isWeekendDisabled(h.target_days)}
+                          onCheckedChange={(v) => toggleWeekendDisabled(h, v)}
+                          className="scale-[0.65] origin-right"
+                        />
+                      </label>
                     </div>
                   )}
                 </div>
