@@ -26,7 +26,9 @@ function getCorsHeaders(req: Request) {
   const origin = req.headers.get("Origin") ?? "*";
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Headers": "authorization, content-type",
+    // apikey + x-client-info são enviados automaticamente pelo supabase-js client.
+    // Sem isso o preflight OPTIONS falha e o browser bloqueia a requisição real.
+    "Access-Control-Allow-Headers": "authorization, content-type, apikey, x-client-info",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };
 }
