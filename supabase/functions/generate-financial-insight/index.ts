@@ -217,49 +217,65 @@ function buildFallbackText(s: FinancialSnapshot, userName: string | null): strin
 }
 
 async function generateAIInsight(s: FinancialSnapshot, userName: string | null): Promise<string> {
-  // Monta prompt rico com snapshot
+  // Decide explicitamente se deve comparar com mês anterior
+  const hasPrevMonthData = s.txCountLastMonth >= 3 && (s.totalIncomeLastMonth > 0 || s.totalExpenseLastMonth > 0);
+
+  // Monta prompt com flags explícitas pra IA não inventar
   const lines: string[] = [];
-  lines.push(`Mês corrente — saldo: ${fmtBRL(s.balance)} (entrou ${fmtBRL(s.totalIncome)}, saiu ${fmtBRL(s.totalExpense)})`);
-  if (s.balanceLastMonth !== 0 || s.txCountLastMonth > 0) {
-    const delta = s.balance - s.balanceLastMonth;
-    const pct = s.balanceLastMonth !== 0 ? Math.round((delta / Math.abs(s.balanceLastMonth)) * 100) : null;
-    lines.push(`Mês anterior — saldo: ${fmtBRL(s.balanceLastMonth)}${pct !== null ? ` (mês corrente está ${pct >= 0 ? "+" : ""}${pct}% vs anterior)` : ""}`);
+  lines.push(`Saldo do mês corrente: ${fmtBRL(s.balance)} ${s.balance >= 0 ? "(positivo)" : "(negativo)"}`);
+  lines.push(`Receitas do mês: ${fmtBRL(s.totalIncome)}`);
+  lines.push(`Gastos do mês: ${fmtBRL(s.totalExpense)}`);
+  lines.push(`Total de transações no mês: ${s.txCount}`);
+
+  if (hasPrevMonthData) {
+    lines.push(`--- Mês anterior (DADOS DISPONÍVEIS) ---`);
+    lines.push(`Saldo do mês anterior: ${fmtBRL(s.balanceLastMonth)}`);
+    lines.push(`Receitas do mês anterior: ${fmtBRL(s.totalIncomeLastMonth)}`);
+    lines.push(`Gastos do mês anterior: ${fmtBRL(s.totalExpenseLastMonth)}`);
+    lines.push(`Total de transações no mês anterior: ${s.txCountLastMonth}`);
+  } else {
+    lines.push(`--- Mês anterior: SEM DADOS SUFICIENTES (${s.txCountLastMonth} transações). NÃO COMPARE. ---`);
   }
+
   if (s.topCategories.length > 0) {
-    lines.push(`Top gastos: ${s.topCategories.map((c) => `${c.category} ${fmtBRL(c.amount)}`).join(", ")}`);
+    lines.push(`Top categorias de GASTO: ${s.topCategories.map((c) => `${c.category} (${fmtBRL(c.amount)})`).join(", ")}`);
   }
-  if (s.categoryDelta.length > 0) {
+  if (s.categoryDelta.length > 0 && hasPrevMonthData) {
     const movers = s.categoryDelta
-      .filter((d) => d.deltaPct !== null)
+      .filter((d) => d.deltaPct !== null && d.lastMonth >= 50)
       .slice(0, 2)
-      .map((d) => `${d.category} ${(d.deltaPct! >= 0 ? "+" : "")}${d.deltaPct}% vs mês anterior`);
-    if (movers.length > 0) lines.push(`Variações: ${movers.join(", ")}`);
+      .map((d) => `${d.category}: ${fmtBRL(d.thisMonth)} agora vs ${fmtBRL(d.lastMonth)} mês anterior (${(d.deltaPct! >= 0 ? "+" : "")}${d.deltaPct}%)`);
+    if (movers.length > 0) lines.push(`Variações por categoria: ${movers.join(" | ")}`);
   }
   if (s.budgetWarnings.length > 0) {
     const w = s.budgetWarnings[0];
-    lines.push(`Alerta orçamento: ${w.category} usou ${w.usedPct}% do limite (${fmtBRL(w.spent)} de ${fmtBRL(w.limit)})`);
+    lines.push(`Alerta orçamento: ${w.category} já usou ${w.usedPct}% do limite (${fmtBRL(w.spent)} de ${fmtBRL(w.limit)})`);
   }
-  lines.push(`Projeção fim do mês: ${fmtBRL(s.projectedBalance)} (dia ${s.daysIntoMonth} de ${s.daysInMonth})`);
+  lines.push(`Projeção fim do mês (extrapolando ritmo atual): saldo ~${fmtBRL(s.projectedBalance)} (estamos no dia ${s.daysIntoMonth} de ${s.daysInMonth})`);
 
   const dataBlock = lines.map((l) => `- ${l}`).join("\n");
 
-  const system = `Você é o Jarvis, assistente financeiro pessoal brasileiro. Gere um resumo curto e útil em português.
+  const system = `Você é o Jarvis, assistente financeiro pessoal brasileiro. Gere um resumo curto e factual em português.
 
-REGRAS RÍGIDAS:
+REGRAS CRÍTICAS — NUNCA QUEBRAR:
+1. SOMENTE use os dados fornecidos abaixo. NUNCA invente, suponha ou estime números que não estão nos dados.
+2. Se o input diz "SEM DADOS SUFICIENTES" pro mês anterior, NÃO faça comparação. NUNCA diga "redução vs mês anterior" / "aumentou vs mês anterior" / "melhor que mês passado". Simplesmente NÃO mencione mês anterior.
+3. NÃO confunda saldo (entradas - gastos) com gastos. Saldo positivo é DINHEIRO QUE SOBROU, não gasto.
+4. Se saldo é positivo, NUNCA diga "redução" ou "queda" — é dinheiro sobrando, não dinheiro perdido.
+
+REGRAS DE FORMATO:
 - 2 a 3 frases, MÁXIMO 280 caracteres no total.
-- Tom sóbrio e profissional, NÃO empolgado, NÃO use emojis exagerados (no máximo 1 emoji discreto se fizer sentido, tipo 📈 ou 📉).
-- NÃO comece com saudação ("Olá", "Oi", etc) — vá direto ao ponto.
-- Frase 1: status do saldo do mês (positivo/negativo, comparação com mês anterior se houver).
-- Frase 2: 1 insight relevante (categoria que mais subiu/desceu OU alerta de orçamento, se houver).
-- Frase 3 (opcional): projeção de fechamento OU recomendação prática curta.
-- NÃO invente dados que não estão no input.
-- Use formato R$ X.XXX,XX pra valores (ponto pra milhar, vírgula pra decimal).`;
+- Tom sóbrio e profissional, sem empolgação. No máximo 1 emoji discreto (📈 📉 ou nenhum).
+- NÃO comece com saudação. Vá direto ao ponto.
+- Frase 1: status atual do saldo do mês (com valor exato).
+- Frase 2: 1 insight relevante baseado nos dados (top categoria de gasto, OU alerta de orçamento se existir, OU variação de categoria SE houver dados do mês anterior).
+- Frase 3 (opcional): projeção de fechamento ou recomendação prática.
+- Use formato R$ X.XXX,XX (ponto pra milhar, vírgula pra decimal).`;
 
-  const user = `${userName ? `Usuário: ${userName}\n\n` : ""}DADOS:\n${dataBlock}\n\nGere o resumo agora.`;
+  const user = `${userName ? `Usuário: ${userName}\n\n` : ""}DADOS REAIS DO USUÁRIO:\n${dataBlock}\n\nGere o resumo APENAS com base nesses dados. Se não há dados do mês anterior, NÃO compare.`;
 
   const messages: ChatMessage[] = [{ role: "user", content: user }];
   const text = await chatWithProvider(messages, system, false, "generate-financial-insight");
-  // Trim e enforce max 320 chars (margem de 40 chars sobre 280 pedido)
   return text.trim().slice(0, 320);
 }
 

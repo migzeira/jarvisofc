@@ -2,9 +2,10 @@ import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sparkles, RefreshCw, Loader2 } from "lucide-react";
+import { RefreshCw, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import logoIcon from "@/assets/logo_icon.webp";
 
 interface InsightResponse {
   insight: string;
@@ -78,8 +79,13 @@ export function FinancialInsightCard() {
     <Card className="bg-gradient-to-br from-violet-500/10 via-card to-card border-violet-500/20">
       <CardContent className="pt-5 pb-4">
         <div className="flex items-start gap-3">
-          <div className="h-9 w-9 rounded-lg bg-violet-500/15 flex items-center justify-center flex-shrink-0">
-            <Sparkles className="h-5 w-5 text-violet-400" />
+          <div className="h-9 w-9 rounded-lg bg-violet-500/15 flex items-center justify-center flex-shrink-0 overflow-hidden">
+            <img
+              src={logoIcon}
+              alt="Jarvis"
+              className="h-7 w-7 object-contain"
+              loading="lazy"
+            />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2 mb-1.5">
