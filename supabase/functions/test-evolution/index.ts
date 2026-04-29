@@ -35,26 +35,72 @@ serve(async (req) => {
     const webhook = await webhookRes.json();
 
     // TEST_SEND: envia uma msg de teste e retorna o response CRU do Evolution.
-    // Uso: ?test_send=5511999999999 → envia "Teste" pra esse número.
-    // Crítico pra debugar de onde extrair o messageId no response.
+    // Uso:
+    //   ?test_send=5511999999999          → envia direto (sem warm-up)
+    //   ?test_send=5511999999999&warmup=1 → envia COM warm-up (typing + 700ms)
+    //                                        igual o daily-briefing faz
     const url4 = new URL(req.url);
     const testSendNumber = url4.searchParams.get("test_send");
+    const useWarmup = url4.searchParams.get("warmup") === "1";
     if (testSendNumber) {
+      const cleanNumber = testSendNumber.replace(/\D/g, "");
+      const flow: Array<Record<string, unknown>> = [];
+
+      // Warm-up opcional: presence "composing" + 700ms wait (mesmo do daily-briefing)
+      // Evolution v2 exige envelope "options" no payload.
+      if (useWarmup) {
+        const presStart = Date.now();
+        const presRes = await fetch(`${EVOLUTION_URL}/chat/sendPresence/${INSTANCE}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            number: cleanNumber,
+            options: {
+              presence: "composing",
+              delay: 1500,
+            },
+          }),
+        });
+        const presText = await presRes.text();
+        let presParsed: unknown = presText;
+        try { presParsed = JSON.parse(presText); } catch {}
+        flow.push({
+          step: "warmup_presence",
+          elapsed_ms: Date.now() - presStart,
+          http_status: presRes.status,
+          response: presParsed,
+        });
+        const waitStart = Date.now();
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        flow.push({ step: "wait_700ms", elapsed_ms: Date.now() - waitStart });
+      }
+
+      const sendStart = Date.now();
       const sendRes = await fetch(`${EVOLUTION_URL}/message/sendText/${INSTANCE}`, {
         method: "POST",
         headers,
         body: JSON.stringify({
-          number: testSendNumber.replace(/\D/g, ""),
-          textMessage: { text: "🧪 Teste de diagnóstico do Jarvis (responda qualquer coisa)" },
+          number: cleanNumber,
+          textMessage: {
+            text: useWarmup
+              ? "🧪 Teste COM warm-up (typing). Resp se chegou com texto."
+              : "🧪 Teste SEM warm-up (direto). Resp se chegou com texto.",
+          },
         }),
       });
       const respText = await sendRes.text();
       let parsed: unknown = respText;
       try { parsed = JSON.parse(respText); } catch { /* não é JSON */ }
-      return new Response(JSON.stringify({
+      flow.push({
+        step: "send_text",
+        elapsed_ms: Date.now() - sendStart,
         http_status: sendRes.status,
+      });
+
+      return new Response(JSON.stringify({
+        used_warmup: useWarmup,
+        flow,
         response_body: parsed,
-        // Tentativas de extrair messageId em vários paths
         extracted_id_attempts: tryExtractIds(parsed),
       }, null, 2), { headers: { "Content-Type": "application/json" } });
     }

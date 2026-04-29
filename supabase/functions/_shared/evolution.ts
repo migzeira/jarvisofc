@@ -138,10 +138,15 @@ export async function sendPresence(
     number = normalizePhone(to);
   }
 
+  // Evolution v2 exige payload envelopado em "options" — sem isso retorna 400
+  // ("instance requires property options"). Sem options, o warm-up falhava
+  // silenciosamente por meses sem ninguém perceber.
   await evolutionPost(`/chat/sendPresence/${INSTANCE}`, {
     number,
-    presence,
-    delay: delayMs,
+    options: {
+      presence,
+      delay: delayMs,
+    },
   });
 }
 
@@ -187,12 +192,16 @@ export async function sendText(
   // antes do envio real. Resolve o problema de "mensagem em branco" quando o
   // destino está offline há horas/dias (cipher key dessincronizada). Custa
   // ~800ms — só vale pra envios agendados, não pra resposta de chat ao vivo.
+  // ATENÇÃO: Evolution v2 exige payload envelopado em "options" senão
+  // retorna 400 ("instance requires property options").
   if (options.warmUp) {
     try {
       await evolutionPost(`/chat/sendPresence/${INSTANCE}`, {
         number,
-        presence: "composing",
-        delay: 1500,
+        options: {
+          presence: "composing",
+          delay: 1500,
+        },
       });
       await new Promise((resolve) => setTimeout(resolve, 700));
     } catch (warmErr) {
