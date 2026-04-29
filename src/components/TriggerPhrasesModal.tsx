@@ -106,8 +106,17 @@ const SLIDES = [
           '"Muda a reunião de sexta pra segunda às 9h"',
           '"Adiciona lembrete 30 min antes da reunião"',
         ]} />
+        <p className="text-sm text-muted-foreground font-medium mt-3">Pra responder o follow-up <span className="text-muted-foreground/70">("X aconteceu?")</span>:</p>
+        <ExampleList examples={[
+          '✅ "Sim" • "Fui" • "Foi" • "Deu certo"',
+          '✅ "Tranquilo" • "Suave" • "Tudo certo"',
+          '✅ "Já fiz" • "Maravilha" • "Top" • 👍',
+          '❌ "Não fui" • "Faltei" • "Esqueci"',
+          '❌ "Vou remarcar" • "Preciso reagendar"',
+          '❌ "Cancelaram" • "Foi cancelada"',
+        ]} />
         <Tip>
-          O Jarvis avisa quando há <strong className="text-foreground">conflito de horário</strong> e pergunta como resolver.
+          O Jarvis avisa quando há <strong className="text-foreground">conflito de horário</strong> e pergunta como resolver. Após o evento, ele pergunta se aconteceu — sua resposta dá baixa automaticamente no dashboard.
         </Tip>
       </div>
     ),
@@ -169,7 +178,54 @@ const SLIDES = [
     ),
   },
 
-  // ── 5. Hábitos ──────────────────────────────
+  // ── 5. Listas ───────────────────────────────
+  {
+    emoji: "📋",
+    title: "Listas",
+    subtitle: "Mercado, filmes, tarefas — qualquer tipo",
+    content: (
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground font-medium">Para criar uma lista:</p>
+        <ExampleList examples={[
+          '"Cria uma lista de mercado"',
+          '"Nova lista chamada filmes pra assistir"',
+          '"Faz uma lista de tarefas"',
+          '"Quero criar uma lista de presentes natal"',
+        ]} />
+        <p className="text-sm text-muted-foreground font-medium mt-3">Para adicionar itens:</p>
+        <ExampleList examples={[
+          '"Adiciona arroz, feijão e óleo na lista de mercado"',
+          '"Coloca Coringa na lista de filmes"',
+          '"Bota leite e pão na minha lista"',
+          '"Inclui pagar conta de luz na lista de tarefas"',
+        ]} />
+        <p className="text-sm text-muted-foreground font-medium mt-3">Para consultar:</p>
+        <ExampleList examples={[
+          '"Mostra minha lista de mercado"',
+          '"O que tem na lista de filmes?"',
+          '"Minhas listas"',
+          '"Quais listas tenho?"',
+        ]} />
+        <p className="text-sm text-muted-foreground font-medium mt-3">Para marcar/remover item:</p>
+        <ExampleList examples={[
+          '"Já comprei arroz da lista de mercado"',
+          '"Marca pagar conta como feito"',
+          '"Tira leite da lista"',
+          '"Remove Coringa da lista de filmes"',
+        ]} />
+        <p className="text-sm text-muted-foreground font-medium mt-3">Para apagar lista inteira:</p>
+        <ExampleList examples={[
+          '"Apaga minha lista de compras"',
+          '"Deleta a lista de tarefas"',
+        ]} />
+        <Tip>
+          Tipos suportados: <strong className="text-foreground">qualquer um!</strong> mercado, compras, filmes, tarefas, presentes, viagem, leitura — você dá o nome.
+        </Tip>
+      </div>
+    ),
+  },
+
+  // ── 6. Hábitos ──────────────────────────────
   {
     emoji: "⚡",
     title: "Hábitos",
@@ -303,6 +359,7 @@ const SLIDES = [
           <p>📅 <strong className="text-foreground">Agenda:</strong> marca, agenda, tenho (reunião), cria</p>
           <p>🔔 <strong className="text-foreground">Lembretes:</strong> me lembra, me avisa, lembrete</p>
           <p>📝 <strong className="text-foreground">Anotações:</strong> anota, salva, lembra o/a</p>
+          <p>📋 <strong className="text-foreground">Listas:</strong> cria/adiciona/tira na lista de [tipo]</p>
           <p>⚡ <strong className="text-foreground">Hábitos:</strong> hábito de, criar rotina, feito</p>
           <p>👥 <strong className="text-foreground">Contatos:</strong> salva o contato, adiciona</p>
           <p>💬 <strong className="text-foreground">Mensagem:</strong> manda/fala/avisa pra [nome]</p>
