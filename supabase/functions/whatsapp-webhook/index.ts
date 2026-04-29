@@ -4538,6 +4538,15 @@ async function handleEventFollowup(
         .update({ status: "done" })
         .eq("id", eventId)
         .eq("user_id", userId);
+      // Da baixa no reminder de follow-up pra sumir do dashboard
+      // (consistente com handleAgendaConfirm do frontend Lembretes.tsx)
+      await supabase
+        .from("reminders")
+        .update({ status: "done" })
+        .eq("event_id", eventId)
+        .eq("user_id", userId)
+        .eq("source", "event_followup")
+        .in("status", ["pending", "sent"]);
     }
     return { response: `✅ *${eventTitle}* marcado como concluído! Ótimo trabalho! 💪` };
   }
@@ -4560,6 +4569,16 @@ async function handleEventFollowup(
       }
     }
     // Mantém evento como pending (não cancela, apenas não confirma)
+    // Mas da baixa no reminder de follow-up — agenda_edit vai criar novo pra nova data
+    if (eventId) {
+      await supabase
+        .from("reminders")
+        .update({ status: "cancelled" })
+        .eq("event_id", eventId)
+        .eq("user_id", userId)
+        .eq("source", "event_followup")
+        .in("status", ["pending", "sent"]);
+    }
     return {
       response: `Tudo bem! Para quando vou remarcar *${eventTitle}*? 📅\n\n_Ex: amanhã às 15h, sexta às 10h_`,
       pendingAction: "agenda_edit",
