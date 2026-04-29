@@ -4530,8 +4530,18 @@ async function handleEventFollowup(
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
 
+  // ─── Detecção (testa NEGATIVO primeiro pra evitar match parcial em "nao fui") ───
+  const isNegative =
+    /^(adiar|adia|adiei|adiou|adiaram|nao|não|n|nope|naw|nada|negativo|neg|nao fui|não fui|nao consegui|não consegui|nao rolou|não rolou|nao aconteceu|não aconteceu|nao deu|não deu|nao deu certo|não deu certo|reagendar|reagenda|reagendou|reagendei|reagendaram|remarcar|remarca|remarcou|remarquei|remarcaram|cancelar|cancela|cancelou|cancelei|cancelaram|cancelado|desmarquei|desmarcou|desmarcaram|desmarcado|postergar|postergou|postpor|faltei|perdi|perdi a hora|esqueci|esqueci de ir|fica pra depois|fica pra outro dia|deixa pra depois|deixei pra depois|ainda nao|ainda não|ainda nao fui|ainda não fui|vou remarcar|vou reagendar|vou adiar|vou cancelar|preciso remarcar|preciso reagendar|preciso adiar|preciso cancelar|nao posso|não posso|nao deu pra ir|não deu pra ir|nao foi possivel|não foi possível)$/.test(m)
+    || /\bnao\s+(fui|foi|consegui|rolou|aconteceu|deu|teve)\b/.test(m)
+    || /\b(faltei|perdi a hora|esqueci de ir|nao deu pra ir|cancelaram|desmarcou|desmarcaram|desmarcado)\b/.test(m)
+    || /\b(vou|preciso|tenho que)\s+(remarcar|reagendar|adiar|cancelar|desmarcar)\b/.test(m);
+
+  const isPositive =
+    /^(sim|s|si|isso|isso ai|isso aí|feito|foi|fui|foi sim|sim fui|fui sim|aconteceu|sim aconteceu|aconteceu sim|consegui|consegui sim|concluido|concluído|conclui|concluí|terminei|terminei sim|finalizei|finalizado|completei|completado|fechei|fechado|fiz|ja fiz|já fiz|ja foi|já foi|ja fui|já fui|ok|okay|okey|k|yes|ya|yep|yup|yeah|claro|claro que sim|certo|tudo certo|ta certo|tá certo|ta feito|tá feito|esta feito|está feito|certinho|certim|com certeza|certeza|certeza que sim|deu|deu certo|deu sim|deu tudo certo|rolou|rolou sim|rolou tranquilo|beleza|blz|tranquilo|tranquila|tranks|suave|susse|perfeito|perfeita|top|topzao|topíssimo|show|show de bola|joia|joinha|massa|dahora|da hora|demais|otimo|ótimo|otima|ótima|maravilhoso|maravilhosa|maravilha|excelente|sucesso|positivo|afirmativo|👍|✅|🆗|✔️|✔)$/.test(m);
+
   // ✅ Confirmação positiva
-  if (/^(sim|s|feito|foi|aconteceu|consegui|concluido|ok|yes|fui|rolou|deu certo|certo|boa|foi sim|sim fui)$/.test(m)) {
+  if (isPositive && !isNegative) {
     if (eventId) {
       await supabase
         .from("events")
@@ -4552,8 +4562,7 @@ async function handleEventFollowup(
   }
 
   // 🔄 Quer adiar/reagendar
-  if (/^(adiar|nao|não|n|nope|nao fui|nao consegui|nao rolou|reagendar|remarcar|cancelar)$/.test(m) ||
-      /nao (fui|consegui|foi|rolou|aconteceu)/.test(m)) {
+  if (isNegative) {
     // Busca data/hora do evento no banco para passar ao edit flow
     let eventDate = ctx.event_date as string | undefined;
     let eventTime = ctx.event_time as string | undefined;
