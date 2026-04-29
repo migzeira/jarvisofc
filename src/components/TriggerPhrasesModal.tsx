@@ -404,7 +404,7 @@ export function TriggerPhrasesModal({ open, onClose }: TriggerPhrasesModalProps)
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md p-0 overflow-hidden gap-0 rounded-xl">
+      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md p-0 overflow-hidden gap-0 rounded-xl h-[min(600px,90vh)] flex flex-col">
         {/* Progress bar */}
         <div className="h-1 bg-accent w-full">
           <div
@@ -414,7 +414,7 @@ export function TriggerPhrasesModal({ open, onClose }: TriggerPhrasesModalProps)
         </div>
 
         {/* Slide content */}
-        <div className="p-6 pb-4 min-h-[400px] flex flex-col">
+        <div className="p-6 pb-4 flex-1 min-h-0 flex flex-col">
           {/* Emoji + title */}
           <div className="text-center mb-4">
             <div className="text-4xl mb-2">{slide.emoji}</div>
