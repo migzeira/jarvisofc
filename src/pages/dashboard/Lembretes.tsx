@@ -461,10 +461,12 @@ export default function Lembretes() {
   const messageReminders = reminders.filter(r => isMessageReminder(r));
   const regularReminders = reminders.filter(r => !isAgendaReminder(r) && !isMessageReminder(r) && r.status !== "done");
 
+  const isRecurring = (r: Reminder) => !!r.recurrence && r.recurrence !== "none";
+
   const filteredRegular = regularReminders.filter(r => {
-    if (regularSub === "pending") return r.status === "pending";
+    if (regularSub === "pending") return r.status === "pending" && !isRecurring(r);
     if (regularSub === "sent") return r.status === "sent";
-    if (regularSub === "recurring") return r.recurrence && r.recurrence !== "none";
+    if (regularSub === "recurring") return isRecurring(r) && r.status === "pending";
     return true;
   });
 
@@ -481,8 +483,8 @@ export default function Lembretes() {
     return true;
   });
 
-  const regPending = regularReminders.filter(r => r.status === "pending").length;
-  const regRecurring = regularReminders.filter(r => r.recurrence && r.recurrence !== "none" && r.status === "pending").length;
+  const regPending = regularReminders.filter(r => r.status === "pending" && !isRecurring(r)).length;
+  const regRecurring = regularReminders.filter(r => isRecurring(r) && r.status === "pending").length;
   const regSent = regularReminders.filter(r => r.status === "sent").length;
   const agendaPending = agendaReminders.filter(r => r.status === "pending").length;
   const msgPending = messageReminders.filter(r => r.status === "pending").length;
