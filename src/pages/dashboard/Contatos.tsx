@@ -41,6 +41,7 @@ export default function Contatos() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "person" | "business">("all");
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
@@ -193,10 +194,16 @@ export default function Contatos() {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  const filtered = contacts.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.phone.includes(search)
-  );
+  const filtered = contacts.filter(c => {
+    if (typeFilter === "person" && c.type !== "person") return false;
+    if (typeFilter === "business" && c.type !== "business") return false;
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return c.name.toLowerCase().includes(q) || c.phone.includes(search);
+  });
+
+  const countPerson = contacts.filter(c => c.type === "person").length;
+  const countBusiness = contacts.filter(c => c.type === "business").length;
 
   const formatPhone = (phone: string) => {
     const n = phone.replace(/\D/g, "");
@@ -318,14 +325,55 @@ export default function Contatos() {
       )}
 
       {contacts.length > 0 && (
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            placeholder="Buscar por nome ou telefone..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setTypeFilter("all")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                typeFilter === "all"
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card border-border text-muted-foreground hover:border-primary/50"
+              }`}
+            >
+              Todos
+              <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{contacts.length}</Badge>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTypeFilter("person")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                typeFilter === "person"
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card border-border text-muted-foreground hover:border-primary/50"
+              }`}
+            >
+              <User className="h-3.5 w-3.5" /> Pessoas
+              <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{countPerson}</Badge>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTypeFilter("business")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                typeFilter === "business"
+                  ? "bg-amber-500 text-white border-amber-500"
+                  : "bg-card border-border text-muted-foreground hover:border-amber-500/50"
+              }`}
+            >
+              <Store className="h-3.5 w-3.5" /> Estabelecimentos
+              <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{countBusiness}</Badge>
+            </button>
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              placeholder="Buscar por nome ou telefone..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
         </div>
       )}
 
