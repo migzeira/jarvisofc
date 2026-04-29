@@ -415,6 +415,24 @@ function getHabitMessage(key: PresetKey, time?: string): string {
   }
 }
 
+/**
+ * Devolve a mensagem correta pra um Habit existente (preset OU custom).
+ * - Preset → mensagem humanizada via getHabitMessage(preset.key, time)
+ *   (ex: sleep → "😴 Hora de descansar! Uma boa noite de sono é essencial...")
+ * - Custom (sem preset_key) → fallback genérico com nome do hábito
+ *
+ * Usado em TODA recriação de reminders (toggle ativar, toggle finais de semana,
+ * edit) pra preservar mensagens humanizadas. Antes desse helper, dois lugares
+ * usavam direto "⏰ Hora do seu hábito: *${h.name}*", que sobrescrevia as
+ * mensagens humanizadas dos presets.
+ */
+function buildHabitMessage(h: { preset_key: string | null; name: string }, time?: string): string {
+  if (h.preset_key) {
+    return getHabitMessage(h.preset_key as PresetKey, time);
+  }
+  return `⏰ Hora do seu hábito: *${h.name}*`;
+}
+
 function getMealMessage(time: string): string {
   const [h] = time.split(":").map(Number);
   if (h < 10) return "☕ Bom dia! Hora do café da manhã. Não pule essa refeição!";
@@ -864,7 +882,9 @@ export default function Habitos() {
           habit_id: h.id,
           whatsapp_number: userPhone,
           title: h.name,
-          message: `⏰ Hora do seu hábito: *${h.name}*`,
+          // FIX: usa buildHabitMessage pra preservar mensagem humanizada dos presets
+          // (sleep → "😴 Hora de descansar...", bible_verse → "{{habit:bible_verse}}", etc.)
+          message: buildHabitMessage(h, t),
           send_at: nextValidDailyUTC(t, newTargetDays),
           recurrence: "daily",
           source: "habit",
@@ -1083,7 +1103,8 @@ export default function Habitos() {
                               habit_id: h.id,
                               whatsapp_number: userPhone,
                               title: h.name,
-                              message: `⏰ Hora do seu hábito: *${h.name}*`,
+                              // FIX: usa buildHabitMessage pra preservar mensagem humanizada dos presets
+                              message: buildHabitMessage(h, t),
                               send_at: nextDailyUTC(t),
                               recurrence: "daily",
                               source: "habit",
