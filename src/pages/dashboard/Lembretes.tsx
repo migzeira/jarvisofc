@@ -200,6 +200,7 @@ export default function Lembretes() {
       .eq("user_id", user!.id)
       .neq("status", "cancelled")
       .neq("source", "habit")
+      .is("habit_id", null)
       .order("created_at", { ascending: false })
       .limit(500);
 

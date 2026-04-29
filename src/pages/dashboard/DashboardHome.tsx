@@ -204,7 +204,7 @@ export default function DashboardHome() {
       // Próximos eventos — busca 10 e filtra eventos do dia cuja hora já passou
       supabase.from("events").select("*").eq("user_id", user!.id).gte("event_date", format(now, "yyyy-MM-dd")).order("event_date").order("event_time").limit(10),
       // Pending reminders — exclui habits (que têm card próprio) e followups de evento (duplicam "Próximos")
-      supabase.from("reminders").select("id, title, send_at, message, source, event_id").eq("user_id", user!.id).eq("status", "pending").gte("send_at", nowIso).neq("source", "habit").order("send_at").limit(10),
+      supabase.from("reminders").select("id, title, send_at, message, source, event_id, habit_id").eq("user_id", user!.id).eq("status", "pending").gte("send_at", nowIso).neq("source", "habit").is("habit_id", null).order("send_at").limit(10),
       // Recent notes (last 3)
       supabase.from("notes").select("id, title, content, created_at, source").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(3),
       // For activity feed
@@ -243,6 +243,7 @@ export default function DashboardHome() {
     // (já aparecem em "Próximos" — duplicaria).
     const filteredReminders = (remindersRes.data ?? []).filter((r: any) => {
       if (r.source === "habit") return false;
+      if (r.habit_id) return false;
       if (r.source === "event" || r.source === "event_followup") return false;
       if (r.event_id) return false;
       return true;
