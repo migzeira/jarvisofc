@@ -208,10 +208,29 @@ export async function sendText(
     textMessage: { text },
   }) as Record<string, unknown> | null;
 
-  // Extrai messageId do response — Evolution v2 retorna { key: { id } }
-  const key = res?.key as Record<string, unknown> | undefined;
-  const id = (key?.id as string) ?? (res?.id as string) ?? null;
-  return id || null;
+  // Extrai messageId tentando múltiplos paths comuns do Evolution v2.
+  // Evolution mudou estrutura de response entre versões, então testamos todos.
+  const r = res as any;
+  const id =
+    r?.key?.id ??
+    r?.id ??
+    r?.messageId ??
+    r?.data?.key?.id ??
+    r?.data?.id ??
+    r?.message?.key?.id ??
+    r?.messageKeyId ??
+    null;
+
+  // Log do shape quando não conseguimos extrair — ajuda debug sem ficar loggando
+  // tudo. Trunca pra evitar lixo no log.
+  if (!id) {
+    try {
+      const preview = JSON.stringify(res ?? {}).slice(0, 300);
+      console.warn(`[sendText] messageId não extraído. Response shape: ${preview}`);
+    } catch { /* ignore */ }
+  }
+
+  return (typeof id === "string" && id.length > 0) ? id : null;
 }
 
 /**

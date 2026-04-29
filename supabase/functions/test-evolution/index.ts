@@ -5,6 +5,20 @@ const EVOLUTION_URL = Deno.env.get("EVOLUTION_API_URL") ?? "";
 const EVOLUTION_KEY = Deno.env.get("EVOLUTION_API_KEY") ?? "";
 const INSTANCE = Deno.env.get("EVOLUTION_INSTANCE_NAME") ?? "mayachat";
 
+/** Tenta extrair messageId em múltiplos paths comuns do Evolution v2. */
+function tryExtractIds(resp: unknown): Record<string, string | null> {
+  const r = resp as any;
+  return {
+    "key.id":           r?.key?.id ?? null,
+    "id":               r?.id ?? null,
+    "messageId":        r?.messageId ?? null,
+    "data.key.id":      r?.data?.key?.id ?? null,
+    "data.id":          r?.data?.id ?? null,
+    "message.key.id":   r?.message?.key?.id ?? null,
+    "messageKeyId":     r?.messageKeyId ?? null,
+  };
+}
+
 serve(async (req) => {
   const headers = {
     "Content-Type": "application/json",
@@ -19,6 +33,31 @@ serve(async (req) => {
     // 3. Webhook configurado
     const webhookRes = await fetch(`${EVOLUTION_URL}/webhook/find/${INSTANCE}`, { headers });
     const webhook = await webhookRes.json();
+
+    // TEST_SEND: envia uma msg de teste e retorna o response CRU do Evolution.
+    // Uso: ?test_send=5511999999999 → envia "Teste" pra esse número.
+    // Crítico pra debugar de onde extrair o messageId no response.
+    const url4 = new URL(req.url);
+    const testSendNumber = url4.searchParams.get("test_send");
+    if (testSendNumber) {
+      const sendRes = await fetch(`${EVOLUTION_URL}/message/sendText/${INSTANCE}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          number: testSendNumber.replace(/\D/g, ""),
+          textMessage: { text: "🧪 Teste de diagnóstico do Jarvis (responda qualquer coisa)" },
+        }),
+      });
+      const respText = await sendRes.text();
+      let parsed: unknown = respText;
+      try { parsed = JSON.parse(respText); } catch { /* não é JSON */ }
+      return new Response(JSON.stringify({
+        http_status: sendRes.status,
+        response_body: parsed,
+        // Tentativas de extrair messageId em vários paths
+        extracted_id_attempts: tryExtractIds(parsed),
+      }, null, 2), { headers: { "Content-Type": "application/json" } });
+    }
 
     // RESET WEBHOOK: reseta config do webhook
     const url3 = new URL(req.url);
