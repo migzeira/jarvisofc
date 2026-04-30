@@ -23,17 +23,27 @@ export default function ConfigAgente({ hideTitle = false }: { hideTitle?: boolea
 
   useEffect(() => { if (user) loadData(); }, [user]);
   const loadData = async () => {
-    const [configRes, qrRes] = await Promise.all([
+    // Busca config + quick_replies + display_name do profile (pra pré-preencher
+    // o "Como você quer ser chamado?" com o primeiro nome do user).
+    const [configRes, qrRes, profileRes] = await Promise.all([
       supabase.from("agent_configs").select("*").eq("user_id", user!.id).single(),
       supabase.from("quick_replies").select("*").eq("user_id", user!.id).order("created_at"),
+      supabase.from("profiles").select("display_name").eq("id", user!.id).maybeSingle(),
     ]);
     const raw = configRes.data;
+    const displayName = (profileRes.data as { display_name?: string | null } | null)?.display_name ?? null;
+    // Extrai primeiro nome de "Miguel Fernandes" → "Miguel"
+    const firstName = displayName?.trim().split(/\s+/)[0] ?? null;
+
     if (raw) {
       // Normalize NULL values to safe defaults.
       // Modules: NULL means "never explicitly set" → treat as ON (matches webhook logic: !== false).
       // tone/language: NULL → use app defaults so Select components never show blank.
+      // user_nickname: se vazio E temos display_name, sugere o primeiro nome
+      // como default. User pode editar ou apagar — se salvar vazio, vira null.
       setConfig({
         ...raw,
+        user_nickname: raw.user_nickname ?? firstName ?? "",
         tone: raw.tone ?? "profissional",
         language: raw.language ?? "pt-BR",
         module_finance: raw.module_finance !== false,
