@@ -1033,8 +1033,8 @@ export interface ReminderParsed {
   title: string;               // curto, ex: "Ligar pro pai"
   message: string;             // mensagem completa a enviar
   remind_at: string;           // ISO 8601 com timezone (ex: "2026-04-07T12:20:00-03:00")
-  recurrence: "none" | "daily" | "weekly" | "monthly" | "day_of_month";
-  recurrence_value: number | null; // weekday 0-6 (weekly) ou dia 1-31 (day_of_month)
+  recurrence: "none" | "daily" | "weekly" | "monthly" | "day_of_month" | "hourly";
+  recurrence_value: number | null; // weekday 0-6 (weekly) ou dia 1-31 (day_of_month) ou horas (hourly)
 }
 
 /**
@@ -1106,8 +1106,52 @@ Pedido: "${message}"`;
 
   try {
     const parsed = JSON.parse(result) as ReminderParsed;
-    // Validação básica
-    if (!parsed.remind_at || !parsed.recurrence) return null;
+    // Validação robusta: a IA pode retornar shapes inválidos (recurrence_value
+    // fora da faixa, recurrence string desconhecida, remind_at não-ISO).
+    // Antes só checava remind_at e recurrence — handlers downstream quebravam.
+
+    if (!parsed.remind_at || typeof parsed.remind_at !== "string") return null;
+    if (isNaN(Date.parse(parsed.remind_at))) {
+      console.warn("[parseReminderIntent] remind_at inválido:", parsed.remind_at);
+      return null;
+    }
+
+    const validRecurrences = ["none", "daily", "weekly", "monthly", "day_of_month", "hourly"];
+    if (!parsed.recurrence || !validRecurrences.includes(parsed.recurrence)) {
+      console.warn("[parseReminderIntent] recurrence inválido:", parsed.recurrence);
+      return null;
+    }
+
+    // recurrence_value tem regras por tipo
+    if (parsed.recurrence === "weekly" && parsed.recurrence_value != null) {
+      const v = Number(parsed.recurrence_value);
+      if (!Number.isInteger(v) || v < 0 || v > 6) {
+        console.warn("[parseReminderIntent] weekly recurrence_value fora 0-6:", v);
+        parsed.recurrence_value = null; // deixa send-reminder usar dia do remind_at
+      }
+    }
+    if (parsed.recurrence === "day_of_month") {
+      const v = Number(parsed.recurrence_value);
+      if (!Number.isInteger(v) || v < 1 || v > 31) {
+        console.warn("[parseReminderIntent] day_of_month fora 1-31:", v);
+        return null; // sem dia válido, day_of_month não funciona
+      }
+    }
+    if (parsed.recurrence === "hourly") {
+      const v = Number(parsed.recurrence_value);
+      if (!Number.isInteger(v) || v < 1 || v > 24) {
+        // Default 1h se valor inválido
+        parsed.recurrence_value = 1;
+      }
+    }
+
+    // title/message defaults se vierem nulos (a IA às vezes esquece)
+    if (typeof parsed.title !== "string" || !parsed.title.trim()) {
+      parsed.title = "Lembrete";
+    }
+    if (typeof parsed.message !== "string" || !parsed.message.trim()) {
+      parsed.message = `⏰ ${parsed.title}`;
+    }
 
     // Guarda de segurança: se a IA agendou para amanhã mas o horário ainda não passou hoje,
     // corrige para hoje. Isso evita erros com horários de madrugada como "1h50".
@@ -1138,7 +1182,13 @@ Pedido: "${message}"`;
     }
 
     return parsed;
-  } catch {
+  } catch (e) {
+    // Loga pra debug — antes era catch{} silencioso que escondeu o bug do
+    // userTz por semanas. Trunca pra 200 chars pra não inflar log.
+    console.warn(
+      "[parseReminderIntent] failed:",
+      (e as Error).message?.slice(0, 200) ?? String(e).slice(0, 200)
+    );
     return null;
   }
 }

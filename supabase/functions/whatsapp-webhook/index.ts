@@ -4080,23 +4080,42 @@ async function handleReminderCancel(
     return `Não encontrei esse lembrete. Seus pendentes:\n\n${fmtPendingList()}\n\nTente o nome exato.`;
   }
 
-  // Cancela este e todas as recorrências futuras com o mesmo título (ou só pelo id se título nulo)
+  // Cancela este e todas as recorrências futuras com o mesmo título (ou só pelo id se título nulo).
+  // Captura erro do UPDATE — antes era silencioso e o user via "cancelado" mesmo se DB falhasse.
+  let cancelErr: { message?: string } | null = null;
   if (match.title) {
-    await supabase.from("reminders")
+    const r = await supabase.from("reminders")
       .update({ status: "cancelled" })
       .eq("user_id", userId)
       .eq("title", match.title)
       .eq("status", "pending");
+    cancelErr = (r as any).error ?? null;
   } else {
-    await supabase.from("reminders")
+    const r = await supabase.from("reminders")
       .update({ status: "cancelled" })
-      .eq("id", match.id);
+      .eq("id", match.id)
+      .eq("status", "pending"); // só pending, evita "cancelar" um já enviado
+    cancelErr = (r as any).error ?? null;
   }
 
-  const title = match.title || match.message.slice(0, 40);
+  if (cancelErr) {
+    console.error("[handleReminderCancel] update failed:", cancelErr.message);
+    return lang === "en"
+      ? "⚠️ Couldn't cancel that reminder right now. Try again?"
+      : "⚠️ Não consegui cancelar o lembrete agora. Tenta de novo?";
+  }
+
+  // Null-safety: match.message pode ser null no DB (validação fraca em INSERTs antigos)
+  const title = match.title || (match.message ?? "lembrete").slice(0, 40);
+  // Mensagem honesta: só promete recorrências quando realmente cancelou por título
+  const cancelledRecurrences = !!match.title;
   return lang === "en"
-    ? `✅ Reminder *"${title}"* cancelled! All future recurrences were also removed.`
-    : `✅ Lembrete *"${title}"* cancelado! Todas as recorrências futuras também foram removidas.`;
+    ? cancelledRecurrences
+      ? `✅ Reminder *"${title}"* cancelled! All future recurrences were also removed.`
+      : `✅ Reminder *"${title}"* cancelled.`
+    : cancelledRecurrences
+      ? `✅ Lembrete *"${title}"* cancelado! Todas as recorrências futuras também foram removidas.`
+      : `✅ Lembrete *"${title}"* cancelado.`;
 }
 
 // ─────────────────────────────────────────────
@@ -4149,14 +4168,21 @@ async function handleReminderEdit(
 
   const { error } = await supabase.from("reminders")
     .update({ send_at: newDate.toISOString(), status: "pending" })
-    .eq("id", match.id);
+    .eq("id", match.id)
+    .eq("status", "pending"); // só edita pendentes
 
-  if (error) throw error;
+  if (error) {
+    console.error("[handleReminderEdit] update failed:", error.message);
+    return lang === "en"
+      ? "⚠️ Couldn't update the reminder. Try again?"
+      : "⚠️ Não consegui atualizar o lembrete agora. Tenta de novo?";
+  }
 
   const locale = langToLocale(lang);
   const dateStr = newDate.toLocaleDateString(locale, { timeZone: userTz, weekday: "long", day: "numeric", month: "long" });
   const timeStr = newDate.toLocaleTimeString(locale, { timeZone: userTz, hour: "2-digit", minute: "2-digit" });
-  const title = match.title || match.message.slice(0, 40);
+  // Null-safety pra match.message (pode ser null no DB)
+  const title = match.title || (match.message ?? "lembrete").slice(0, 40);
 
   return lang === "en"
     ? `✅ Reminder *"${title}"* rescheduled!\n📅 ${dateStr} at ${timeStr}`
@@ -4485,7 +4511,7 @@ async function handleReminderSnooze(
 
   const newSendAt = new Date(Date.now() + snoozeMin * 60 * 1000);
 
-  await supabase.from("reminders").insert({
+  const { error: snoozeErr } = await supabase.from("reminders").insert({
     user_id: userId,
     whatsapp_number: lastReminder.whatsapp_number ?? phone,
     title: lastReminder.title,
@@ -4496,6 +4522,11 @@ async function handleReminderSnooze(
     source: "snooze",
     status: "pending",
   });
+
+  if (snoozeErr) {
+    console.error("[handleReminderSnooze] insert failed:", snoozeErr.message);
+    return "⚠️ Não consegui adiar o lembrete agora. Tenta de novo em instantes?";
+  }
 
   const timeStr = newSendAt.toLocaleTimeString("pt-BR", {
     timeZone: userTz,

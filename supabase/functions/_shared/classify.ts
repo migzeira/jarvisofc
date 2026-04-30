@@ -596,7 +596,10 @@ export function isReminderAtTime(msg: string): boolean {
 /** Returns true when user accepts/wants a reminder (without specifying time) */
 export function isReminderAccept(msg: string): boolean {
   const m = msg.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-  return /^(sim|s|quero|pode ser|claro|por favor|bora|pode|yes|ok|beleza|blz|com certeza|isso|quero sim|pode|quero ser lembrado)$/.test(m);
+  // Regex ancorado em ^...$ pra exigir match exato \u2014 evita falsos positivos
+  // tipo "pode pedir um caf\u00e9?" disparar aceite de lembrete.
+  // Sem duplicata de "pode" (estava 2x antes).
+  return /^(sim|s|quero|quero sim|pode|pode ser|claro|por favor|bora|yes|ok|beleza|blz|com certeza|isso|quero ser lembrado)$/.test(m);
 }
 
 /**

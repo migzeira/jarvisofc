@@ -82,9 +82,24 @@ const MOTIVATIONAL_QUOTES = [
 /**
  * Resolve mensagens de hábitos preset com conteúdo dinâmico.
  * Versículos e frases são selecionados pelo dia do mês (rotação mensal).
+ *
+ * Aceita tz do usuário pra calcular o dia local (não UTC). Sem isso, usuários
+ * em SP (UTC-3) viam versículo do dia seguinte entre 21h-23:59 (porque em UTC
+ * já era o próximo dia).
  */
-function resolveHabitMessage(message: string): string {
-  const dayIndex = new Date().getDate() - 1; // 0-29
+function resolveHabitMessage(message: string, tz = "America/Sao_Paulo"): string {
+  // Pega o dia do mês NO TIMEZONE DO USER (não UTC)
+  let dayOfMonth: number;
+  try {
+    const localDay = new Date().toLocaleDateString("en-US", {
+      timeZone: tz,
+      day: "numeric",
+    });
+    dayOfMonth = parseInt(localDay, 10);
+  } catch {
+    dayOfMonth = new Date().getUTCDate();
+  }
+  const dayIndex = (Number.isInteger(dayOfMonth) ? dayOfMonth : 1) - 1; // 0-30
 
   if (message === "{{habit:bible_verse}}") {
     const verse = BIBLE_VERSES[dayIndex % BIBLE_VERSES.length];
@@ -382,7 +397,12 @@ serve(async (_req) => {
         reminderHasSendToContact(reminder.title ?? "");
 
       // ─── Resolve conteúdo dinâmico para hábitos preset ────────────────────
-      const finalMessage = resolveHabitMessage(reminder.message ?? "");
+      // Passa tz do user pra que versículo/frase do dia respeitem o dia local
+      // (não UTC) — antes, entre 21h-23:59 BRT, vinha o conteúdo de amanhã.
+      const userTzForResolve = reminder.user_id
+        ? await getUserTz(reminder.user_id)
+        : "America/Sao_Paulo";
+      const finalMessage = resolveHabitMessage(reminder.message ?? "", userTzForResolve);
 
       // messageId retornado pelo Evolution. Usado pro webhook MESSAGES_UPDATE
       // correlacionar a entrega (delivery tracking). null se for delegate ou
@@ -449,6 +469,8 @@ serve(async (_req) => {
             const senderName = configRes.data?.user_nickname || profileRes.data?.display_name || null;
             const agentName  = configRes.data?.agent_name || "Jarvis";
             if (fromPhone && toPhone) {
+              // Fire-and-forget mas com log do erro pra debugar (antes era catch{}
+              // silencioso e falhas em relay_requests sumiam sem rastro).
               supabase.from("relay_requests").insert({
                 from_user_id: reminder.user_id,
                 from_phone:   fromPhone,
@@ -458,16 +480,21 @@ serve(async (_req) => {
                 sender_name:  senderName,
                 agent_name:   agentName,
                 expires_at:   new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
-              }).then(() => {}).catch(() => {}); // fire-and-forget
+              }).then((r: any) => {
+                if (r?.error) console.error("[send-reminder] relay_requests insert error:", r.error.message);
+              }).catch((e: unknown) => console.error("[send-reminder] relay_requests insert exception:", (e as Error).message));
 
               // Confirma pro usuario que a mensagem agendada foi enviada
               const contactName = reminder.title?.replace(/^Mensagem para /i, "") || "o contato";
               sendText(
                 fromPhone,
                 `✅ Mensagem enviada para *${contactName}*! 📨`
-              ).catch(() => {}); // fire-and-forget
+              ).catch((e) => console.error("[send-reminder] confirm sendText failed:", (e as Error).message));
             }
-          } catch (_relayErr) { /* nao quebra o fluxo de envio */ }
+          } catch (relayErr) {
+            console.error("[send-reminder] relay block exception:", (relayErr as Error).message);
+            // não quebra o fluxo de envio principal
+          }
         }
 
         // ─── Pedido agendado: dispara pedido ao estabelecimento ───
