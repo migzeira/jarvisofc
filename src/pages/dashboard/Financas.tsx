@@ -17,6 +17,9 @@ import { Switch } from "@/components/ui/switch";
 import { FinancialInsightCard } from "@/components/FinancialInsightCard";
 import { CategoryCreateModal, CATEGORY_COLORS, type CategoryRow } from "@/components/CategoryCreateModal";
 import { TransactionEditModal, type Transaction as TxEditType } from "@/components/TransactionEditModal";
+import { SenderBadge } from "@/components/couple/SenderBadge";
+import { SenderFilter, matchesSenderFilter, type SenderFilterValue } from "@/components/couple/SenderFilter";
+import { useCoupleContext } from "@/hooks/useCoupleContext";
 import { toast } from "sonner";
 import {
   Plus, TrendingDown, TrendingUp, Wallet, RefreshCw, Trash2, Download,
@@ -180,6 +183,10 @@ export default function Financas() {
   const [activeTab, setActiveTab]     = useState("visao-geral");
   const [filterType, setFilterType]   = useState("all");
   const [filterCat, setFilterCat]     = useState("all");
+
+  // Plano casal: filtro de quem registrou (Todos / Eu / Parceiro)
+  const couple = useCoupleContext();
+  const [senderFilter, setSenderFilter] = useState<SenderFilterValue>("all");
   const [searchTx, setSearchTx]       = useState("");
 
   // ── Dialogs ──
@@ -493,6 +500,8 @@ export default function Financas() {
     if (filterType !== "all" && t.type !== filterType) return false;
     if (filterCat !== "all" && normCat(t.category) !== normCat(filterCat)) return false;
     if (searchTx && !t.description.toLowerCase().includes(searchTx.toLowerCase())) return false;
+    // Plano casal: filtra por quem registrou (no-op pra solo)
+    if (!matchesSenderFilter(t.sent_by_phone, senderFilter, couple.masterPhone)) return false;
     return true;
   });
 
@@ -1079,10 +1088,13 @@ export default function Financas() {
                             </Badge>
                           )}
                         </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          {format(new Date(t.transaction_date + "T12:00:00"), "dd/MM", { locale: ptBR })} · {t.category}
-                          {t.source === "whatsapp" && <span className="text-green-500/70 ml-1">● WhatsApp</span>}
-                        </p>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          <p className="text-[11px] text-muted-foreground">
+                            {format(new Date(t.transaction_date + "T12:00:00"), "dd/MM", { locale: ptBR })} · {t.category}
+                            {t.source === "whatsapp" && <span className="text-green-500/70 ml-1">● WhatsApp</span>}
+                          </p>
+                          <SenderBadge sentByPhone={t.sent_by_phone} size="xs" />
+                        </div>
                       </div>
                       <p className={`text-sm font-bold tabular-nums shrink-0 ${t.type === "expense" ? "text-destructive" : "text-green-400"}`}>
                         {t.type === "expense" ? "−" : "+"}R$ {brl(Number(t.amount))}
@@ -1133,6 +1145,10 @@ export default function Financas() {
                 ))}
               </SelectContent>
             </Select>
+            {/* Plano casal: filtro de quem registrou */}
+            {couple.isCouplePlan && couple.partners.length > 0 && (
+              <SenderFilter value={senderFilter} onChange={setSenderFilter} />
+            )}
             {/* Category management — só lista + edita/exclui custom + abre o
                 CategoryCreateModal pra criar nova (com emoji + cor) */}
             <Dialog open={catDialogOpen} onOpenChange={setCatDialogOpen}>
@@ -1261,11 +1277,12 @@ export default function Financas() {
                                       </Badge>
                                     )}
                                   </div>
-                                  <div className="flex items-center gap-2 mt-0.5">
+                                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                     <span className="text-[11px] text-muted-foreground capitalize">{t.category}</span>
                                     {t.source === "whatsapp" && (
                                       <span className="text-[10px] text-green-500/70 font-medium">● WhatsApp</span>
                                     )}
+                                    <SenderBadge sentByPhone={t.sent_by_phone} size="xs" />
                                   </div>
                                 </div>
                                 {/* Amount */}

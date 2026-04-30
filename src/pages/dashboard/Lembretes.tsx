@@ -14,6 +14,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { SenderBadge } from "@/components/couple/SenderBadge";
+import { SenderFilter, matchesSenderFilter, type SenderFilterValue } from "@/components/couple/SenderFilter";
+import { useCoupleContext } from "@/hooks/useCoupleContext";
 import {
   Bell, Plus, Trash2, Clock, RefreshCw, CheckCircle2, XCircle,
   Pencil, Calendar, CalendarCheck, MessageSquare, Search, User,
@@ -32,6 +35,7 @@ interface Reminder {
   source: string;
   event_id: string | null;
   created_at: string;
+  sent_by_phone: string | null;
 }
 
 interface Contact {
@@ -140,6 +144,10 @@ export default function Lembretes() {
   const { user } = useAuth();
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Plano casal: filtro de quem registrou
+  const couple = useCoupleContext();
+  const [senderFilter, setSenderFilter] = useState<SenderFilterValue>("all");
 
   const [mainTab, setMainTab] = useState<MainTab>("reminders");
   const [regularSub, setRegularSub] = useState<RegularSub>("pending");
@@ -457,9 +465,13 @@ export default function Lembretes() {
 
   // ── Separação dos dados ──────────────────────────────────────────────────────
 
-  const agendaReminders = reminders.filter(r => isAgendaReminder(r));
-  const messageReminders = reminders.filter(r => isMessageReminder(r));
-  const regularReminders = reminders.filter(r => !isAgendaReminder(r) && !isMessageReminder(r) && r.status !== "done");
+  // Plano casal: aplica filtro de quem registrou ANTES de splittar por categoria
+  const reminders_filtered = reminders.filter(r =>
+    matchesSenderFilter(r.sent_by_phone, senderFilter, couple.masterPhone)
+  );
+  const agendaReminders = reminders_filtered.filter(r => isAgendaReminder(r));
+  const messageReminders = reminders_filtered.filter(r => isMessageReminder(r));
+  const regularReminders = reminders_filtered.filter(r => !isAgendaReminder(r) && !isMessageReminder(r) && r.status !== "done");
 
   const isRecurring = (r: Reminder) => !!r.recurrence && r.recurrence !== "none";
 
@@ -509,6 +521,7 @@ export default function Lembretes() {
               <p className="font-medium text-sm">{r.title || r.message.slice(0, 60)}</p>
               {statusBadge(r.status, r.send_at)}
               {rec && <Badge variant="outline" className="text-[10px] gap-1"><RefreshCw className="w-2.5 h-2.5" />{rec}</Badge>}
+              <SenderBadge sentByPhone={r.sent_by_phone} size="xs" />
             </div>
             <p className="text-xs text-muted-foreground truncate">{r.message}</p>
             <p className="text-xs text-muted-foreground/60 mt-1">
@@ -558,6 +571,7 @@ export default function Lembretes() {
               <p className="font-medium text-sm">{r.title || r.message.slice(0, 60)}</p>
               {statusBadge(r.status, r.send_at)}
               {isFollowUp && <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30">follow-up</Badge>}
+              <SenderBadge sentByPhone={r.sent_by_phone} size="xs" />
             </div>
             <p className="text-xs text-muted-foreground truncate">{r.message}</p>
             <p className="text-xs text-muted-foreground/60 mt-1">
@@ -615,6 +629,7 @@ export default function Lembretes() {
           <div className="flex items-center gap-2 flex-wrap mb-0.5">
             <p className="font-medium text-sm">{r.title || r.message.slice(0, 60)}</p>
             {statusBadge(r.status, r.send_at)}
+            <SenderBadge sentByPhone={r.sent_by_phone} size="xs" />
           </div>
           <p className="text-xs text-muted-foreground truncate">{r.message}</p>
           <p className="text-xs text-muted-foreground/60 mt-1">
@@ -681,6 +696,11 @@ export default function Lembretes() {
           </Button>
         )}
       </div>
+
+      {/* Plano casal: filtro de quem registrou */}
+      {couple.isCouplePlan && couple.partners.length > 0 && (
+        <SenderFilter value={senderFilter} onChange={setSenderFilter} />
+      )}
 
       {/* ── Dialog: Lembrete regular ─────────────────────────────────────────── */}
       <Dialog open={open} onOpenChange={setOpen}>

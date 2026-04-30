@@ -41,3 +41,6 @@ verify_jwt = false
 
 [functions.lookup-sale-email]
 verify_jwt = false
+
+[functions.test-evolution]
+verify_jwt = false

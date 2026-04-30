@@ -21,6 +21,9 @@ import { ptBR } from "date-fns/locale";
 import { CreateListDialog } from "@/components/lists/CreateListDialog";
 import { ListCard, type ListSummary } from "@/components/lists/ListCard";
 import { ListDetailModal } from "@/components/lists/ListDetailModal";
+import { SenderBadge } from "@/components/couple/SenderBadge";
+import { SenderFilter, matchesSenderFilter, type SenderFilterValue } from "@/components/couple/SenderFilter";
+import { useCoupleContext } from "@/hooks/useCoupleContext";
 
 // ─── Accent colors (determinísticos por ID da nota) ─────────────────────────
 const ACCENTS = [
@@ -46,6 +49,7 @@ interface Note {
   content: string;
   source: string;
   created_at: string;
+  sent_by_phone: string | null;
 }
 
 // ─── Note Card ───────────────────────────────────────────────────────────────
@@ -90,7 +94,7 @@ function NoteCard({
 
         {/* Footer */}
         <div className="flex items-center justify-between mt-3 pt-2 border-t border-border/50">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {isWhatsApp ? (
               <Badge className="bg-green-500/15 text-green-400 border-green-500/25 text-[10px] gap-1 h-5">
                 <MessageCircle className="w-2.5 h-2.5" /> WhatsApp
@@ -100,6 +104,8 @@ function NoteCard({
                 <StickyNote className="w-2.5 h-2.5 mr-1" /> Manual
               </Badge>
             )}
+            {/* Plano casal: badge de quem registrou (oculto pra cliente solo) */}
+            <SenderBadge sentByPhone={note.sent_by_phone} size="xs" />
             <span className="text-[11px] text-muted-foreground/60">{ago}</span>
           </div>
 
@@ -158,6 +164,10 @@ export default function Anotacoes() {
   const [lists, setLists] = useState<ListSummary[]>([]);
   const [createListOpen, setCreateListOpen] = useState(false);
   const [detailList, setDetailList] = useState<ListSummary | null>(null);
+
+  // ─── Plano casal: filtro de quem registrou ───
+  const couple = useCoupleContext();
+  const [senderFilter, setSenderFilter] = useState<SenderFilterValue>("all");
 
   useEffect(() => { if (user) loadData(); }, [user]);
 
@@ -313,10 +323,14 @@ export default function Anotacoes() {
 
   const filtered = notes.filter(n => {
     const q = search.toLowerCase();
-    return !q || n.title?.toLowerCase().includes(q) || n.content.toLowerCase().includes(q);
+    const matchesSearch = !q || n.title?.toLowerCase().includes(q) || n.content.toLowerCase().includes(q);
+    if (!matchesSearch) return false;
+    // Plano casal: filtro por quem registrou
+    return matchesSenderFilter(n.sent_by_phone, senderFilter, couple.masterPhone);
   });
 
-  // Listas filtradas (busca cobre nome + preview dos itens)
+  // Listas filtradas (busca cobre nome + preview dos itens; sender filter não
+  // aplica em listas porque elas são compartilhadas — itens internos é que têm tag)
   const filteredLists = useMemo(() => {
     const q = search.toLowerCase();
     if (!q) return lists;
@@ -385,6 +399,11 @@ export default function Anotacoes() {
         <p className="text-xs text-muted-foreground -mt-2">
           {totalCount === 0 ? "Nenhum resultado" : `${totalCount} resultado${totalCount !== 1 ? "s" : ""} para "${search}"`}
         </p>
+      )}
+
+      {/* Filtro de "quem registrou" — só aparece pra plano casal com partners */}
+      {couple.isCouplePlan && couple.partners.length > 0 && (
+        <SenderFilter value={senderFilter} onChange={setSenderFilter} />
       )}
 
       {/* Grid: listas primeiro, anotações depois (mantém na mesma malha visual) */}

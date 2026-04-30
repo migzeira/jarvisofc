@@ -250,7 +250,7 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
               <ul className="mt-2 space-y-1 text-muted-foreground text-xs leading-relaxed">
                 <li>• Cada parceiro conversa privadamente com o Jarvis pelo WhatsApp dele.</li>
                 <li>• Finanças, agenda, anotações e listas ficam <strong>compartilhadas</strong> nesse painel.</li>
-                <li>• Cada registro tem badge mostrando quem foi (Miguel / Sibele).</li>
+                <li>• Cada registro tem badge mostrando quem foi (João / Maria).</li>
                 <li>• Lembretes e hábitos são <strong>pessoais</strong> — vão pra quem criou.</li>
                 <li>• "Quanto eu gastei?" mostra só seus gastos. "Quanto a gente gastou?" mostra do casal.</li>
               </ul>
@@ -303,7 +303,7 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
                         [slot]: { ...p[slot], partner_name: e.target.value.slice(0, 60) },
                       }))
                     }
-                    placeholder="Ex: Sibele Silva"
+                    placeholder="Ex: Maria Silva"
                     maxLength={60}
                     disabled={saving[slot]}
                   />
@@ -321,7 +321,7 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
                         [slot]: { ...p[slot], partner_nickname: e.target.value.slice(0, 60) || null },
                       }))
                     }
-                    placeholder="Ex: Sibele, Si, Amor"
+                    placeholder="Ex: Maria, Mari, Amor"
                     maxLength={60}
                     disabled={saving[slot]}
                   />

@@ -33,6 +33,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { toast } from "sonner";
+import { SenderBadge } from "@/components/couple/SenderBadge";
+import { SenderFilter, matchesSenderFilter, type SenderFilterValue } from "@/components/couple/SenderFilter";
+import { useCoupleContext } from "@/hooks/useCoupleContext";
 import {
   Plus,
   CalendarDays,
@@ -104,6 +107,7 @@ interface CalendarEvent {
   source: "manual" | "whatsapp";
   google_event_id: string | null;
   created_at: string;
+  sent_by_phone: string | null;
 }
 
 interface EventFormData {
@@ -383,14 +387,22 @@ export default function Agenda() {
   const [form, setForm] = useState<EventFormData>(emptyForm());
   const [saving, setSaving] = useState(false);
 
-  // Todos os eventos (nativos + Google Calendar)
+  // Plano casal: filtro de quem registrou
+  const couple = useCoupleContext();
+  const [senderFilter, setSenderFilter] = useState<SenderFilterValue>("all");
+
+  // Todos os eventos (nativos + Google Calendar) com filtro de partner aplicado
   const allEvents = useMemo(() => {
-    if (!googleConnected) return events;
-    // Merge: eventos locais + eventos Google (evita duplicatas por google_event_id)
-    const localGoogleIds = new Set(events.filter(e => e.google_event_id).map(e => e.google_event_id));
-    const uniqueGoogleEvents = googleEvents.filter(ge => !localGoogleIds.has(ge.google_event_id));
-    return [...events, ...uniqueGoogleEvents];
-  }, [events, googleEvents, googleConnected]);
+    const merged = (() => {
+      if (!googleConnected) return events;
+      // Merge: eventos locais + eventos Google (evita duplicatas por google_event_id)
+      const localGoogleIds = new Set(events.filter(e => e.google_event_id).map(e => e.google_event_id));
+      const uniqueGoogleEvents = googleEvents.filter(ge => !localGoogleIds.has(ge.google_event_id));
+      return [...events, ...uniqueGoogleEvents];
+    })();
+    // Aplica filtro de quem registrou (no-op pra solo)
+    return merged.filter((e) => matchesSenderFilter((e as any).sent_by_phone, senderFilter, couple.masterPhone));
+  }, [events, googleEvents, googleConnected, senderFilter, couple.masterPhone]);
 
   // Responsive: use day view on mobile
   useEffect(() => {
@@ -1099,8 +1111,12 @@ export default function Agenda() {
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <DialogContent className="bg-card border-border max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>
-            {editingEvent ? "Editar evento" : "Novo evento"}
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            <span>{editingEvent ? "Editar evento" : "Novo evento"}</span>
+            {/* Plano casal: badge de quem criou (oculto pra solo) */}
+            {editingEvent && (
+              <SenderBadge sentByPhone={editingEvent.sent_by_phone} size="sm" />
+            )}
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSave} className="space-y-4">
@@ -1601,6 +1617,11 @@ export default function Agenda() {
           ))}
         </div>
       </div>
+
+      {/* Plano casal: filtro de quem criou o evento */}
+      {couple.isCouplePlan && couple.partners.length > 0 && (
+        <SenderFilter value={senderFilter} onChange={setSenderFilter} className="mt-2" />
+      )}
 
       {/* Calendar Views */}
       {view === "month" && renderMonthView()}
