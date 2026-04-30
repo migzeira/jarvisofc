@@ -5,6 +5,7 @@ import { OnboardingBanner } from "@/components/OnboardingBanner";
 import { Button } from "@/components/ui/button";
 import { Menu, X } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { CoupleContextProvider } from "@/hooks/useCoupleContext";
 
 function DashboardHeader() {
   const { toggleSidebar, openMobile } = useSidebar();
@@ -47,17 +48,19 @@ function DashboardHeader() {
 
 export default function DashboardLayout() {
   return (
-    <SidebarProvider>
-      <div className="min-h-screen flex w-full">
-        <AppSidebar />
-        <div className="flex-1 flex flex-col min-w-0">
-          <DashboardHeader />
-          <OnboardingBanner />
-          <main className="flex-1 p-4 md:p-6 overflow-auto">
-            <Outlet />
-          </main>
+    <CoupleContextProvider>
+      <SidebarProvider>
+        <div className="min-h-screen flex w-full">
+          <AppSidebar />
+          <div className="flex-1 flex flex-col min-w-0">
+            <DashboardHeader />
+            <OnboardingBanner />
+            <main className="flex-1 p-4 md:p-6 overflow-auto">
+              <Outlet />
+            </main>
+          </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+    </CoupleContextProvider>
   );
 }

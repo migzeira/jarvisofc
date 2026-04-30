@@ -1,18 +1,18 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { isCouplePlan } from "@/lib/plan";
 
 /**
- * useCoupleContext — hook que carrega o contexto de plano casal:
- *   - isCouplePlan: true se o user tem plano casal
- *   - partners: lista de partners ativos (até 2)
- *   - masterPhone: phone do master (próprio user)
- *   - masterName: nome de exibição do master (display_name → primeiro nome)
- *   - getSenderLabel(sent_by_phone): retorna o nome a exibir no badge
- *   - getSenderColorClass(sent_by_phone): retorna classe Tailwind pra cor do badge
+ * useCoupleContext — Context API com 1 ÚNICA query pro estado do plano casal.
  *
- * Cliente solo: isCouplePlan=false, partners=[], badges não são renderizados.
+ * ANTES era hook standalone que cada `<SenderBadge>` chamava — em uma lista
+ * com 17 transações, eram 17 queries paralelas → race condition + rate limit.
+ *
+ * AGORA: provider faz UMA query no topo, hook consome via useContext.
+ * Componentes filhos compartilham o mesmo estado, sem queries extras.
+ *
+ * Cliente solo: isCouplePlan=false, partners=[], badges não renderizam.
  */
 
 export interface PartnerInfo {
@@ -23,7 +23,7 @@ export interface PartnerInfo {
   partner_nickname: string | null;
 }
 
-interface CoupleContext {
+interface CoupleCtx {
   isCouplePlan: boolean;
   loading: boolean;
   partners: PartnerInfo[];
@@ -31,7 +31,7 @@ interface CoupleContext {
   masterName: string;
   /** Retorna label a mostrar no badge ("João", "Maria"). Null se não souber. */
   getSenderLabel: (sentByPhone: string | null | undefined) => string | null;
-  /** Retorna par de classes Tailwind pra cor do badge: { bg, text, border } */
+  /** Retorna classes Tailwind pra cor do badge: { bg, text, border } */
   getSenderColorClass: (sentByPhone: string | null | undefined) => {
     bg: string;
     text: string;
@@ -41,7 +41,24 @@ interface CoupleContext {
   reload: () => void;
 }
 
-/** Normaliza phone (só dígitos, com 55 prefix). Igual ao normalizePhone do ConfigCasal. */
+const DEFAULT_CTX: CoupleCtx = {
+  isCouplePlan: false,
+  loading: false,
+  partners: [],
+  masterPhone: null,
+  masterName: "Você",
+  getSenderLabel: () => null,
+  getSenderColorClass: () => ({
+    bg: "bg-slate-500/10",
+    text: "text-slate-300",
+    border: "border-slate-500/30",
+  }),
+  reload: () => {},
+};
+
+const CoupleReactContext = createContext<CoupleCtx>(DEFAULT_CTX);
+
+/** Normaliza phone (só dígitos, com 55 prefix). */
 function normalize(phone: string | null | undefined): string {
   if (!phone) return "";
   let n = phone.replace(/\D/g, "");
@@ -56,29 +73,13 @@ function firstName(full: string | null | undefined): string {
 }
 
 const COLOR_BY_SLOT: Record<string, { bg: string; text: string; border: string }> = {
-  master: {
-    bg: "bg-violet-500/10",
-    text: "text-violet-300",
-    border: "border-violet-500/30",
-  },
-  slot1: {
-    bg: "bg-cyan-500/10",
-    text: "text-cyan-300",
-    border: "border-cyan-500/30",
-  },
-  slot2: {
-    bg: "bg-pink-500/10",
-    text: "text-pink-300",
-    border: "border-pink-500/30",
-  },
-  unknown: {
-    bg: "bg-slate-500/10",
-    text: "text-slate-300",
-    border: "border-slate-500/30",
-  },
+  master: { bg: "bg-violet-500/10", text: "text-violet-300", border: "border-violet-500/30" },
+  slot1:  { bg: "bg-cyan-500/10",   text: "text-cyan-300",   border: "border-cyan-500/30"   },
+  slot2:  { bg: "bg-pink-500/10",   text: "text-pink-300",   border: "border-pink-500/30"   },
+  unknown:{ bg: "bg-slate-500/10",  text: "text-slate-300",  border: "border-slate-500/30"  },
 };
 
-export function useCoupleContext(): CoupleContext {
+export function CoupleContextProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<{
@@ -94,25 +95,27 @@ export function useCoupleContext(): CoupleContext {
       return;
     }
     setLoading(true);
-
-    // Profile + partners em paralelo
-    const [profileRes, partnersRes] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select("plan, phone_number, display_name")
-        .eq("id", user.id)
-        .maybeSingle(),
-      (supabase as any)
-        .from("profile_partners")
-        .select("id, slot, partner_name, partner_phone, partner_nickname")
-        .eq("master_user_id", user.id)
-        .eq("is_active", true)
-        .order("slot"),
-    ]);
-
-    setProfile((profileRes.data as any) ?? null);
-    setPartners(((partnersRes.data as PartnerInfo[]) ?? []));
-    setLoading(false);
+    try {
+      const [profileRes, partnersRes] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("plan, phone_number, display_name")
+          .eq("id", user.id)
+          .maybeSingle(),
+        (supabase as any)
+          .from("profile_partners")
+          .select("id, slot, partner_name, partner_phone, partner_nickname")
+          .eq("master_user_id", user.id)
+          .eq("is_active", true)
+          .order("slot"),
+      ]);
+      setProfile((profileRes.data as any) ?? null);
+      setPartners(((partnersRes.data as PartnerInfo[]) ?? []));
+    } catch (e) {
+      console.error("[CoupleContextProvider] load error:", e);
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
 
   useEffect(() => {
@@ -120,12 +123,11 @@ export function useCoupleContext(): CoupleContext {
   }, [load]);
 
   // Realtime: re-carrega partners quando há mudança em profile_partners
-  // (cadastro/remoção pelo ConfigCasal). Sem isso, dashboard precisava recarregar
-  // pra ver badges aparecerem após cadastrar partner.
+  // (cadastro/remoção pelo ConfigCasal). Sem isso, dashboard precisava recarregar.
   useEffect(() => {
     if (!user) return;
     const channel = supabase
-      .channel(`profile_partners_${user.id.slice(0, 8)}`)
+      .channel(`couple_ctx_${user.id.slice(0, 8)}`)
       .on(
         "postgres_changes" as any,
         {
@@ -144,9 +146,11 @@ export function useCoupleContext(): CoupleContext {
 
   const couplePlan = isCouplePlan(profile?.plan ?? null);
   const masterPhone = useMemo(() => normalize(profile?.phone_number), [profile?.phone_number]);
-  const masterName = useMemo(() => firstName(profile?.display_name) || "Você", [profile?.display_name]);
+  const masterName = useMemo(
+    () => firstName(profile?.display_name) || "Você",
+    [profile?.display_name]
+  );
 
-  // Mapa pre-computado: phone normalizado → partner info
   const partnerByPhone = useMemo(() => {
     const m = new Map<string, PartnerInfo>();
     for (const p of partners) {
@@ -158,17 +162,14 @@ export function useCoupleContext(): CoupleContext {
   const getSenderLabel = useCallback(
     (sentByPhone: string | null | undefined): string | null => {
       if (!couplePlan) return null;
-      // sent_by_phone = NULL → registro do master
       if (!sentByPhone) return masterName;
       const norm = normalize(sentByPhone);
-      // Bate com phone do master
       if (norm === masterPhone) return masterName;
-      // Bate com algum partner
       const partner = partnerByPhone.get(norm);
       if (partner) {
         return partner.partner_nickname || firstName(partner.partner_name) || partner.partner_name;
       }
-      return null; // não reconheceu
+      return null;
     },
     [couplePlan, masterName, masterPhone, partnerByPhone]
   );
@@ -186,14 +187,24 @@ export function useCoupleContext(): CoupleContext {
     [masterPhone, partnerByPhone]
   );
 
-  return {
-    isCouplePlan: couplePlan,
-    loading,
-    partners,
-    masterPhone: masterPhone || null,
-    masterName,
-    getSenderLabel,
-    getSenderColorClass,
-    reload: load,
-  };
+  const value = useMemo<CoupleCtx>(
+    () => ({
+      isCouplePlan: couplePlan,
+      loading,
+      partners,
+      masterPhone: masterPhone || null,
+      masterName,
+      getSenderLabel,
+      getSenderColorClass,
+      reload: load,
+    }),
+    [couplePlan, loading, partners, masterPhone, masterName, getSenderLabel, getSenderColorClass, load]
+  );
+
+  return <CoupleReactContext.Provider value={value}>{children}</CoupleReactContext.Provider>;
+}
+
+/** Hook consume contexto. Lança fallback default se não houver provider. */
+export function useCoupleContext(): CoupleCtx {
+  return useContext(CoupleReactContext);
 }
