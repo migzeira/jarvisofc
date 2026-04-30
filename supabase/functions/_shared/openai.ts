@@ -971,7 +971,7 @@ export async function assistantChat(
     "es": "Debes responder EXCLUSIVAMENTE en Español. TODOS los mensajes, confirmaciones, preguntas, sugerencias y errores deben estar en Español, sin importar el idioma del usuario. NO mezcles idiomas.",
   };
 
-  const toneInstruction = TONE_DESCRIPTIONS[tone] ?? TONE_DESCRIPTIONS["casual"];
+  const toneInstruction = TONE_DESCRIPTIONS[tone] ?? TONE_DESCRIPTIONS["amigavel"];
   const langInstruction = LANGUAGE_INSTRUCTIONS[language] ?? LANGUAGE_INSTRUCTIONS["pt-BR"];
   const userRef = userNickname ? `Always address the user as "${userNickname}".` : "";
   const extra = customInstructions ? `\n\nAdditional instructions:\n${customInstructions}` : "";

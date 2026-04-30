@@ -32,6 +32,7 @@ import {
   handleListRemoveItem,
   handleListDelete,
 } from "../_shared/listsHandler.ts";
+import { applyTone, type Tone } from "../_shared/toneFormatter.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -7260,7 +7261,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     }
 
     const agentName = config?.agent_name ?? "Jarvis";
-    const tone = config?.tone ?? "profissional";
+    const tone = config?.tone ?? "amigavel"; // default amigavel — mais caloroso pra UX WhatsApp
     const language = (config?.language as string) || "pt-BR";
     const userNickname = (config?.user_nickname as string) || null;
     const customInstructions = (config?.custom_instructions as string) || null;
@@ -7328,7 +7329,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           const reply = match.reply_text
             .replace("{{user_name}}", (config?.user_nickname as string) || "")
             .replace("{{agent_name}}", agentName);
-          await sendText(sendPhone || replyTo, reply);
+          await sendText(sendPhone || replyTo, applyTone(reply, tone as Tone | undefined));
           log.push(`quick_reply: ${match.trigger_text}`);
           return log;
         }
@@ -7563,7 +7564,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
       // Envia responseText se não vazio (executeOrder envia sozinho → retorna "")
       if (responseText) {
-        await sendText(sendPhone || replyTo, responseText).catch((err) =>
+        await sendText(sendPhone || replyTo, applyTone(responseText, tone as Tone | undefined)).catch((err) =>
           console.error("[order_confirm top-level] sendText failed:", err)
         );
       }
@@ -7590,7 +7591,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (language !== "pt-BR") {
         responseText = await translateIfNeeded(responseText, language);
       }
-      await sendText(sendPhone || replyTo, responseText);
+      await sendText(sendPhone || replyTo, applyTone(responseText, tone as Tone | undefined));
       log.push("greeting_sent");
       return log; // early return — não salva sessão pendente, não incrementa contador de módulos
     } else if (!moduleActive) {
@@ -8418,6 +8419,10 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (language !== "pt-BR") {
         responseText = await translateIfNeeded(responseText, language);
       }
+      // Aplica tom de voz do usuário antes de enviar.
+      // tone vem da config do user (linha ~7263). Default "amigavel" se não setado.
+      // applyTone é safe — se algo falhar, retorna mensagem original.
+      responseText = applyTone(responseText, tone as Tone | undefined);
       try {
         await sendText(sendPhone || replyTo, responseText);
       } catch (sendErr) {

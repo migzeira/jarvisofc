@@ -44,7 +44,7 @@ export default function ConfigAgente({ hideTitle = false }: { hideTitle?: boolea
       setConfig({
         ...raw,
         user_nickname: raw.user_nickname ?? firstName ?? "",
-        tone: raw.tone ?? "profissional",
+        tone: raw.tone ?? "amigavel", // default amigavel — mais caloroso pra UX WhatsApp
         language: raw.language ?? "pt-BR",
         module_finance: raw.module_finance !== false,
         module_agenda: raw.module_agenda !== false,
@@ -64,7 +64,7 @@ export default function ConfigAgente({ hideTitle = false }: { hideTitle?: boolea
       // Trim nickname; persist null when empty so the webhook falls back gracefully
       user_nickname: config.user_nickname?.trim() || null,
       // Always save resolved values (never undefined / never blank string for selects)
-      tone: config.tone || "profissional",
+      tone: config.tone || "amigavel",
       language: config.language || "pt-BR",
       // Never overwrite system_prompt — it has no UI field here
       // Trim custom_instructions: se o user digita só espaço, salva null (não espaço)
