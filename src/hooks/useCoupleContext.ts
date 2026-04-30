@@ -119,6 +119,29 @@ export function useCoupleContext(): CoupleContext {
     load();
   }, [load]);
 
+  // Realtime: re-carrega partners quando há mudança em profile_partners
+  // (cadastro/remoção pelo ConfigCasal). Sem isso, dashboard precisava recarregar
+  // pra ver badges aparecerem após cadastrar partner.
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel(`profile_partners_${user.id.slice(0, 8)}`)
+      .on(
+        "postgres_changes" as any,
+        {
+          event: "*",
+          schema: "public",
+          table: "profile_partners",
+          filter: `master_user_id=eq.${user.id}`,
+        },
+        () => load()
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, load]);
+
   const couplePlan = isCouplePlan(profile?.plan ?? null);
   const masterPhone = useMemo(() => normalize(profile?.phone_number), [profile?.phone_number]);
   const masterName = useMemo(() => firstName(profile?.display_name) || "Você", [profile?.display_name]);
