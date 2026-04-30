@@ -7,39 +7,48 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Heart, Save, Trash2, Phone, User, AlertTriangle } from "lucide-react";
+import { Heart, Save, Trash2, Phone, User, AlertTriangle, Plus } from "lucide-react";
 
 /**
  * ConfigCasal — Aba "Casal" em Configurações.
  *
  * Visível APENAS pra usuários com plano casal (maya_casal_mensal / maya_casal_anual).
- * Permite cadastrar até 2 partners (slot 1 e slot 2). Cada partner tem nome,
- * telefone e apelido (como o Jarvis vai chamar a pessoa).
+ *
+ * Modelo:
+ *  - Master (dono da conta) está cadastrado em Perfil & Plano (display_name +
+ *    phone_number) — não duplica aqui.
+ *  - Aba Casal cadastra APENAS o parceiro(a) — total de 2 pessoas no plano:
+ *    o master + 1 parceiro.
  *
  * Comportamento:
- *  - Quando o partner manda mensagem do WhatsApp dele, o webhook reconhece
+ *  - Quando o parceiro manda mensagem do WhatsApp dele, o webhook reconhece
  *    pelo phone e grava sent_by_phone em todos os registros (transactions,
  *    events, reminders, notes).
  *  - Master vê tudo no dashboard com tags de quem registrou.
- *  - Conversas privadas: master não vê msgs do partner e vice-versa.
+ *  - Conversas privadas: master não vê msgs do parceiro e vice-versa.
+ *
+ * Slot:
+ *  - Schema permite slot 1 e 2 (futuro plano "Família" com até 4 pessoas).
+ *  - Pra v1 do Casal usamos APENAS slot 1.
+ *  - Se houver dados antigos no slot 2, exibimos pro user remover.
  */
 
 interface Partner {
   id?: string;
-  slot: 1 | 2;
+  slot: number;
   partner_name: string;
   partner_phone: string;
   partner_nickname: string | null;
-  is_active: boolean;
 }
 
-const EMPTY_PARTNER = (slot: 1 | 2): Partner => ({
-  slot,
+const EMPTY_PARTNER = (): Partner => ({
+  slot: 1,
   partner_name: "",
   partner_phone: "",
   partner_nickname: null,
-  is_active: true,
 });
+
+const MAX_PARTNERS = 1; // v1 Casal = 1 parceiro. Futuro família = 3.
 
 /** Normaliza phone pra formato consistente (só dígitos, com 55 prefix). */
 function normalizePhone(raw: string): string {
@@ -48,13 +57,12 @@ function normalizePhone(raw: string): string {
   return n;
 }
 
-/** Valida se phone tem dígitos suficientes (8-15). */
+/** Valida se phone tem dígitos suficientes. */
 function isValidPhone(raw: string): boolean {
   const digits = raw.replace(/\D/g, "");
   return digits.length >= 10 && digits.length <= 15;
 }
 
-/** Formata pra exibição: 55 11 9 9999-9999 → +55 (11) 99999-9999 */
 function formatPhone(raw: string): string {
   const digits = raw.replace(/\D/g, "");
   if (digits.length === 13 && digits.startsWith("55")) {
@@ -69,11 +77,9 @@ function formatPhone(raw: string): string {
 export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean } = {}) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [partners, setPartners] = useState<{ 1: Partner; 2: Partner }>({
-    1: EMPTY_PARTNER(1),
-    2: EMPTY_PARTNER(2),
-  });
-  const [saving, setSaving] = useState<{ 1: boolean; 2: boolean }>({ 1: false, 2: false });
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [draft, setDraft] = useState<Partner | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (user) loadPartners();
@@ -91,27 +97,21 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
 
     if (error) {
       console.error("[ConfigCasal] load error:", error);
-      toast.error("Erro ao carregar parceiros");
+      toast.error("Erro ao carregar parceiro");
+      setPartners([]);
     } else {
-      const next = { 1: EMPTY_PARTNER(1), 2: EMPTY_PARTNER(2) };
-      for (const p of (data ?? []) as Partner[]) {
-        if (p.slot === 1 || p.slot === 2) {
-          next[p.slot] = { ...p };
-        }
-      }
-      setPartners(next);
+      setPartners(((data ?? []) as Partner[]).map((p) => ({ ...p })));
     }
+    setDraft(null);
     setLoading(false);
   };
 
-  const handleSave = async (slot: 1 | 2) => {
+  const handleSave = async (p: Partner) => {
     if (!user) return;
-    const partner = partners[slot];
 
-    // Validação
-    const trimName = partner.partner_name.trim();
-    const trimNickname = partner.partner_nickname?.trim() || null;
-    const phone = normalizePhone(partner.partner_phone);
+    const trimName = p.partner_name.trim();
+    const trimNickname = p.partner_nickname?.trim() || null;
+    const phone = normalizePhone(p.partner_phone);
 
     if (trimName.length < 1 || trimName.length > 60) {
       toast.error("Nome precisa ter entre 1 e 60 caracteres");
@@ -122,10 +122,9 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
       return;
     }
 
-    setSaving((s) => ({ ...s, [slot]: true }));
-
+    setSaving(true);
     try {
-      // Verifica se phone já está em uso por OUTRO master (constraint do banco)
+      // Verifica se phone já é de outro casal
       const { data: existing } = await (supabase as any)
         .from("profile_partners")
         .select("master_user_id, slot")
@@ -133,13 +132,13 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
         .eq("is_active", true)
         .maybeSingle();
 
-      if (existing && (existing.master_user_id !== user.id || existing.slot !== slot)) {
-        toast.error("Esse telefone já está cadastrado como parceiro de outro casal");
-        setSaving((s) => ({ ...s, [slot]: false }));
+      if (existing && (existing.master_user_id !== user.id || existing.slot !== p.slot)) {
+        toast.error("Esse telefone já é parceiro de outro casal");
+        setSaving(false);
         return;
       }
 
-      // Verifica se o phone bate com o do próprio master
+      // Verifica se phone bate com o do próprio master
       const { data: me } = await supabase
         .from("profiles")
         .select("phone_number")
@@ -148,13 +147,13 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
       const mePhone = normalizePhone((me?.phone_number as string) ?? "");
       if (mePhone && mePhone === phone) {
         toast.error("Esse é o seu próprio telefone — cadastre o do parceiro");
-        setSaving((s) => ({ ...s, [slot]: false }));
+        setSaving(false);
         return;
       }
 
       const payload = {
         master_user_id: user.id,
-        slot,
+        slot: p.slot,
         partner_name: trimName,
         partner_phone: phone,
         partner_nickname: trimNickname,
@@ -162,16 +161,14 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
       };
 
       let result;
-      if (partner.id) {
-        // UPDATE (já existe)
+      if (p.id) {
         result = await (supabase as any)
           .from("profile_partners")
           .update(payload)
-          .eq("id", partner.id)
+          .eq("id", p.id)
           .select()
           .single();
       } else {
-        // INSERT (novo)
         result = await (supabase as any)
           .from("profile_partners")
           .insert(payload)
@@ -183,32 +180,26 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
         console.error("[ConfigCasal] save error:", result.error);
         toast.error("Erro ao salvar parceiro");
       } else {
-        toast.success(partner.id ? "Parceiro atualizado!" : "Parceiro adicionado!");
+        toast.success(p.id ? "Parceiro atualizado!" : "Parceiro adicionado!");
         await loadPartners();
       }
     } catch (e) {
       console.error("[ConfigCasal] save exception:", e);
       toast.error("Erro ao salvar parceiro");
     } finally {
-      setSaving((s) => ({ ...s, [slot]: false }));
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (slot: 1 | 2) => {
-    if (!user) return;
-    const partner = partners[slot];
-    if (!partner.id) {
-      // Não foi salvo ainda → só limpa o form local
-      setPartners((p) => ({ ...p, [slot]: EMPTY_PARTNER(slot) }));
-      return;
-    }
-    if (!window.confirm(`Remover ${partner.partner_name} do plano casal?`)) return;
+  const handleDelete = async (p: Partner) => {
+    if (!user || !p.id) return;
+    if (!window.confirm(`Remover ${p.partner_name} do plano casal?`)) return;
 
-    // Soft delete — mantém histórico de sent_by_phone nos registros antigos
+    // Soft delete preserva sent_by_phone nos registros antigos
     const { error } = await (supabase as any)
       .from("profile_partners")
       .update({ is_active: false })
-      .eq("id", partner.id);
+      .eq("id", p.id);
 
     if (error) {
       toast.error("Erro ao remover parceiro");
@@ -218,14 +209,23 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
     }
   };
 
+  const startNewDraft = () => {
+    // Próximo slot disponível (1 ou 2)
+    const usedSlots = new Set(partners.map((p) => p.slot));
+    const slot = usedSlots.has(1) ? 2 : 1;
+    setDraft({ ...EMPTY_PARTNER(), slot });
+  };
+
   if (loading) {
     return (
       <div className="space-y-6 max-w-3xl">
-        <Skeleton className="h-40" />
-        <Skeleton className="h-40" />
+        <Skeleton className="h-32" />
+        <Skeleton className="h-48" />
       </div>
     );
   }
+
+  const canAdd = partners.length < MAX_PARTNERS && !draft;
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -235,7 +235,7 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
             <Heart className="h-6 w-6 text-pink-400" /> Plano Casal
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Cadastre até 2 parceiros. Cada um manda mensagem pelo seu próprio WhatsApp e o Jarvis registra com tag de quem fez.
+            Adicione seu parceiro(a). Cada um manda mensagem pelo WhatsApp dele e o Jarvis registra com tag de quem fez.
           </p>
         </div>
       )}
@@ -248,9 +248,11 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
             <div className="text-sm">
               <p className="font-semibold text-foreground">Como funciona:</p>
               <ul className="mt-2 space-y-1 text-muted-foreground text-xs leading-relaxed">
-                <li>• Cada parceiro conversa privadamente com o Jarvis pelo WhatsApp dele.</li>
+                <li>• Você já está cadastrado(a) em <strong>Configurações &gt; Perfil &amp; Plano</strong> (seu nome e WhatsApp).</li>
+                <li>• Aqui você adiciona apenas <strong>seu parceiro(a)</strong> — total de 2 pessoas no plano.</li>
+                <li>• Cada um conversa privadamente com o Jarvis pelo WhatsApp dele.</li>
                 <li>• Finanças, agenda, anotações e listas ficam <strong>compartilhadas</strong> nesse painel.</li>
-                <li>• Cada registro tem badge mostrando quem foi (João / Maria).</li>
+                <li>• Cada registro tem badge mostrando quem foi (você / parceiro).</li>
                 <li>• Lembretes e hábitos são <strong>pessoais</strong> — vão pra quem criou.</li>
                 <li>• "Quanto eu gastei?" mostra só seus gastos. "Quanto a gente gastou?" mostra do casal.</li>
               </ul>
@@ -259,129 +261,183 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
         </CardContent>
       </Card>
 
-      {/* Slots de partners */}
-      {[1, 2].map((slotNum) => {
-        const slot = slotNum as 1 | 2;
-        const partner = partners[slot];
-        const hasData = !!partner.id;
-        return (
-          <Card key={slot} className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-primary" />
-                  Parceiro {slot}
-                  {hasData && (
-                    <span className="text-xs font-normal text-emerald-400 ml-1">● ativo</span>
-                  )}
-                </span>
-                {hasData && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDelete(slot)}
-                    disabled={saving[slot]}
-                    className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 h-8"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Remover
-                  </Button>
-                )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor={`partner-name-${slot}`}>
-                    Nome completo <span className="text-rose-400">*</span>
-                  </Label>
-                  <Input
-                    id={`partner-name-${slot}`}
-                    value={partner.partner_name}
-                    onChange={(e) =>
-                      setPartners((p) => ({
-                        ...p,
-                        [slot]: { ...p[slot], partner_name: e.target.value.slice(0, 60) },
-                      }))
-                    }
-                    placeholder="Ex: Maria Silva"
-                    maxLength={60}
-                    disabled={saving[slot]}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor={`partner-nickname-${slot}`}>
-                    Como o Jarvis vai chamar <span className="text-muted-foreground text-xs">(opcional)</span>
-                  </Label>
-                  <Input
-                    id={`partner-nickname-${slot}`}
-                    value={partner.partner_nickname ?? ""}
-                    onChange={(e) =>
-                      setPartners((p) => ({
-                        ...p,
-                        [slot]: { ...p[slot], partner_nickname: e.target.value.slice(0, 60) || null },
-                      }))
-                    }
-                    placeholder="Ex: Maria, Mari, Amor"
-                    maxLength={60}
-                    disabled={saving[slot]}
-                  />
-                </div>
-              </div>
+      {/* Lista de parceiros existentes */}
+      {partners.map((p) => (
+        <PartnerCard
+          key={p.id ?? `slot-${p.slot}`}
+          partner={p}
+          saving={saving}
+          onChange={(updated) =>
+            setPartners((prev) => prev.map((x) => (x.id === p.id ? updated : x)))
+          }
+          onSave={() => handleSave(p)}
+          onDelete={() => handleDelete(p)}
+        />
+      ))}
 
-              <div className="space-y-2">
-                <Label htmlFor={`partner-phone-${slot}`} className="flex items-center gap-1.5">
-                  <Phone className="h-3.5 w-3.5" /> Telefone do WhatsApp <span className="text-rose-400">*</span>
-                </Label>
-                <Input
-                  id={`partner-phone-${slot}`}
-                  value={partner.partner_phone}
-                  onChange={(e) =>
-                    setPartners((p) => ({
-                      ...p,
-                      [slot]: { ...p[slot], partner_phone: e.target.value.slice(0, 20) },
-                    }))
-                  }
-                  placeholder="11 99999-9999"
-                  disabled={saving[slot]}
-                />
-                {partner.partner_phone && (
-                  <p className="text-xs text-muted-foreground">
-                    Salvo como: <span className="font-mono">{formatPhone(partner.partner_phone)}</span>
-                  </p>
-                )}
-              </div>
+      {/* Form de novo parceiro */}
+      {draft && (
+        <PartnerCard
+          partner={draft}
+          saving={saving}
+          isDraft
+          onChange={(updated) => setDraft(updated)}
+          onSave={async () => {
+            await handleSave(draft);
+            // loadPartners já reseta draft via setDraft(null) interno
+          }}
+          onDelete={() => setDraft(null)}
+        />
+      )}
 
-              <div className="flex items-center justify-between gap-3 pt-1">
-                <p className="text-xs text-muted-foreground/70 flex items-start gap-1.5 flex-1">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-400" />
-                  <span>
-                    O parceiro precisa mandar a primeira mensagem pelo WhatsApp dele pra ativar.
-                  </span>
-                </p>
-                <Button
-                  size="sm"
-                  onClick={() => handleSave(slot)}
-                  disabled={
-                    saving[slot] ||
-                    partner.partner_name.trim().length < 1 ||
-                    !isValidPhone(partner.partner_phone)
-                  }
-                  className="shrink-0"
-                >
-                  {saving[slot] ? (
-                    "Salvando..."
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4 mr-1.5" />
-                      {hasData ? "Atualizar" : "Salvar"}
-                    </>
-                  )}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
+      {/* Botão adicionar (só se ainda há slot disponível) */}
+      {canAdd && (
+        <Button
+          variant="outline"
+          onClick={startNewDraft}
+          className="w-full gap-2 border-dashed h-14"
+        >
+          <Plus className="h-4 w-4" />
+          Adicionar parceiro(a)
+        </Button>
+      )}
+
+      {!canAdd && partners.length >= MAX_PARTNERS && (
+        <p className="text-xs text-muted-foreground text-center">
+          O plano casal permite 1 parceiro. Pra adicionar mais pessoas, espere o plano Família 👨‍👩‍👧.
+        </p>
+      )}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Card individual de parceiro (form de criar/editar)
+// ─────────────────────────────────────────────────────────────
+
+function PartnerCard({
+  partner,
+  saving,
+  isDraft = false,
+  onChange,
+  onSave,
+  onDelete,
+}: {
+  partner: Partner;
+  saving: boolean;
+  isDraft?: boolean;
+  onChange: (p: Partner) => void;
+  onSave: () => void;
+  onDelete: () => void;
+}) {
+  const hasData = !!partner.id;
+
+  return (
+    <Card className="bg-card border-border">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <User className="h-4 w-4 text-primary" />
+            {isDraft ? "Novo parceiro(a)" : "Parceiro(a)"}
+            {hasData && (
+              <span className="text-xs font-normal text-emerald-400 ml-1">● ativo</span>
+            )}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onDelete}
+            disabled={saving}
+            className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 h-8"
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1" />
+            {hasData ? "Remover" : "Cancelar"}
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>
+              Nome completo <span className="text-rose-400">*</span>
+            </Label>
+            <Input
+              value={partner.partner_name}
+              onChange={(e) =>
+                onChange({ ...partner, partner_name: e.target.value.slice(0, 60) })
+              }
+              placeholder="Ex: Maria Silva"
+              maxLength={60}
+              disabled={saving}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>
+              Como o Jarvis vai chamar <span className="text-muted-foreground text-xs">(opcional)</span>
+            </Label>
+            <Input
+              value={partner.partner_nickname ?? ""}
+              onChange={(e) =>
+                onChange({
+                  ...partner,
+                  partner_nickname: e.target.value.slice(0, 60) || null,
+                })
+              }
+              placeholder="Ex: Maria, Mari, Amor"
+              maxLength={60}
+              disabled={saving}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="flex items-center gap-1.5">
+            <Phone className="h-3.5 w-3.5" /> Telefone do WhatsApp{" "}
+            <span className="text-rose-400">*</span>
+          </Label>
+          <Input
+            value={partner.partner_phone}
+            onChange={(e) =>
+              onChange({ ...partner, partner_phone: e.target.value.slice(0, 20) })
+            }
+            placeholder="11 99999-9999"
+            disabled={saving}
+          />
+          {partner.partner_phone && (
+            <p className="text-xs text-muted-foreground">
+              Salvo como: <span className="font-mono">{formatPhone(partner.partner_phone)}</span>
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <p className="text-xs text-muted-foreground/70 flex items-start gap-1.5 flex-1">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-400" />
+            <span>
+              O parceiro precisa mandar a primeira mensagem pelo WhatsApp dele pra ativar.
+            </span>
+          </p>
+          <Button
+            size="sm"
+            onClick={onSave}
+            disabled={
+              saving ||
+              partner.partner_name.trim().length < 1 ||
+              !isValidPhone(partner.partner_phone)
+            }
+            className="shrink-0"
+          >
+            {saving ? (
+              "Salvando..."
+            ) : (
+              <>
+                <Save className="h-4 w-4 mr-1.5" />
+                {hasData ? "Atualizar" : "Salvar"}
+              </>
+            )}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
