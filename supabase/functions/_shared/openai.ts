@@ -1079,22 +1079,38 @@ Regras para remind_at:
 - "semana que vem" → +7 dias
 
 Regras para recurrence (analise CUIDADOSAMENTE — é muito importante detectar corretamente):
-- Sem indicativo de repetição → "none"
-- "todo dia" / "todos os dias" / "diariamente" / "cada dia" / "sempre" / "todo dia de manhã/tarde/noite" → "daily", recurrence_value = null
-- "toda semana" / "semanalmente" / "todas as semanas" (sem dia específico) → "weekly", recurrence_value = null
-- "toda segunda" / "toda segunda-feira" → "weekly", recurrence_value = 1
-- "toda terça" / "toda terça-feira" → "weekly", recurrence_value = 2
-- "toda quarta" / "toda quarta-feira" → "weekly", recurrence_value = 3
-- "toda quinta" / "toda quinta-feira" → "weekly", recurrence_value = 4
-- "toda sexta" / "toda sexta-feira" → "weekly", recurrence_value = 5
-- "todo sábado" / "todo fim de semana" → "weekly", recurrence_value = 6
-- "todo domingo" → "weekly", recurrence_value = 0
-- "todo dia 10" / "dia 10 de todo mês" / "todo mês no dia X" / "mensalmente no dia X" → "day_of_month", recurrence_value = X
-- "todo mês" / "mensalmente" (sem dia específico) → "monthly", recurrence_value = null
-- Para "toda [dia-da-semana]": recurrence_value = (0=dom, 1=seg, 2=ter, 3=qua, 4=qui, 5=sex, 6=sáb)
+
+REGRA PRINCIPAL: Recurrence só é diferente de "none" quando o usuário usar EXPLICITAMENTE
+palavras de repetição: "todo", "todos", "toda", "todas", "cada", "diariamente", "semanalmente",
+"mensalmente", "sempre", "a cada".
+
+Exemplos CRÍTICOS de coisas que NÃO são recorrentes (recurrence="none"):
+- "me lembra dia 1 de pagar fatura" → none (próximo dia 1 ÚNICO, não todo mês)
+- "me lembra na sexta de levar o lixo" → none (próxima sexta ÚNICA)
+- "me lembra amanhã às 14h" → none
+- "me lembra sábado às 10h" → none (próximo sábado ÚNICO)
+- "me lembra no dia 15 de pagar luz" → none (próximo dia 15 ÚNICO)
+
+Exemplos que SÃO recorrentes (note as palavras-chave em MAIÚSCULAS):
+- "TODO dia" / "TODOS os dias" / "DIARIAMENTE" / "CADA dia" / "SEMPRE" → "daily", recurrence_value = null
+- "TODA semana" / "SEMANALMENTE" / "TODAS as semanas" (sem dia específico) → "weekly", recurrence_value = null
+- "TODA segunda" / "TODA segunda-feira" → "weekly", recurrence_value = 1
+- "TODA terça" / "TODA terça-feira" → "weekly", recurrence_value = 2
+- "TODA quarta" / "TODA quarta-feira" → "weekly", recurrence_value = 3
+- "TODA quinta" / "TODA quinta-feira" → "weekly", recurrence_value = 4
+- "TODA sexta" / "TODA sexta-feira" → "weekly", recurrence_value = 5
+- "TODO sábado" / "TODO fim de semana" → "weekly", recurrence_value = 6
+- "TODO domingo" → "weekly", recurrence_value = 0
+- "TODO dia 10" / "dia 10 de TODO mês" / "TODO mês no dia X" / "MENSALMENTE no dia X" → "day_of_month", recurrence_value = X
+- "TODO mês" / "MENSALMENTE" (sem dia específico) → "monthly", recurrence_value = null
+- Para "TODA [dia-da-semana]": recurrence_value = (0=dom, 1=seg, 2=ter, 3=qua, 4=qui, 5=sex, 6=sáb)
 - Se for recorrente semanal sem dia específico → recurrence_value = null (herda o dia do remind_at)
-- "a cada X horas" / "de X em X horas" / "todo X horas" / "a cada hora" → "hourly", recurrence_value = X (número de horas, ex: 5 → a cada 5 horas; "a cada hora" → recurrence_value = 1)
-- "a cada X minutos" / "de X em X minutos" NÃO é suportado → use "hourly" com o valor mais próximo em horas
+- "A CADA X horas" / "de X em X horas" / "TODO X horas" / "A CADA hora" → "hourly", recurrence_value = X
+- "A CADA X minutos" / "de X em X minutos" NÃO é suportado → use "hourly" com o valor mais próximo em horas
+
+ATENÇÃO: Quando o usuário diz só "dia X" sem a palavra "todo", "cada" ou "mensalmente",
+SEMPRE recurrence = "none". O remind_at deve ser o PRÓXIMO dia X (mês atual se ainda
+não passou, mês seguinte se já passou). NUNCA assuma recorrência sem palavra explícita.
 
 Pedido: "${message}"`;
 

@@ -4137,7 +4137,7 @@ async function handleReminderEdit(
 
   const { data: reminders } = await supabase
     .from("reminders")
-    .select("id, title, message, send_at")
+    .select("id, title, message, send_at, recurrence, recurrence_value")
     .eq("user_id", userId)
     .eq("status", "pending")
     .order("send_at", { ascending: true });
@@ -4166,8 +4166,43 @@ async function handleReminderEdit(
     return "Não consegui identificar o novo horário. Pode repetir?";
   }
 
+  // ─── Atualização de recurrence — heurística inteligente ─────────────────
+  // Antes só atualizava send_at. Resultado: lembrete day_of_month=1 editado pra
+  // dia 3 mantinha "todo dia 1" no badge.
+  // Agora:
+  //  1. Se a edição cita explicitamente recurrence ("todo dia X", "diariamente",
+  //     "só uma vez"): aplica o que a IA retornou.
+  //  2. Se a edição NÃO cita recurrence E o original era recorrente:
+  //     PRESERVA a recorrência mas atualiza recurrence_value baseado no novo
+  //     dia (ex: day_of_month=1 → day_of_month=3 quando edita pro dia 3).
+  //  3. Se a edição NÃO cita recurrence E o original era none: mantém none.
+  const editMentionsRecurrence = /\b(todo|toda|todos|todas|cada|sempre|diariamente|semanalmente|mensalmente|nunca\s+mais|so\s+uma\s+vez|apenas\s+uma\s+vez|nao\s+repete)\b/.test(m);
+
+  let newRecurrence: string = match.recurrence ?? "none";
+  let newRecurrenceValue: number | null = match.recurrence_value ?? null;
+
+  if (editMentionsRecurrence) {
+    // User foi explícito sobre recurrence — usa o que IA disse
+    newRecurrence = parsed.recurrence;
+    newRecurrenceValue = parsed.recurrence_value;
+  } else if (match.recurrence && match.recurrence !== "none") {
+    // Original era recorrente, edição não menciona recorrência → preserva tipo,
+    // mas atualiza value baseado no novo dia se aplicável
+    if (match.recurrence === "day_of_month") {
+      newRecurrenceValue = newDate.getDate();
+    } else if (match.recurrence === "weekly") {
+      newRecurrenceValue = newDate.getDay();
+    }
+    // daily/monthly/hourly não dependem de value variável — preserva
+  }
+
   const { error } = await supabase.from("reminders")
-    .update({ send_at: newDate.toISOString(), status: "pending" })
+    .update({
+      send_at: newDate.toISOString(),
+      recurrence: newRecurrence,
+      recurrence_value: newRecurrenceValue,
+      status: "pending",
+    } as any)
     .eq("id", match.id)
     .eq("status", "pending"); // só edita pendentes
 
