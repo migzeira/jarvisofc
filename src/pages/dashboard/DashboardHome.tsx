@@ -515,7 +515,7 @@ export default function DashboardHome() {
                   title: "Cadastre seu WhatsApp",
                   hint: phoneSet ? null : (
                     <>Vá em{" "}
-                      <Link to="/dashboard/perfil" className="text-violet-400 underline">Meu Perfil</Link>
+                      <Link to="/dashboard/configuracoes" className="text-violet-400 underline">Configurações</Link>
                       {" "}e salve seu número com DDD</>
                   ),
                 },
