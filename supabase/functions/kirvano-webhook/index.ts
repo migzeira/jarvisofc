@@ -36,13 +36,34 @@ async function getSetting(key: string): Promise<string> {
 }
 
 // ─────────────────────────────────────────────────────────
-// Plano único — mensal ou anual (sem tiers de funcionalidade)
+// Plano — mensal/anual + variantes casal
 // ─────────────────────────────────────────────────────────
+// Detecta qual plano o cliente comprou olhando o NOME do produto no Kirvano.
+// Pra ativar o plano casal, basta o nome do produto conter "casal", "couple"
+// ou "duo" — não precisa de plan_id hardcoded.
+//
+// Possíveis retornos:
+//   - "maya_mensal"        — solo mensal
+//   - "maya_anual"         — solo anual
+//   - "maya_casal_mensal"  — casal mensal (ativa partners no app)
+//   - "maya_casal_anual"   — casal anual (idem)
 function detectPlan(productName: string): string {
   const lower = (productName ?? "").toLowerCase();
-  // Distingue apenas mensal vs anual para exibição
-  if (lower.includes("anual") || lower.includes("annual") || lower.includes("annually")) return "maya_anual";
-  return "maya_mensal";
+  const isCouple = /\b(casal|couple|duo)\b/.test(lower);
+  const isAnnual = lower.includes("anual") || lower.includes("annual") || lower.includes("annually");
+
+  if (isCouple) {
+    return isAnnual ? "maya_casal_anual" : "maya_casal_mensal";
+  }
+  return isAnnual ? "maya_anual" : "maya_mensal";
+}
+
+/**
+ * Verifica se o plano dá acesso ao recurso de partners (plano casal).
+ * Usado em outros pontos pra mostrar/esconder UI e liberar features de casal.
+ */
+export function isCouplePlan(plan: string | null | undefined): boolean {
+  return !!plan && /^maya_casal/.test(plan);
 }
 
 // ─────────────────────────────────────────────────────────
