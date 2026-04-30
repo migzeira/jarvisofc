@@ -824,7 +824,8 @@ async function handleFinanceRecord(
   phone: string,
   message: string,
   config: Record<string, unknown> | null,
-  userTz = "America/Sao_Paulo"
+  userTz = "America/Sao_Paulo",
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<string> {
   // Busca categorias do usuário (default + custom criadas via app)
   // pra que o Jarvis reconheça categorias personalizadas como "Pet", "Criptomoedas" etc
@@ -859,9 +860,10 @@ async function handleFinanceRecord(
       category: t.category,
       source: "whatsapp",
       transaction_date: todayUserTz,
+      sent_by_phone: senderPhone,
     }));
 
-    const { error } = await supabase.from("transactions").insert(inserts);
+    const { error } = await (supabase.from("transactions").insert(inserts as any) as any);
     if (error) throw error;
 
     // Sync Google Sheets (fire-and-forget)
@@ -906,7 +908,8 @@ async function handleFinanceRecord(
         installment_group: group,
         installment_number: i + 1,
         installment_total: numInstallments,
-      });
+        sent_by_phone: senderPhone,
+      } as any);
 
       monthNames.push(d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", ""));
     }
@@ -1865,7 +1868,8 @@ async function handleAgendaCreate(
   session: Record<string, unknown> | null,
   language = "pt-BR",
   userNickname: string | null = null,
-  userTz = "America/Sao_Paulo"
+  userTz = "America/Sao_Paulo",
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const today = todayInTz(userTz);
 
@@ -2229,6 +2233,7 @@ async function createEventAndConfirm(
     color,
     source: "whatsapp",
     status: "pending",
+    sent_by_phone: senderPhone,
   };
 
   if (extracted.reminder_minutes != null) {
@@ -2326,7 +2331,8 @@ async function createEventAndConfirm(
         recurrence: "none",
         source: "whatsapp",
         status: "pending",
-      });
+        sent_by_phone: senderPhone,
+      } as any);
     }
   }
 
@@ -2353,6 +2359,7 @@ async function createEventAndConfirm(
       reminder: extracted.reminder_minutes != null,
       reminder_minutes_before: extracted.reminder_minutes ?? null,
       recurrence_parent_id: event.id,
+      sent_by_phone: senderPhone,
     }));
     if (futureInserts.length > 0) {
       await supabase.from("events").insert(futureInserts);
@@ -2385,7 +2392,8 @@ async function createEventAndConfirm(
         recurrence: "none",
         source: "event_followup",
         status: "pending",
-      });
+        sent_by_phone: senderPhone,
+      } as any);
     }
   }
 
@@ -3188,7 +3196,8 @@ async function handleNotesSave(
   message: string,
   session: Record<string, unknown> | null,
   config: Record<string, unknown> | null = null,
-  userTz = "America/Sao_Paulo"
+  userTz = "America/Sao_Paulo",
+  senderPhone: string | null = null  // Plano casal: phone do partner que enviou (null = master)
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const userNickname = (config?.user_nickname as string) || "";
   const noteLang = (config?.language as string) || "pt-BR";
@@ -3230,7 +3239,8 @@ async function handleNotesSave(
       title: suggestedTitle || null,
       content: cleanContent,
       source: "whatsapp",
-    });
+      sent_by_phone: senderPhone,
+    } as any);
     if (noteErr) throw noteErr;
     syncNotion(userId, cleanContent).catch(() => {});
 
@@ -3314,7 +3324,7 @@ async function handleNotesSave(
         };
       }
       // Redireciona para criação de evento com a mensagem original
-      return await handleAgendaCreate(userId, phone, originalMessage, null, noteLang, userNickname || null, userTz);
+      return await handleAgendaCreate(userId, phone, originalMessage, null, noteLang, userNickname || null, userTz, senderPhone);
     }
 
     // Usuário quer salvar como nota (opção 2, ou qualquer outra resposta = fallback)
@@ -3324,7 +3334,8 @@ async function handleNotesSave(
       title: suggestedTitle || null,
       content: cleanContent,
       source: "whatsapp",
-    });
+      sent_by_phone: senderPhone,
+    } as any);
     if (error) throw error;
     syncNotion(userId, cleanContent).catch(() => {});
 
@@ -3340,7 +3351,7 @@ async function handleNotesSave(
     // Combina detalhes extras com a mensagem original e cria evento
     const originalMessage = ctx.originalMessage as string;
     const combinedMessage = `${originalMessage} — ${message}`;
-    return await handleAgendaCreate(userId, phone, combinedMessage, null, noteLang, userNickname || null, userTz);
+    return await handleAgendaCreate(userId, phone, combinedMessage, null, noteLang, userNickname || null, userTz, senderPhone);
   }
 
   // ─── STEP: note_extra_info ───
@@ -3399,7 +3410,8 @@ async function handleNotesSave(
         title: newContent.slice(0, 80),
         content: newContent,
         source: "whatsapp",
-      });
+        sent_by_phone: senderPhone,
+      } as any);
       if (ne) throw ne;
       syncNotion(userId, newContent).catch(() => {});
       const noteLine = applyTemplate(tplNote, { content: newContent, user_name: userNickname });
@@ -3464,7 +3476,8 @@ async function handleNotesSave(
       title: analysis.suggestedTitle || null,
       content: analysis.cleanContent,
       source: "whatsapp",
-    });
+      sent_by_phone: senderPhone,
+    } as any);
     if (ge) throw ge;
     syncNotion(userId, analysis.cleanContent).catch(() => {});
     const noteLine = applyTemplate(tplNote, { content: analysis.cleanContent, user_name: userNickname });
@@ -3533,7 +3546,8 @@ async function handleNotesSave(
     title: analysis.suggestedTitle || null,
     content: analysis.cleanContent,
     source: "whatsapp",
-  });
+    sent_by_phone: senderPhone,
+  } as any);
   if (error) throw error;
   syncNotion(userId, analysis.cleanContent).catch(() => {});
 
@@ -4262,7 +4276,8 @@ async function handleReminderSet(
   session: Record<string, unknown> | null = null,
   lang = "pt-BR",
   userNickname: string | null = null,
-  userTz = "America/Sao_Paulo"
+  userTz = "America/Sao_Paulo",
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const tzOff = getTzOffset(userTz);
   const nowIso = new Date().toLocaleString("sv-SE", {
@@ -4307,7 +4322,7 @@ async function handleReminderSet(
     }
 
     // Não quer aviso antecipado → salva na hora exata
-    return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz);
+    return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz, senderPhone);
   }
 
   // ─── STEP: reminder_advance ───
@@ -4328,7 +4343,7 @@ async function handleReminderSet(
     if (buttonAdvanceMap[msgLow] !== undefined) {
       const advMin = buttonAdvanceMap[msgLow];
       const advancedTime = new Date(remindAt.getTime() - advMin * 60 * 1000);
-      return await saveReminder(userId, phone, parsed, advancedTime, advMin, lang, userNickname, userTz);
+      return await saveReminder(userId, phone, parsed, advancedTime, advMin, lang, userNickname, userTz, senderPhone);
     }
 
     // ── Detecta se usuário está especificando recorrência na resposta ──
@@ -4340,7 +4355,7 @@ async function handleReminderSet(
         recurrence: recurrenceUpdate.recurrence,
         recurrence_value: recurrenceUpdate.recurrence_value,
       };
-      return await saveReminder(userId, phone, updatedParsed, remindAt, 0, lang, userNickname, userTz);
+      return await saveReminder(userId, phone, updatedParsed, remindAt, 0, lang, userNickname, userTz, senderPhone);
     }
 
     // Parser unificado: detecta intencao + tempo na mesma passada
@@ -4354,11 +4369,11 @@ async function handleReminderSet(
 
     if (answerAdv.kind === "accept_with_time") {
       const advancedTime = new Date(remindAt.getTime() - answerAdv.minutes * 60 * 1000);
-      return await saveReminder(userId, phone, parsed, advancedTime, answerAdv.minutes, lang, userNickname, userTz);
+      return await saveReminder(userId, phone, parsed, advancedTime, answerAdv.minutes, lang, userNickname, userTz, senderPhone);
     }
     // "so na hora" ou "nao precisa" → 0 min de antecedencia (avisa no horario exato)
     if (answerAdv.kind === "at_time" || answerAdv.kind === "decline") {
-      return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz);
+      return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz, senderPhone);
     }
 
     // accept_no_time ou unknown → pede o tempo especifico em texto livre
@@ -4435,7 +4450,7 @@ async function handleReminderSet(
   }
 
   // Tem antecedência explícita na mensagem → salva direto
-  return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz);
+  return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz, senderPhone);
 }
 
 /** Salva o lembrete no banco e retorna confirmação formatada */
@@ -4447,7 +4462,8 @@ async function saveReminder(
   advanceMin: number,
   lang = "pt-BR",
   userNickname: string | null = null,
-  userTz = "America/Sao_Paulo"
+  userTz = "America/Sao_Paulo",
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<{ response: string }> {
   // ── Limite de lembretes pendentes por usuário (evita abuso) ──
   const { count: pendingCount } = await supabase
@@ -4474,7 +4490,8 @@ async function saveReminder(
     recurrence_value: parsed.recurrence_value,
     source: "whatsapp",
     status: "pending",
-  });
+    sent_by_phone: senderPhone,
+  } as any);
 
   if (error) throw error;
 
@@ -7159,6 +7176,100 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
+    // ── PLANO CASAL: lookup de PARTNER se ainda não achamos profile ──────
+    // Procura phone/lid em profile_partners. Se bate, resolve pro master_user_id
+    // e popula partnerInfo. Todos os INSERTs subsequentes usarão sent_by_phone =
+    // phone do partner pra distinguir quem registrou no dashboard.
+    let partnerInfo: {
+      partner_phone: string;
+      partner_name: string;
+      partner_nickname: string | null;
+      slot: number;
+    } | null = null;
+
+    if (!profile) {
+      const phoneVariants = new Set<string>();
+      if (fallbackPhone) phoneVariants.add(fallbackPhone);
+      const replyDigitsForPartner = replyTo.replace(/@.*$/, "").replace(/[:\D]/g, "");
+      if (replyDigitsForPartner.length >= 10) phoneVariants.add(replyDigitsForPartner);
+      if (lid) {
+        const lidDigits = lid.replace(/\D/g, "");
+        if (lidDigits.length >= 10) phoneVariants.add(lidDigits);
+      }
+
+      // Tenta primeiro por whatsapp_lid (mais rápido — é resolvido após primeira msg)
+      if (lid) {
+        const { data: partnerByLid } = await (supabase as any)
+          .from("profile_partners")
+          .select("master_user_id, partner_phone, partner_name, partner_nickname, slot")
+          .eq("partner_whatsapp_lid", lid)
+          .eq("is_active", true)
+          .maybeSingle();
+        if (partnerByLid?.master_user_id) {
+          const { data: masterProfile } = await supabase
+            .from("profiles")
+            .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+            .eq("id", partnerByLid.master_user_id)
+            .maybeSingle();
+          if (masterProfile) {
+            profile = masterProfile;
+            partnerInfo = {
+              partner_phone: partnerByLid.partner_phone,
+              partner_name: partnerByLid.partner_name,
+              partner_nickname: partnerByLid.partner_nickname,
+              slot: partnerByLid.slot,
+            };
+            log.push(`partner_resolved_by_lid: slot=${partnerByLid.slot}`);
+          }
+        }
+      }
+
+      // Fallback: busca por phone (qualquer variação)
+      if (!profile && phoneVariants.size > 0) {
+        const phonesArr = Array.from(phoneVariants);
+        const orFilter = phonesArr.flatMap((p) => [
+          `partner_phone.eq.${p}`,
+          `partner_phone.eq.+${p}`,
+          `partner_phone.eq.55${p}`,
+        ]).join(",");
+
+        const { data: partnerByPhone } = await (supabase as any)
+          .from("profile_partners")
+          .select("master_user_id, partner_phone, partner_name, partner_nickname, slot")
+          .or(orFilter)
+          .eq("is_active", true)
+          .maybeSingle();
+
+        if (partnerByPhone?.master_user_id) {
+          const { data: masterProfile } = await supabase
+            .from("profiles")
+            .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+            .eq("id", partnerByPhone.master_user_id)
+            .maybeSingle();
+          if (masterProfile) {
+            profile = masterProfile;
+            partnerInfo = {
+              partner_phone: partnerByPhone.partner_phone,
+              partner_name: partnerByPhone.partner_name,
+              partner_nickname: partnerByPhone.partner_nickname,
+              slot: partnerByPhone.slot,
+            };
+            // Auto-link do LID pra próximas msgs serem mais rápidas
+            if (lid) {
+              (supabase as any)
+                .from("profile_partners")
+                .update({ partner_whatsapp_lid: lid })
+                .eq("master_user_id", partnerByPhone.master_user_id)
+                .eq("partner_phone", partnerByPhone.partner_phone)
+                .then(() => {})
+                .catch(() => {});
+            }
+            log.push(`partner_resolved_by_phone: slot=${partnerByPhone.slot}`);
+          }
+        }
+      }
+    }
+
     if (!profile) {
       // Loga o que chegou pra diagnosticar casos "unknown_number"
       try {
@@ -7668,7 +7779,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         }
       }
     } else if (intent === "finance_record") {
-      responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config, userTz);
+      responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config, userTz, partnerInfo?.partner_phone ?? null);
     } else if (intent === "category_list") {
       responseText = await handleCategoryList(profile.id);
     } else if (intent === "installment_query") {
@@ -7695,7 +7806,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         }
       }
     } else if (intent === "agenda_create" || session?.pending_action === "agenda_create") {
-      const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
+      const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz, partnerInfo?.partner_phone ?? null);
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
@@ -7783,23 +7894,23 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         pendingAction = isNotes ? "anota_await_content_notes" : isAgenda ? "anota_await_content_agenda" : "anota_await_content_reminder";
         pendingContext = {};
       } else if (isNotes) {
-        const r = await handleNotesSave(profile.id, sendPhone || replyTo, `anota: ${contentAfter}`, session, config, userTz);
+        const r = await handleNotesSave(profile.id, sendPhone || replyTo, `anota: ${contentAfter}`, session, config, userTz, partnerInfo?.partner_phone ?? null);
         responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
       } else if (isAgenda) {
-        const r = await handleAgendaCreate(profile.id, sendPhone || replyTo, contentAfter, session, language, userNickname, userTz);
+        const r = await handleAgendaCreate(profile.id, sendPhone || replyTo, contentAfter, session, language, userNickname, userTz, partnerInfo?.partner_phone ?? null);
         responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
       } else {
-        const r = await handleReminderSet(profile.id, sendPhone || replyTo, contentAfter, session, language, userNickname, userTz);
+        const r = await handleReminderSet(profile.id, sendPhone || replyTo, contentAfter, session, language, userNickname, userTz, partnerInfo?.partner_phone ?? null);
         responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
       }
     } else if (session?.pending_action === "anota_await_content_notes") {
-      const r = await handleNotesSave(profile.id, sendPhone || replyTo, `anota: ${text}`, session, config, userTz);
+      const r = await handleNotesSave(profile.id, sendPhone || replyTo, `anota: ${text}`, session, config, userTz, partnerInfo?.partner_phone ?? null);
       responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
     } else if (session?.pending_action === "anota_await_content_agenda") {
-      const r = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
+      const r = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz, partnerInfo?.partner_phone ?? null);
       responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
     } else if (session?.pending_action === "anota_await_content_reminder") {
-      const r = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
+      const r = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz, partnerInfo?.partner_phone ?? null);
       responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
     } else if (session?.pending_action === "list_await_name") {
       // Usuário disse "cria lista" sem nome — agora ele mandou o nome
@@ -7850,7 +7961,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       pendingAction = r.pendingAction ?? null;
       pendingContext = r.pendingContext ?? null;
     } else if (intent === "notes_save") {
-      const notesResult = await handleNotesSave(profile.id, sendPhone || replyTo, text, session, config, userTz);
+      const notesResult = await handleNotesSave(profile.id, sendPhone || replyTo, text, session, config, userTz, partnerInfo?.partner_phone ?? null);
       responseText = notesResult.response;
       pendingAction = notesResult.pendingAction;
       pendingContext = notesResult.pendingContext;
@@ -7871,7 +7982,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "reminder_edit") {
       responseText = await handleReminderEdit(profile.id, text, language, userTz);
     } else if (intent === "reminder_set") {
-      const reminderResult = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
+      const reminderResult = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz, partnerInfo?.partner_phone ?? null);
       responseText = reminderResult.response;
       pendingAction = reminderResult.pendingAction;
       pendingContext = reminderResult.pendingContext;
@@ -7901,7 +8012,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           description: ctx.description || "Encaminhado",
           transaction_date: txDate,
           source: "whatsapp_forward",
-        });
+          sent_by_phone: partnerInfo?.partner_phone ?? null,
+        } as any);
         const emoji = ctx.type === "income" ? "🟢" : "🔴";
         const catEm = CATEGORY_EMOJI[(ctx.category as string) ?? "outros"] ?? "📦";
         responseText = `${emoji} Registrado: R$ ${fmtBRL(ctx.amount as number)} — ${ctx.description || "encaminhado"} (${catEm} ${ctx.category || "outros"}) [📨 encaminhado]`;
@@ -7922,7 +8034,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           event_time: ctx.time ?? null,
           status: "confirmed",
           source: "whatsapp_forward",
-        });
+          sent_by_phone: partnerInfo?.partner_phone ?? null,
+        } as any);
         const dateStr = ctx.date ? ` — ${ctx.date}` : "";
         const timeStr = ctx.time ? ` às ${ctx.time}` : "";
         responseText = `✅ Evento criado: *${ctx.title || "Evento encaminhado"}*${dateStr}${timeStr} [📨 encaminhado]`;
