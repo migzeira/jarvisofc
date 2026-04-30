@@ -2249,12 +2249,42 @@ async function createEventAndConfirm(
 
   if (error) throw error;
 
+  // ─── Plano casal: decide se evento sincroniza com Google Calendar ──
+  // Regra:
+  //   - senderPhone null (master criou) → sempre sincroniza (igual sempre foi)
+  //   - senderPhone preenchido (partner criou) → só sincroniza se o master
+  //     tiver ativado "Compartilhar Google Calendar com parceiro" no
+  //     ConfigCasal (agent_configs.gcal_share_with_partners=true)
+  // Default seguro pra cliente solo: senderPhone sempre null → sincroniza.
+  let shouldSyncGoogle = true;
+  if (senderPhone) {
+    try {
+      const { data: cfg } = await (supabase as any)
+        .from("agent_configs")
+        .select("gcal_share_with_partners")
+        .eq("user_id", userId)
+        .maybeSingle();
+      shouldSyncGoogle = !!cfg?.gcal_share_with_partners;
+      if (!shouldSyncGoogle) {
+        console.log(`[gcal-sync] partner created event but share=OFF — skipping Google sync. user_id=${userId}`);
+      }
+    } catch (e) {
+      // Em caso de erro na lookup, segura pelo lado seguro: NÃO sincroniza
+      // (melhor ficar só no Jarvis do que vazar evento da partner pro Google
+      // do master sem permissão).
+      console.warn("[gcal-sync] gcal_share lookup failed, defaulting to NO sync:", e);
+      shouldSyncGoogle = false;
+    }
+  }
+
   // Sync Google Calendar — await pra capturar google_event_id, meeting_url e logar erros
   // Pra reuniao com horário, cria com Google Meet automaticamente
   let createdMeetLink: string | null = null;
   const shouldCreateMeet = (extracted.event_type === "reuniao" || extracted.event_type === "meeting" || extracted.event_type === "call") && !!extracted.time;
   try {
-    if (shouldCreateMeet) {
+    if (!shouldSyncGoogle) {
+      // Skip sync — evento fica só no Jarvis (sent_by_phone=partner E share=OFF)
+    } else if (shouldCreateMeet) {
       const { eventId: googleEventId, meetLink } = await createCalendarEventWithMeet(
         userId,
         extracted.title,

@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Heart, Save, Trash2, Phone, User, AlertTriangle, Plus } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Heart, Save, Trash2, Phone, User, AlertTriangle, Plus, Calendar } from "lucide-react";
 
 /**
  * ConfigCasal — Aba "Casal" em Configurações.
@@ -81,29 +82,77 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
   const [draft, setDraft] = useState<Partner | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Toggle de compartilhamento Google Calendar
+  const [gcalShare, setGcalShare] = useState(false);
+  const [gcalConnected, setGcalConnected] = useState(false);
+  const [gcalSavingShare, setGcalSavingShare] = useState(false);
+
   useEffect(() => {
-    if (user) loadPartners();
+    if (user) loadAll();
   }, [user]);
 
-  const loadPartners = async () => {
+  const loadAll = async () => {
     if (!user) return;
     setLoading(true);
-    const { data, error } = await (supabase as any)
-      .from("profile_partners")
-      .select("id, slot, partner_name, partner_phone, partner_nickname, is_active")
-      .eq("master_user_id", user.id)
-      .eq("is_active", true)
-      .order("slot");
 
-    if (error) {
-      console.error("[ConfigCasal] load error:", error);
+    // Carrega: partners + agent_configs (gcal_share_with_partners) + status do Google em paralelo
+    const [partnersRes, configRes, gcalRes] = await Promise.all([
+      (supabase as any)
+        .from("profile_partners")
+        .select("id, slot, partner_name, partner_phone, partner_nickname, is_active")
+        .eq("master_user_id", user.id)
+        .eq("is_active", true)
+        .order("slot"),
+      (supabase as any)
+        .from("agent_configs")
+        .select("gcal_share_with_partners")
+        .eq("user_id", user.id)
+        .maybeSingle(),
+      (supabase as any)
+        .from("google_calendar_credentials")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle(),
+    ]);
+
+    if (partnersRes.error) {
+      console.error("[ConfigCasal] load partners error:", partnersRes.error);
       toast.error("Erro ao carregar parceiro");
       setPartners([]);
     } else {
-      setPartners(((data ?? []) as Partner[]).map((p) => ({ ...p })));
+      setPartners(((partnersRes.data ?? []) as Partner[]).map((p) => ({ ...p })));
     }
+
+    setGcalShare(!!(configRes.data as any)?.gcal_share_with_partners);
+    setGcalConnected(!!gcalRes.data);
     setDraft(null);
     setLoading(false);
+  };
+
+  // Wrapper pra reload (chamado pelos handlers de partner)
+  const loadPartners = loadAll;
+
+  const handleToggleGcalShare = async (next: boolean) => {
+    if (!user || gcalSavingShare) return;
+    setGcalSavingShare(true);
+    const previous = gcalShare;
+    setGcalShare(next); // optimistic
+    const { error } = await (supabase as any)
+      .from("agent_configs")
+      .update({ gcal_share_with_partners: next })
+      .eq("user_id", user.id);
+    if (error) {
+      console.error("[ConfigCasal] toggle gcal_share error:", error);
+      toast.error("Erro ao salvar preferência");
+      setGcalShare(previous);
+    } else {
+      toast.success(
+        next
+          ? "Eventos do parceiro vão sincronizar com seu Google Calendar"
+          : "Eventos do parceiro ficam só no Jarvis"
+      );
+    }
+    setGcalSavingShare(false);
   };
 
   const handleSave = async (p: Partner) => {
@@ -260,6 +309,55 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
           </div>
         </CardContent>
       </Card>
+
+      {/* Card: Google Calendar Share — só aparece se já tem partner cadastrado */}
+      {partners.length > 0 && (
+        <Card className="bg-card border-border">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-blue-400" />
+              Google Calendar — Compartilhamento
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!gcalConnected ? (
+              <div className="text-sm text-muted-foreground p-3 rounded-md bg-muted/30 border border-border">
+                <p className="text-xs">
+                  Você ainda não conectou nenhuma conta do Google Calendar.
+                  Conecte na aba <strong>Configurações &gt; Perfil &amp; Plano</strong> primeiro.
+                  Sem isso, eventos da agenda ficam apenas dentro do Jarvis (sem sincronizar com Google).
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">
+                      Compartilhar Google Calendar com parceiro(a)
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      {gcalShare
+                        ? "✅ Quando seu parceiro criar evento pelo WhatsApp, ele aparece no SEU Google Calendar (com tag de quem criou)."
+                        : "❌ Eventos do seu parceiro ficam só dentro do Jarvis. Não sincronizam com Google Calendar."}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={gcalShare}
+                    onCheckedChange={handleToggleGcalShare}
+                    disabled={gcalSavingShare}
+                  />
+                </div>
+                <div className="flex items-start gap-1.5 text-[11px] text-muted-foreground/80 leading-relaxed">
+                  <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5 text-amber-400" />
+                  <span>
+                    Esta configuração afeta apenas eventos NOVOS. Eventos antigos não mudam.
+                  </span>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Lista de parceiros existentes */}
       {partners.map((p) => (
