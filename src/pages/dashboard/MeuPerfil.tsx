@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import {
   Save, Clock, CheckCircle, XCircle, Info, Smartphone, Lock, AlertTriangle,
   Crown, ExternalLink, Calendar, MessageSquare, Loader2, MapPin, CreditCard,
+  Copy,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -23,6 +24,13 @@ import { PlanCTAButtons } from "@/components/PlanCTAButtons";
 
 const SUPPORT_WHATSAPP = "5511999999999"; // TODO: trocar pelo número real de suporte
 const MAX_PHONE_CHANGES = 2; // após isso, campo fica bloqueado
+
+// Número oficial do Jarvis (WhatsApp do bot). Single source of truth pra
+// botões "Conversar com Jarvis" e exibição do número aos usuários que
+// querem salvar manualmente nos contatos.
+const JARVIS_WHATSAPP = "5511936196103";
+const JARVIS_WHATSAPP_FORMATTED = "+55 11 93619-6103";
+const JARVIS_WHATSAPP_LINK = `https://wa.me/${JARVIS_WHATSAPP}?text=Oi%20Jarvis!`;
 
 const COUNTRIES = [
   { ddi: "55",  code: "br", name: "Brasil",          placeholder: "11 99999-9999",  minLen: 10 },
@@ -624,57 +632,70 @@ export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean }
             </div>
           )}
 
-          {/* Jarvis pronto — botão pra conversar */}
-          {(linkingStatus === 'pending' || (profile.phone_number && !isPhoneLocked && !profile.whatsapp_lid && hasActivePlan && linkingStatus !== 'linking')) && linkingStatus !== 'idle' && (
+          {/* ── Card unificado "Converse com seu Jarvis" ─────────────────────
+              FIXO sempre que o user tem phone cadastrado + plano ativo
+              (independente de já ter linkado). Antes havia 2 cards quase
+              duplicados (verde "ativado" + azul "número cadastrado") que
+              não cobriam usuários que já tinham linkado e queriam reachar
+              o número de novo.
+              Responsivo: botão ocupa toda a largura no mobile (w-full) e
+              ajusta no desktop (sm:w-auto). Texto curto também adapta. */}
+          {profile.phone_number && !isPhoneLocked && hasActivePlan && linkingStatus !== 'linking' && (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-sm text-green-200">
               <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="font-semibold text-green-100">Jarvis ativado! Envie uma mensagem pra ele.</p>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-green-100">
+                  {profile.whatsapp_lid
+                    ? "Jarvis pronto pra conversar!"
+                    : "Jarvis ativado! Envie a primeira mensagem."}
+                </p>
                 <p className="mt-1 text-green-200/80">
-                  Clique no botão abaixo pra abrir o WhatsApp e começar a conversar com o Jarvis.
+                  {profile.whatsapp_lid
+                    ? "Clique no botão abaixo pra abrir o WhatsApp ou salve o número do Jarvis nos seus contatos."
+                    : "Clique no botão abaixo pra começar. Salve este número nos contatos pra encontrar fácil depois."}
                 </p>
-                <div className="flex flex-wrap gap-2 mt-3">
-                  <a
-                    href="https://wa.me/5511936196103?text=Oi%20Jarvis!"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <Button
-                      size="sm"
-                      variant="default"
-                      className="h-9 text-sm bg-green-600 hover:bg-green-500 font-semibold"
-                    >
-                      <MessageSquare className="mr-1.5 h-4 w-4" /> Conversar com Jarvis no WhatsApp
-                    </Button>
-                  </a>
-                </div>
-              </div>
-            </div>
-          )}
 
-          {/* Número ativo mas sem whatsapp_lid e idle (usuário antigo que nunca linkou) */}
-          {profile.phone_number && !isPhoneLocked && !profile.whatsapp_lid && hasActivePlan && linkingStatus === 'idle' && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-200">
-              <Smartphone className="h-4 w-4 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="font-semibold text-blue-100">Número cadastrado!</p>
-                <p className="mt-1 text-blue-200/80">
-                  Clique em <span className="font-semibold text-blue-100">Salvar</span> novamente ou envie uma mensagem pro Jarvis pra ativar.
-                </p>
-                <div className="flex flex-wrap gap-2 mt-3">
-                  <a
-                    href="https://wa.me/5511936196103?text=Oi%20Jarvis!"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                {/* Botão principal — responsivo: full no mobile, auto no desktop */}
+                <a
+                  href={JARVIS_WHATSAPP_LINK}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full sm:inline-block sm:w-auto mt-3"
+                >
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="h-10 w-full sm:w-auto text-sm bg-green-600 hover:bg-green-500 font-semibold whitespace-normal sm:whitespace-nowrap"
                   >
-                    <Button
-                      size="sm"
-                      variant="default"
-                      className="h-9 text-sm bg-green-600 hover:bg-green-500 font-semibold"
-                    >
-                      <MessageSquare className="mr-1.5 h-4 w-4" /> Conversar com Jarvis no WhatsApp
-                    </Button>
-                  </a>
+                    <MessageSquare className="mr-1.5 h-4 w-4 shrink-0" />
+                    <span className="sm:hidden">Conversar no WhatsApp</span>
+                    <span className="hidden sm:inline">Conversar com Jarvis no WhatsApp</span>
+                  </Button>
+                </a>
+
+                {/* Número do Jarvis com botão copiar — pra user salvar nos contatos */}
+                <div className="mt-3 flex flex-wrap items-center gap-2 p-2 rounded-md bg-green-950/40 border border-green-500/20">
+                  <Smartphone className="h-3.5 w-3.5 shrink-0 text-green-300" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] uppercase tracking-wider text-green-300/70">
+                      Ou chame este número:
+                    </p>
+                    <p className="font-mono text-sm text-green-100 break-all">
+                      {JARVIS_WHATSAPP_FORMATTED}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs text-green-300 hover:text-green-100 hover:bg-green-500/10 shrink-0"
+                    onClick={() => {
+                      navigator.clipboard.writeText(JARVIS_WHATSAPP_FORMATTED);
+                      toast.success("Número copiado!");
+                    }}
+                  >
+                    <Copy className="h-3 w-3 mr-1" /> Copiar
+                  </Button>
                 </div>
               </div>
             </div>
