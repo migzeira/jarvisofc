@@ -191,10 +191,16 @@ export function classifyIntent(msg: string): Intent {
     return "habit_checkin";
 
   // Transação recorrente (antes de finance_record)
+  // Guard: NUNCA classifica como recurring_create se a mensagem tem "lembra/lembrete"
+  // (essas são pra reminder_set: "me lembra todo dia 3 de pagar fatura" é reminder,
+  // não cadastro de transação recorrente). Antes do guard, "todo dia + fatura" pegava
+  // direto e o user via "Não consegui identificar o valor" mesmo sem mencionar valor.
   if (
-    /todo (dia|mes|m[eê]s|semana|ano).{0,30}(pago|gasto|recebo|ganho|cobr|custa|debito|aluguel|salario|netflix|spotify|gym|academia|assinatura|mensalidade|parcela|fatura|conta de)/i.test(m) ||
-    /(aluguel|salario|sal[aá]rio|netflix|spotify|academia|mensalidade|assinatura|parcela|fatura).{0,20}(todo|mensal|semanal|diario)/i.test(m) ||
-    /(criar|adicionar|cadastrar|registrar).{0,10}(recorrente|fixo|fixa)/i.test(m)
+    !/\blembr(a|e|ar|ete|amento)\b/.test(m) && (
+      /todo (dia|mes|m[eê]s|semana|ano).{0,30}(pago|gasto|recebo|ganho|cobr|custa|debito|aluguel|salario|netflix|spotify|gym|academia|assinatura|mensalidade|parcela|fatura|conta de)/i.test(m) ||
+      /(aluguel|salario|sal[aá]rio|netflix|spotify|academia|mensalidade|assinatura|parcela|fatura).{0,20}(todo|mensal|semanal|diario)/i.test(m) ||
+      /(criar|adicionar|cadastrar|registrar).{0,10}(recorrente|fixo|fixa)/i.test(m)
+    )
   )
     return "recurring_create";
 

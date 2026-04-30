@@ -4148,22 +4148,49 @@ async function handleReminderEdit(
       : "📭 Você não tem lembretes pendentes para editar.";
   }
 
-  // Tenta achar o lembrete pelo título na mensagem
+  // ─── Matching robusto: scoring de palavras matched ──────────────────────
+  // Antes era find-first: se "carro" aparecia em 2 reminders ('Ver agua do carro'
+  // e 'Pagar fatura do carro'), pegava o de send_at mais cedo. Agora soma quantas
+  // palavras (>3 chars) do título aparecem na mensagem do user — quem tiver mais
+  // matches ganha. Empate: o mais próximo em tempo.
   const m = norm(message);
-  let match = reminders.find(r => {
+  const STOPWORDS = new Set(["lembrete", "lembra", "lembrar", "altera", "alterar", "muda", "mudar", "para", "pra", "isso", "esse", "essa"]);
+
+  const scored = reminders.map(r => {
     const t = norm(r.title ?? r.message ?? "");
-    return t.split(" ").some(word => word.length > 4 && m.includes(word));
+    const words = t.split(/\s+/).filter(w => w.length > 3 && !STOPWORDS.has(w));
+    const matched = words.filter(w => m.includes(w)).length;
+    return { reminder: r, score: matched };
   });
-  // Fallback: o mais próximo em tempo
-  if (!match) match = reminders[0];
+
+  scored.sort((a, b) => b.score - a.score);
+  let match = scored[0]?.score && scored[0].score > 0
+    ? scored[0].reminder
+    : reminders[0]; // fallback
 
   if (!parsed) {
     return `Não entendi o novo horário. Ex: _"muda o lembrete de ${match.title?.slice(0, 20) ?? "X"} para 19h"_`;
   }
 
-  const newDate = new Date(parsed.remind_at);
+  let newDate = new Date(parsed.remind_at);
   if (isNaN(newDate.getTime())) {
     return "Não consegui identificar o novo horário. Pode repetir?";
+  }
+
+  // ─── Preserva hora original quando user só mudou o DIA ──────────────────
+  // Antes: "altera pro dia 3" → IA criava remind_at com a HORA ATUAL (ex 12:00).
+  // Agora: se o user não mencionou hora explicitamente, mantém a hora do
+  // reminder original.
+  const userMentionedTime =
+    /\b\d{1,2}\s*[h:]/i.test(m) ||         // "11h", "14:30"
+    /\b\d{1,2}\s*hora/i.test(m) ||          // "1 hora", "14 horas"
+    /\b(meia|noite|manha|tarde|madrugada)\b/i.test(m) || // "de manhã", "à tarde"
+    /\b(meio[\s-]?dia|meia[\s-]?noite)\b/i.test(m);
+
+  if (!userMentionedTime && match.send_at) {
+    const original = new Date(match.send_at);
+    newDate = new Date(newDate);
+    newDate.setUTCHours(original.getUTCHours(), original.getUTCMinutes(), original.getUTCSeconds(), 0);
   }
 
   // ─── Atualização de recurrence — heurística inteligente ─────────────────
