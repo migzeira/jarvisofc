@@ -59,14 +59,14 @@ export function PlanCTAButtons({
       <PlanButton
         href={KIRVANO_MENSAL}
         line1="Mensal"
-        line2="R$ 29,90/mês"
+        line2="R$ 39,90/mês"
         variant={variant}
         size={size}
       />
       <PlanButton
         href={KIRVANO_ANUAL}
-        line1="Anual 12x R$ 23,91"
-        line2="ou R$ 287/ano"
+        line1="Anual"
+        line2="R$ 29,90/mês cobrado anualmente"
         variant={variant}
         size={size}
       />
