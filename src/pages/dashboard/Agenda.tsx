@@ -35,6 +35,7 @@ import {
 import { toast } from "sonner";
 import { SenderBadge } from "@/components/couple/SenderBadge";
 import { SenderFilter, matchesSenderFilter, type SenderFilterValue } from "@/components/couple/SenderFilter";
+import { SenderSelector, resolveSenderTargets, type SenderSelectorValue } from "@/components/couple/SenderSelector";
 import { useCoupleContext } from "@/hooks/useCoupleContext";
 import {
   Plus,
@@ -387,9 +388,10 @@ export default function Agenda() {
   const [form, setForm] = useState<EventFormData>(emptyForm());
   const [saving, setSaving] = useState(false);
 
-  // Plano casal: filtro de quem registrou
+  // Plano casal: filtro de quem registrou + seletor pra criar eventos
   const couple = useCoupleContext();
   const [senderFilter, setSenderFilter] = useState<SenderFilterValue>("all");
+  const [eventSender, setEventSender] = useState<SenderSelectorValue>("me");
 
   // Todos os eventos (nativos + Google Calendar) com filtro de partner aplicado
   const allEvents = useMemo(() => {
@@ -670,20 +672,33 @@ export default function Agenda() {
         loadGoogleEvents();
       }
     } else {
-      const { data: inserted, error } = await supabase.from("events").insert({
+      // Plano casal: cria 1 evento por destinatário escolhido (default: master)
+      const targets = couple.isCouplePlan && couple.partners.length > 0
+        ? resolveSenderTargets(eventSender, couple.masterPhone, couple.masterName, couple.partners)
+        : [{ sent_by_phone: null, notify_phone: "", label: "Você" }];
+
+      const rows = targets.map((t) => ({
         ...payload,
         user_id: user!.id,
         source: "manual",
         status: "pending",
-      } as any).select("id").single();
+        sent_by_phone: t.sent_by_phone,
+      }));
+
+      const { data: inserted, error } = await (supabase.from("events").insert(rows as any).select("id, sent_by_phone") as any);
       if (error) toast.error("Erro ao criar evento");
       else {
-        toast.success("Evento criado!");
+        toast.success(targets.length > 1 ? "Eventos criados!" : "Evento criado!");
         setDialogOpen(false);
-        // Sync com Google Calendar (cria evento la tambem)
-        if (inserted?.id) {
-          syncGoogle("create", { event: payload, eventId: inserted.id });
+        // Sync com Google Calendar — só os eventos do master (sent_by_phone null).
+        // Eventos do partner respeitam o toggle gcal_share_with_partners no backend
+        // (mas no manual via dashboard, hoje só síncamos os do master pra simplificar).
+        const masterEvent = (inserted as Array<{ id: string; sent_by_phone: string | null }> ?? [])
+          .find((e) => !e.sent_by_phone);
+        if (masterEvent?.id) {
+          syncGoogle("create", { event: payload, eventId: masterEvent.id });
         }
+        setEventSender("me");
         loadData();
         loadGoogleEvents();
       }
@@ -1322,6 +1337,16 @@ export default function Agenda() {
               </div>
             )}
           </div>
+
+          {/* Plano casal: pra quem é esse evento (só pra evento NOVO).
+              Edição não tem seletor — quem criou continua o mesmo. */}
+          {!editingEvent && (
+            <SenderSelector
+              value={eventSender}
+              onChange={setEventSender}
+              label="De quem é esse evento?"
+            />
+          )}
 
           {/* Actions */}
           <div className="flex gap-2 pt-2">

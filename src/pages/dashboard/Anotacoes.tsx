@@ -23,6 +23,7 @@ import { ListCard, type ListSummary } from "@/components/lists/ListCard";
 import { ListDetailModal } from "@/components/lists/ListDetailModal";
 import { SenderBadge } from "@/components/couple/SenderBadge";
 import { SenderFilter, matchesSenderFilter, type SenderFilterValue } from "@/components/couple/SenderFilter";
+import { SenderSelector, resolveSenderTargets, type SenderSelectorValue } from "@/components/couple/SenderSelector";
 import { useCoupleContext } from "@/hooks/useCoupleContext";
 
 // ─── Accent colors (determinísticos por ID da nota) ─────────────────────────
@@ -165,9 +166,10 @@ export default function Anotacoes() {
   const [createListOpen, setCreateListOpen] = useState(false);
   const [detailList, setDetailList] = useState<ListSummary | null>(null);
 
-  // ─── Plano casal: filtro de quem registrou ───
+  // ─── Plano casal: filtro de quem registrou + selector de quem cria ───
   const couple = useCoupleContext();
   const [senderFilter, setSenderFilter] = useState<SenderFilterValue>("all");
+  const [createSender, setCreateSender] = useState<SenderSelectorValue>("me");
 
   useEffect(() => { if (user) loadData(); }, [user]);
 
@@ -279,17 +281,28 @@ export default function Anotacoes() {
     e.preventDefault();
     if (!form.content.trim()) return;
     setSaving(true);
-    const { error } = await supabase.from("notes").insert({
+
+    // Plano casal: cria 1 anotação por destinatário escolhido (default: master).
+    // Cliente solo: sempre 1 anotação com sent_by_phone=null.
+    const targets = couple.isCouplePlan && couple.partners.length > 0
+      ? resolveSenderTargets(createSender, couple.masterPhone, couple.masterName, couple.partners)
+      : [{ sent_by_phone: null, notify_phone: "", label: "Você" }];
+
+    const rows = targets.map((t) => ({
       user_id: user!.id,
       title: form.title.trim() || null,
       content: form.content.trim(),
       source: "manual",
-    });
+      sent_by_phone: t.sent_by_phone,
+    }));
+
+    const { error } = await (supabase.from("notes").insert(rows as any) as any);
     if (error) toast.error("Erro ao salvar");
     else {
-      toast.success("Anotação salva!");
+      toast.success(targets.length > 1 ? "Anotações salvas!" : "Anotação salva!");
       setCreateOpen(false);
       setForm({ title: "", content: "" });
+      setCreateSender("me");
       loadData();
     }
     setSaving(false);
@@ -488,6 +501,12 @@ export default function Anotacoes() {
                 required
               />
             </div>
+            {/* Plano casal: quem está criando essa anotação */}
+            <SenderSelector
+              value={createSender}
+              onChange={setCreateSender}
+              label="Quem está anotando?"
+            />
             <div className="flex gap-2">
               <Button type="button" variant="outline" className="flex-1" onClick={() => setCreateOpen(false)}>
                 Cancelar

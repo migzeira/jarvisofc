@@ -19,6 +19,7 @@ import { CategoryCreateModal, CATEGORY_COLORS, type CategoryRow } from "@/compon
 import { TransactionEditModal, type Transaction as TxEditType } from "@/components/TransactionEditModal";
 import { SenderBadge } from "@/components/couple/SenderBadge";
 import { SenderFilter, matchesSenderFilter, type SenderFilterValue } from "@/components/couple/SenderFilter";
+import { SenderSelector, resolveSenderTargets, type SenderSelectorValue } from "@/components/couple/SenderSelector";
 import { useCoupleContext } from "@/hooks/useCoupleContext";
 import { toast } from "sonner";
 import {
@@ -187,6 +188,8 @@ export default function Financas() {
   // Plano casal: filtro de quem registrou (Todos / Eu / Parceiro)
   const couple = useCoupleContext();
   const [senderFilter, setSenderFilter] = useState<SenderFilterValue>("all");
+  // Plano casal: quem está criando esta transação (form de adicionar)
+  const [txCreateSender, setTxCreateSender] = useState<SenderSelectorValue>("me");
   const [searchTx, setSearchTx]       = useState("");
 
   // ── Dialogs ──
@@ -321,7 +324,13 @@ export default function Financas() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { error } = await supabase.from("transactions").insert({
+
+    // Plano casal: cria 1 transação por destinatário escolhido (default: master)
+    const targets = couple.isCouplePlan && couple.partners.length > 0
+      ? resolveSenderTargets(txCreateSender, couple.masterPhone, couple.masterName, couple.partners)
+      : [{ sent_by_phone: null, notify_phone: "", label: "Você" }];
+
+    const rows = targets.map((t) => ({
       user_id: user!.id,
       description: form.description,
       amount: parseFloat(form.amount),
@@ -329,11 +338,15 @@ export default function Financas() {
       category: form.category,
       transaction_date: form.transaction_date,
       source: "manual",
-    });
+      sent_by_phone: t.sent_by_phone,
+    }));
+
+    const { error } = await (supabase.from("transactions").insert(rows as any) as any);
     if (error) { toast.error("Erro ao adicionar"); return; }
-    toast.success("Transação adicionada!");
+    toast.success(targets.length > 1 ? "Transações adicionadas!" : "Transação adicionada!");
     setDialogOpen(false);
     setForm({ description: "", amount: "", type: "expense", category: "outros", transaction_date: format(new Date(), "yyyy-MM-dd") });
+    setTxCreateSender("me");
     loadData();
   };
 
@@ -685,6 +698,12 @@ export default function Financas() {
                     <Input type="date" value={form.transaction_date} onChange={e => setForm({ ...form, transaction_date: e.target.value })} />
                   </div>
                 </div>
+                {/* Plano casal: quem está registrando essa transação */}
+                <SenderSelector
+                  value={txCreateSender}
+                  onChange={setTxCreateSender}
+                  label="Quem registrou essa transação?"
+                />
                 <Button type="submit" className="w-full">Salvar transação</Button>
               </form>
             </DialogContent>

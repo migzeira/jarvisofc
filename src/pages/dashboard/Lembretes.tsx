@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { toast } from "sonner";
 import { SenderBadge } from "@/components/couple/SenderBadge";
 import { SenderFilter, matchesSenderFilter, type SenderFilterValue } from "@/components/couple/SenderFilter";
+import { SenderSelector, resolveSenderTargets, type SenderSelectorValue } from "@/components/couple/SenderSelector";
 import { useCoupleContext } from "@/hooks/useCoupleContext";
 import {
   Bell, Plus, Trash2, Clock, RefreshCw, CheckCircle2, XCircle,
@@ -162,6 +163,8 @@ export default function Lembretes() {
   const [recurrence, setRecurrence] = useState("none");
   const [recurrenceValue, setRecurrenceValue] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  // Plano casal: destinatário do lembrete (default = "me" = master)
+  const [reminderTarget, setReminderTarget] = useState<SenderSelectorValue>("me");
 
   // ── Dialog: Editar lembrete regular ──
   const [editOpen, setEditOpen] = useState(false);
@@ -253,16 +256,35 @@ export default function Lembretes() {
     const phone = profile?.phone_number ?? "";
     if (!phone) { toast.error("Cadastre seu número de WhatsApp em Meu Perfil primeiro"); setSaving(false); return; }
     const rv = recurrenceValue ? parseInt(recurrenceValue) : null;
-    const { error } = await supabase.from("reminders").insert({
-      user_id: user!.id, whatsapp_number: phone,
-      title: title.trim(), message: message.trim(),
+
+    // Plano casal: resolve destinatários (1 ou 2 baseado em reminderTarget).
+    // Cliente solo: targets sempre [{master}] e nada muda no fluxo.
+    const targets = couple.isCouplePlan && couple.partners.length > 0
+      ? resolveSenderTargets(reminderTarget, phone, couple.masterName, couple.partners)
+      : [{ sent_by_phone: null, notify_phone: phone, label: "Você" }];
+
+    // Cria 1 reminder por target (se "Os dois", são 2 reminders idênticos
+    // mas com whatsapp_number e sent_by_phone próprios)
+    const rows = targets.map((t) => ({
+      user_id: user!.id,
+      whatsapp_number: t.notify_phone || phone,
+      title: title.trim(),
+      message: message.trim(),
       send_at: new Date(sendAt).toISOString(),
-      recurrence, recurrence_value: rv, source: "manual", status: "pending",
-    });
+      recurrence,
+      recurrence_value: rv,
+      source: "manual",
+      status: "pending",
+      sent_by_phone: t.sent_by_phone,
+    }));
+
+    const { error } = await (supabase.from("reminders").insert(rows as any) as any);
     if (error) toast.error("Erro ao criar lembrete");
     else {
-      toast.success("Lembrete criado!");
+      const targetLabels = targets.map((t) => t.label).join(" e ");
+      toast.success(targets.length > 1 ? `Lembrete criado pra ${targetLabels}!` : `Lembrete criado pra ${targetLabels}!`);
       setTitle(""); setMessage(""); setSendAt(""); setRecurrence("none"); setRecurrenceValue("");
+      setReminderTarget("me");
       setOpen(false); load();
     }
     setSaving(false);
@@ -762,6 +784,14 @@ export default function Lembretes() {
                 <Input type="number" min="1" max="31" value={recurrenceValue} onChange={e => setRecurrenceValue(e.target.value)} placeholder="Ex: 10" />
               </div>
             )}
+
+            {/* Plano casal: pra quem é o lembrete */}
+            <SenderSelector
+              value={reminderTarget}
+              onChange={setReminderTarget}
+              label="Pra quem é esse lembrete?"
+            />
+
             <Button onClick={handleCreate} disabled={saving} className="w-full">
               {saving ? "Criando..." : "Criar lembrete"}
             </Button>

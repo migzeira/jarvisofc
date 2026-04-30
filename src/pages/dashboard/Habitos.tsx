@@ -21,6 +21,8 @@ import {
   Zap, Pencil, X,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay } from "date-fns";
+import { SenderSelector, resolveSenderTargets, type SenderSelectorValue } from "@/components/couple/SenderSelector";
+import { useCoupleContext } from "@/hooks/useCoupleContext";
 
 // ─────────────────────────────────────────────
 // Types
@@ -447,10 +449,15 @@ function getMealMessage(time: string): string {
 
 export default function Habitos() {
   const { user } = useAuth();
+  const couple = useCoupleContext();
   const [habits, setHabits] = useState<Habit[]>([]);
   const [logs, setLogs] = useState<HabitLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [userPhone, setUserPhone] = useState<string>("");
+
+  // Plano casal: pra quem é o hábito (preset config + custom)
+  const [presetTarget, setPresetTarget] = useState<SenderSelectorValue>("me");
+  const [customTarget, setCustomTarget] = useState<SenderSelectorValue>("me");
 
   // Config modal for preset habits
   const [configModal, setConfigModal] = useState<{
@@ -608,62 +615,85 @@ export default function Habitos() {
     setConfigSaving(true);
 
     try {
-      let habitId: string;
+      // Plano casal: pra quem é esse hábito?
+      // - Edição: mantém comportamento original (quem criou continua o mesmo)
+      // - Criação: usa presetTarget (Eu / Parceiro / Os dois)
+      // Cliente solo: targets sempre [{master}]
+      const targets = !configModal.editingHabit && couple.isCouplePlan && couple.partners.length > 0
+        ? resolveSenderTargets(presetTarget, couple.masterPhone, couple.masterName, couple.partners)
+        : [{ sent_by_phone: null, notify_phone: userPhone, label: "Você" }];
 
       if (configModal.editingHabit) {
-        // Update existing habit
-        habitId = configModal.editingHabit.id;
+        // Update existing — não muda destinatário (preserva sent_by_phone original)
+        const habitId = configModal.editingHabit.id;
         await (supabase.from("habits" as any).update({
           is_active: true,
           habit_config: cfg,
           updated_at: new Date().toISOString(),
         } as any).eq("id", habitId) as any);
 
-        // Delete existing pending reminders before recreating
         await (supabase.from("reminders" as any) as any)
           .delete()
           .eq("habit_id", habitId)
           .eq("status", "pending");
-      } else {
-        // Create new habit record
-        // Bug #6: ON CONFLICT (user_id, preset_key) → reactivate the existing deactivated one
-        const { data: newHabit, error: habitErr } = await (supabase.from("habits" as any).insert({
-          user_id: user.id,
-          name: preset.name,
-          description: preset.desc,
-          frequency: preset.recurrence,
-          times_per_day: 1,
-          reminder_times: JSON.stringify([cfg.time ?? cfg.times?.[0] ?? "08:00"]),
-          target_days: JSON.stringify(cfg.days ?? [0, 1, 2, 3, 4, 5, 6]),
-          icon: preset.icon,
-          color: preset.color,
-          is_active: true,
-          preset_key: preset.key,
-          habit_config: cfg,
-        } as any).select("id").single() as any);
 
-        if (habitErr) {
-          // Unique constraint violation (23505) → habit already exists but deactivated
-          // This path should be handled by handlePresetToggle's existingDeactivated check,
-          // but as a safety net we surface a friendly error
-          if (habitErr.code === "23505") {
-            throw new Error("Este hábito já existe. Por favor, recarregue a página.");
+        if (userPhone) {
+          // Pega sent_by_phone original do hábito pra propagar nos reminders novos
+          const origSenderPhone = (configModal.editingHabit as any).sent_by_phone ?? null;
+          const notifyPhone = origSenderPhone || userPhone;
+          const remindersToCreate = buildReminders(preset, cfg, user.id, notifyPhone, habitId, origSenderPhone);
+          if (remindersToCreate.length > 0) {
+            await (supabase.from("reminders" as any).insert(remindersToCreate as any) as any);
           }
-          throw new Error(habitErr.message ?? "Erro ao criar hábito");
         }
-        if (!newHabit) throw new Error("Erro ao criar hábito");
-        habitId = (newHabit as any).id;
+        toast.success(`${preset.icon} ${preset.name} atualizado!`);
+      } else {
+        // Cria 1 hábito por target. Cada um é um hábito independente — recebe
+        // notificação no whatsapp_number do destinatário (master ou partner).
+        for (const target of targets) {
+          const notifyPhone = target.notify_phone || userPhone;
+          const { data: newHabit, error: habitErr } = await (supabase.from("habits" as any).insert({
+            user_id: user.id,
+            name: preset.name,
+            description: preset.desc,
+            frequency: preset.recurrence,
+            times_per_day: 1,
+            reminder_times: JSON.stringify([cfg.time ?? cfg.times?.[0] ?? "08:00"]),
+            target_days: JSON.stringify(cfg.days ?? [0, 1, 2, 3, 4, 5, 6]),
+            icon: preset.icon,
+            color: preset.color,
+            is_active: true,
+            preset_key: preset.key,
+            habit_config: cfg,
+            sent_by_phone: target.sent_by_phone,
+          } as any).select("id").single() as any);
+
+          if (habitErr) {
+            if (habitErr.code === "23505") {
+              // Hábito já existe pra esse user/preset_key (constraint).
+              // Em "both", se master já tem o preset, o INSERT pro slot do master
+              // bate na constraint. Solução: ignora e segue criando pros outros targets.
+              console.warn(`[handleSavePresetConfig] preset ${preset.key} já existe pra target ${target.label} — pulando`);
+              continue;
+            }
+            throw new Error(habitErr.message ?? "Erro ao criar hábito");
+          }
+          if (!newHabit) continue;
+          const habitId = (newHabit as any).id;
+
+          if (notifyPhone) {
+            const remindersToCreate = buildReminders(preset, cfg, user.id, notifyPhone, habitId, target.sent_by_phone);
+            if (remindersToCreate.length > 0) {
+              await (supabase.from("reminders" as any).insert(remindersToCreate as any) as any);
+            }
+          }
+        }
+
+        const labels = targets.map((t) => t.label).join(" e ");
+        toast.success(`${preset.icon} ${preset.name} ativado pra ${labels}!`);
       }
 
-      // Create reminders
-      if (userPhone) {
-        const remindersToCreate = buildReminders(preset, cfg, user.id, userPhone, habitId);
-        if (remindersToCreate.length > 0) {
-          await (supabase.from("reminders" as any).insert(remindersToCreate as any) as any);
-        }
-      }
-
-      toast.success(`${preset.icon} ${preset.name} ativado!`);
+      setPresetTarget("me");
       setConfigModal({ open: false, preset: null, editingHabit: null });
       loadData();
     } catch (err) {
@@ -679,7 +709,8 @@ export default function Habitos() {
     cfg: HabitConfig,
     userId: string,
     phone: string,
-    habitId: string
+    habitId: string,
+    senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
   ) {
     const base = {
       user_id: userId,
@@ -688,6 +719,7 @@ export default function Habitos() {
       source: "habit",
       status: "pending",
       habit_id: habitId,
+      sent_by_phone: senderPhone,
     };
 
     if (preset.configType === "single_time") {
@@ -778,19 +810,26 @@ export default function Habitos() {
       updated_at: new Date().toISOString(),
     };
 
-    // Helper: cria reminders (1 por horário) para o hábito
-    const buildHabitReminders = (habitId: string) =>
+    // Helper: cria reminders (1 por horário) para o hábito.
+    // Recebe notifyPhone (quem recebe a notificação) e senderPhone (tag de quem criou).
+    const buildHabitReminders = (habitId: string, notifyPhone: string, senderPhone: string | null) =>
       reminderTimes.map(t => ({
         user_id: user!.id,
         habit_id: habitId,
-        whatsapp_number: userPhone,
+        whatsapp_number: notifyPhone,
         title: customForm.name.trim(),
         message: `⏰ Hora do seu hábito: *${customForm.name.trim()}*${isRecurring ? ` (${t})` : ""}`,
         send_at: nextDailyUTC(t),
         recurrence: "daily",
         source: "habit",
         status: "pending",
+        sent_by_phone: senderPhone,
       }));
+
+    // Plano casal: pra quem é o hábito? Edição mantém destinatário original.
+    const targets = !editingCustom && couple.isCouplePlan && couple.partners.length > 0
+      ? resolveSenderTargets(customTarget, couple.masterPhone, couple.masterName, couple.partners)
+      : [{ sent_by_phone: null, notify_phone: userPhone, label: "Você" }];
 
     try {
       if (editingCustom) {
@@ -802,7 +841,9 @@ export default function Habitos() {
             .delete()
             .eq("habit_id", editingCustom.id)
             .eq("status", "pending");
-          const reminders = buildHabitReminders(editingCustom.id);
+          const origSender = (editingCustom as any).sent_by_phone ?? null;
+          const notifyPh = origSender || userPhone;
+          const reminders = buildHabitReminders(editingCustom.id, notifyPh, origSender);
           if (reminders.length > 0) {
             const { error: remErr } = await (supabase.from("reminders" as any).insert(reminders as any) as any);
             if (remErr) {
@@ -813,22 +854,32 @@ export default function Habitos() {
         }
         toast.success("Hábito atualizado!");
       } else {
-        const { data: newHabit, error } = await (supabase.from("habits" as any)
-          .insert({ ...payload, user_id: user!.id } as any).select("id").single() as any);
-        if (error) { toast.error("Erro ao criar: " + error.message); return; }
-        if (userPhone && newHabit) {
-          const reminders = buildHabitReminders(newHabit.id);
-          if (reminders.length > 0) {
-            const { error: remErr } = await (supabase.from("reminders" as any).insert(reminders as any) as any);
-            if (remErr) {
-              console.error("[handleSaveCustom] insert reminders error:", remErr);
-              toast.error("Hábito criado, mas lembretes falharam: " + remErr.message);
+        // Cria 1 hábito por target (cada um independente, com seus reminders)
+        for (const target of targets) {
+          const notifyPh = target.notify_phone || userPhone;
+          const { data: newHabit, error } = await (supabase.from("habits" as any)
+            .insert({ ...payload, user_id: user!.id, sent_by_phone: target.sent_by_phone } as any).select("id").single() as any);
+          if (error) {
+            console.error("[handleSaveCustom] habit insert error:", error);
+            toast.error(`Erro ao criar hábito pra ${target.label}: ${error.message}`);
+            continue;
+          }
+          if (notifyPh && newHabit) {
+            const reminders = buildHabitReminders(newHabit.id, notifyPh, target.sent_by_phone);
+            if (reminders.length > 0) {
+              const { error: remErr } = await (supabase.from("reminders" as any).insert(reminders as any) as any);
+              if (remErr) {
+                console.error("[handleSaveCustom] insert reminders error:", remErr);
+                toast.error("Hábito criado, mas lembretes falharam: " + remErr.message);
+              }
             }
           }
         }
-        toast.success("Hábito criado! 🎯");
+        const labels = targets.map((t) => t.label).join(" e ");
+        toast.success(`Hábito criado pra ${labels}! 🎯`);
       }
 
+      setCustomTarget("me");
       setCustomOpen(false);
       setEditingCustom(null);
       loadData();
@@ -1206,6 +1257,15 @@ export default function Habitos() {
                 </p>
               )}
 
+              {/* Plano casal: pra quem é esse hábito? (só na criação) */}
+              {!configModal.editingHabit && (
+                <SenderSelector
+                  value={presetTarget}
+                  onChange={setPresetTarget}
+                  label="Pra quem é esse hábito?"
+                />
+              )}
+
               <div className="flex gap-2 pt-2">
                 <Button variant="outline" className="flex-1" onClick={() => setConfigModal({ open: false, preset: null, editingHabit: null })}>
                   Cancelar
@@ -1360,6 +1420,16 @@ export default function Habitos() {
                 ))}
               </div>
             </div>
+
+            {/* Plano casal: pra quem é esse hábito? (só na criação) */}
+            {!editingCustom && (
+              <SenderSelector
+                value={customTarget}
+                onChange={setCustomTarget}
+                label="Pra quem é esse hábito?"
+              />
+            )}
+
             <Button type="submit" className="w-full" disabled={savingCustom}>
               {savingCustom ? "Salvando..." : (editingCustom ? "Salvar alterações" : "Criar hábito")}
             </Button>
