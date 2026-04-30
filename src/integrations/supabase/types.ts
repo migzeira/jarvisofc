@@ -21,6 +21,7 @@ export type Database = {
           created_at: string
           custom_instructions: string | null
           daily_briefing_enabled: boolean | null
+          gcal_share_with_partners: boolean
           greeting_message: string | null
           id: string
           is_active: boolean
@@ -50,6 +51,7 @@ export type Database = {
           created_at?: string
           custom_instructions?: string | null
           daily_briefing_enabled?: boolean | null
+          gcal_share_with_partners?: boolean
           greeting_message?: string | null
           id?: string
           is_active?: boolean
@@ -79,6 +81,7 @@ export type Database = {
           created_at?: string
           custom_instructions?: string | null
           daily_briefing_enabled?: boolean | null
+          gcal_share_with_partners?: boolean
           greeting_message?: string | null
           id?: string
           is_active?: boolean
@@ -412,6 +415,7 @@ export type Database = {
           recurrence_parent_id: string | null
           reminder: boolean
           reminder_minutes_before: number | null
+          sent_by_phone: string | null
           source: string
           status: string
           title: string
@@ -433,6 +437,7 @@ export type Database = {
           recurrence_parent_id?: string | null
           reminder?: boolean
           reminder_minutes_before?: number | null
+          sent_by_phone?: string | null
           source?: string
           status?: string
           title: string
@@ -454,6 +459,7 @@ export type Database = {
           recurrence_parent_id?: string | null
           reminder?: boolean
           reminder_minutes_before?: number | null
+          sent_by_phone?: string | null
           source?: string
           status?: string
           title?: string
@@ -909,6 +915,7 @@ export type Database = {
           content: string
           created_at: string
           id: string
+          sent_by_phone: string | null
           source: string
           title: string | null
           updated_at: string
@@ -918,6 +925,7 @@ export type Database = {
           content: string
           created_at?: string
           id?: string
+          sent_by_phone?: string | null
           source?: string
           title?: string | null
           updated_at?: string
@@ -927,6 +935,7 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          sent_by_phone?: string | null
           source?: string
           title?: string | null
           updated_at?: string
@@ -980,6 +989,53 @@ export type Database = {
           message_id?: string
         }
         Relationships: []
+      }
+      profile_partners: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          master_user_id: string
+          partner_name: string
+          partner_nickname: string | null
+          partner_phone: string
+          partner_whatsapp_lid: string | null
+          slot: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          master_user_id: string
+          partner_name: string
+          partner_nickname?: string | null
+          partner_phone: string
+          partner_whatsapp_lid?: string | null
+          slot: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          master_user_id?: string
+          partner_name?: string
+          partner_nickname?: string | null
+          partner_phone?: string
+          partner_whatsapp_lid?: string | null
+          slot?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_partners_master_user_id_fkey"
+            columns: ["master_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -1317,6 +1373,7 @@ export type Database = {
           installment_group: string | null
           installment_number: number | null
           installment_total: number | null
+          sent_by_phone: string | null
           source: string
           transaction_date: string
           type: string
@@ -1331,6 +1388,7 @@ export type Database = {
           installment_group?: string | null
           installment_number?: number | null
           installment_total?: number | null
+          sent_by_phone?: string | null
           source?: string
           transaction_date?: string
           type?: string
@@ -1345,6 +1403,7 @@ export type Database = {
           installment_group?: string | null
           installment_number?: number | null
           installment_total?: number | null
+          sent_by_phone?: string | null
           source?: string
           transaction_date?: string
           type?: string
