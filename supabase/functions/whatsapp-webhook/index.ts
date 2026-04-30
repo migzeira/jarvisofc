@@ -3247,7 +3247,7 @@ async function handleNotesSave(
     const suggestedTitle = ctx.suggestedTitle as string;
     const tzOff2 = getTzOffset(userTz);
     const nowIso2 = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + tzOff2;
-    const parsed2 = await parseReminderIntent(message, nowIso2, noteLang);
+    const parsed2 = await parseReminderIntent(message, nowIso2, noteLang, userTz);
 
     if (!parsed2) {
       return {
@@ -3414,7 +3414,7 @@ async function handleNotesSave(
     // Tenta extrair horário diretamente da resposta
     const noteTzOff = getTzOffset(userTz);
     const nowIso = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + noteTzOff;
-    const parsed = await parseReminderIntent(message, nowIso);
+    const parsed = await parseReminderIntent(message, nowIso, undefined, userTz);
     if (parsed) {
       const remindAt = new Date(parsed.remind_at);
       if (!isNaN(remindAt.getTime()) && remindAt > new Date()) {
@@ -4114,7 +4114,7 @@ async function handleReminderEdit(
   const nowIso = new Date().toLocaleString("sv-SE", { timeZone: userTz, hour12: false }).replace(" ", "T") + tzOff;
 
   // Extrai o nome do lembrete e novo horário com IA
-  const parsed = await parseReminderIntent(message, nowIso, lang);
+  const parsed = await parseReminderIntent(message, nowIso, lang, userTz);
 
   const { data: reminders } = await supabase
     .from("reminders")
@@ -4281,7 +4281,7 @@ async function handleReminderSet(
   }
 
   // ── Extrai intenção do lembrete com IA ──
-  const parsed = await parseReminderIntent(message, nowIso, lang);
+  const parsed = await parseReminderIntent(message, nowIso, lang, userTz);
 
   if (!parsed) {
     return { response: "⚠️ Não entendi o lembrete. Tente: *me lembra de ligar pro João amanhã às 14h*" };
@@ -5526,7 +5526,7 @@ async function handleOrderOnBehalf(
     try {
       const tzOff = getTzOffset(userTz);
       const nowIso = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + tzOff;
-      const parsedTime = await parseReminderIntent(text, nowIso);
+      const parsedTime = await parseReminderIntent(text, nowIso, undefined, userTz);
       if (parsedTime?.remind_at) {
         const parsedDate = new Date(parsedTime.remind_at);
         // Só agenda se for no futuro (>5min)
@@ -6078,7 +6078,7 @@ async function handleSendToContact(
     try {
       const tzOff = getTzOffset(userTz);
       const nowIso = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + tzOff;
-      const parsedTime = await parseReminderIntent(textDelivery, nowIso);
+      const parsedTime = await parseReminderIntent(textDelivery, nowIso, undefined, userTz);
       if (parsedTime?.remind_at) {
         scheduledAt = new Date(parsedTime.remind_at).toISOString();
       }

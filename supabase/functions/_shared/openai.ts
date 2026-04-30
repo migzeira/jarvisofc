@@ -1045,7 +1045,8 @@ export interface ReminderParsed {
 export async function parseReminderIntent(
   message: string,
   nowIso: string,
-  lang = "pt-BR"
+  lang = "pt-BR",
+  userTz = "America/Sao_Paulo"
 ): Promise<ReminderParsed | null> {
   const langLabel = lang === "en" ? "English" : lang === "es" ? "Spanish" : "Portuguese Brazilian";
   const system = `You are a reminder intent parser. Respond ONLY with valid JSON, no markdown, no explanations. Write the "message" and "title" fields in ${langLabel}.`;
@@ -1125,7 +1126,10 @@ Pedido: "${message}"`;
         if (todayVersion.getTime() > now.getTime() + 60000) {
           // Usa o mesmo offset que o nowIso tem
           const tzOffset = offsetMatch ? offsetMatch[1] : "-03:00";
-          // userTz vem do parâmetro da função analyzeForwardedContent (default São Paulo)
+          // userTz é parâmetro da função (default America/Sao_Paulo).
+          // BUG HISTÓRICO: este bloco usava userTz sem ter como parâmetro,
+          // causando ReferenceError silencioso no catch e falsos negativos
+          // tipo "Não entendi o lembrete" pra inputs perfeitamente claros.
           const y = todayVersion.toLocaleString("sv-SE", { timeZone: userTz }).slice(0, 10);
           const t = todayVersion.toLocaleString("sv-SE", { timeZone: userTz }).slice(11, 19);
           parsed.remind_at = `${y}T${t}${tzOffset}`;
