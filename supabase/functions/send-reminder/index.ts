@@ -272,7 +272,9 @@ serve(async (_req) => {
       // Reminders recorrentes ainda ganham próxima ocorrência (ciclo não quebra).
       const GRACE_MS: Record<string, number> = {
         daily_briefing:  60 * 60 * 1000,   // 1h  — bom dia: até 1h de tolerância
-        habit:           15 * 60 * 1000,   // 15min — hábitos: janela curta
+        habit:           60 * 60 * 1000,   // 1h  — hábitos: tolerância de 1h. Antes era 15min
+                                            // mas isso cancelava lembretes válidos quando o
+                                            // pg_cron atrasava ou Evolution API ficava lenta.
         scheduled_order: 10 * 60 * 1000,   // 10min — pedido: vence rápido
       };
       const DEFAULT_GRACE_MS = 30 * 60 * 1000; // 30min pra tudo mais

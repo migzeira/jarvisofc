@@ -443,6 +443,33 @@ function getMealMessage(time: string): string {
   return "🌙 Hora do jantar! Cuide-se e coma bem esta noite.";
 }
 
+/**
+ * Deriva o array de reminder_times persistido em habits a partir do cfg + configType.
+ * Importante: cfg.time / cfg.times / interval — TODOS são possíveis dependendo do preset.
+ * Sem isso, ao editar um preset multiple_times com 4 horários, o UPDATE salvava só [time[0]].
+ */
+function deriveReminderTimes(configType: ConfigType, cfg: HabitConfig): string[] {
+  if (configType === "interval") {
+    const times = generateIntervalTimes(
+      cfg.interval ?? 2,
+      cfg.startTime ?? "08:00",
+      cfg.endTime ?? "22:00",
+    );
+    return times.length > 0 ? times : [cfg.startTime ?? "08:00"];
+  }
+  if (configType === "multiple_times" || configType === "meal_times") {
+    return cfg.times && cfg.times.length > 0 ? cfg.times : ["08:00"];
+  }
+  // single_time, weekly, weekly_days
+  return [cfg.time ?? "08:00"];
+}
+
+/** Deriva o array target_days do cfg. Default = todos os dias. */
+function deriveTargetDays(cfg: HabitConfig): number[] {
+  if (cfg.days && cfg.days.length > 0) return cfg.days;
+  return [0, 1, 2, 3, 4, 5, 6];
+}
+
 // ─────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────
@@ -626,6 +653,11 @@ export default function Habitos() {
         ? resolveSenderTargets(presetTarget, couple.masterPhone, couple.masterName, couple.partners)
         : [{ sent_by_phone: null, notify_phone: userPhone, label: "Você" }];
 
+      // Deriva os arrays persistidos no banco a partir do cfg (mesmo cálculo que
+      // buildReminders usa pra gerar os horários dos reminders, garantindo consistência).
+      const derivedReminderTimes = deriveReminderTimes(preset.configType, cfg);
+      const derivedTargetDays = deriveTargetDays(cfg);
+
       if (configModal.editingHabit) {
         // EDIÇÃO ou REATIVAÇÃO — atualiza hábito existente + cria novos
         // hábitos pros targets adicionais (caso "Os dois" e havia só 1 antes).
@@ -638,6 +670,13 @@ export default function Habitos() {
         await (supabase.from("habits" as any).update({
           is_active: true,
           habit_config: cfg,
+          // CRITICAL: precisa atualizar reminder_times/target_days senão fica o default
+          // antigo. Era o bug do Versículo do dia: cfg salvava {time:"13:49"} mas
+          // reminder_times ficava ["09:00"] do default, gerando confusão de dados.
+          reminder_times: JSON.stringify(derivedReminderTimes),
+          target_days: JSON.stringify(derivedTargetDays),
+          frequency: preset.recurrence,
+          times_per_day: derivedReminderTimes.length,
           sent_by_phone: firstTarget.sent_by_phone,
           updated_at: new Date().toISOString(),
         } as any).eq("id", habitId) as any);
@@ -663,9 +702,9 @@ export default function Habitos() {
             name: preset.name,
             description: preset.desc,
             frequency: preset.recurrence,
-            times_per_day: 1,
-            reminder_times: JSON.stringify([cfg.time ?? cfg.times?.[0] ?? "08:00"]),
-            target_days: JSON.stringify(cfg.days ?? [0, 1, 2, 3, 4, 5, 6]),
+            times_per_day: derivedReminderTimes.length,
+            reminder_times: JSON.stringify(derivedReminderTimes),
+            target_days: JSON.stringify(derivedTargetDays),
             icon: preset.icon,
             color: preset.color,
             is_active: true,
@@ -705,9 +744,9 @@ export default function Habitos() {
             name: preset.name,
             description: preset.desc,
             frequency: preset.recurrence,
-            times_per_day: 1,
-            reminder_times: JSON.stringify([cfg.time ?? cfg.times?.[0] ?? "08:00"]),
-            target_days: JSON.stringify(cfg.days ?? [0, 1, 2, 3, 4, 5, 6]),
+            times_per_day: derivedReminderTimes.length,
+            reminder_times: JSON.stringify(derivedReminderTimes),
+            target_days: JSON.stringify(derivedTargetDays),
             icon: preset.icon,
             color: preset.color,
             is_active: true,
@@ -972,14 +1011,17 @@ export default function Habitos() {
         .eq("status", "pending");
 
       // 3. Recria reminders apenas se hábito está ativo + tem telefone
-      if (h.is_active && userPhone) {
+      // Plano casal: notify_phone = sent_by_phone (partner) OU userPhone (master)
+      const habitSentBy = (h as any).sent_by_phone as string | null;
+      const notifyPhone = habitSentBy || userPhone;
+      if (h.is_active && notifyPhone) {
         const times: string[] = Array.isArray(h.reminder_times)
           ? (h.reminder_times as string[])
           : h.reminder_times ? JSON.parse(h.reminder_times as string) : [];
         const newReminders = times.map((t) => ({
           user_id: user!.id,
           habit_id: h.id,
-          whatsapp_number: userPhone,
+          whatsapp_number: notifyPhone,
           title: h.name,
           // FIX: usa buildHabitMessage pra preservar mensagem humanizada dos presets
           // (sleep → "😴 Hora de descansar...", bible_verse → "{{habit:bible_verse}}", etc.)
@@ -988,6 +1030,7 @@ export default function Habitos() {
           recurrence: "daily",
           source: "habit",
           status: "pending",
+          sent_by_phone: habitSentBy,
         }));
         if (newReminders.length > 0) {
           await (supabase.from("reminders" as any).insert(newReminders as any) as any);
@@ -1193,14 +1236,17 @@ export default function Habitos() {
                             .delete()
                             .eq("habit_id", h.id)
                             .eq("status", "pending");
-                          if (v && userPhone) {
+                          // Plano casal: notify_phone correto = sent_by_phone (partner) ou userPhone (master)
+                          const habitSentBy = (h as any).sent_by_phone as string | null;
+                          const notifyPhone = habitSentBy || userPhone;
+                          if (v && notifyPhone) {
                             const times: string[] = Array.isArray(h.reminder_times)
                               ? h.reminder_times as string[]
                               : h.reminder_times ? JSON.parse(h.reminder_times as string) : [];
                             const newReminders = times.map(t => ({
                               user_id: user!.id,
                               habit_id: h.id,
-                              whatsapp_number: userPhone,
+                              whatsapp_number: notifyPhone,
                               title: h.name,
                               // FIX: usa buildHabitMessage pra preservar mensagem humanizada dos presets
                               message: buildHabitMessage(h, t),
@@ -1208,6 +1254,7 @@ export default function Habitos() {
                               recurrence: "daily",
                               source: "habit",
                               status: "pending",
+                              sent_by_phone: habitSentBy,
                             }));
                             if (newReminders.length > 0) {
                               await (supabase.from("reminders" as any).insert(newReminders as any) as any);
