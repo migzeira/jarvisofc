@@ -17,6 +17,7 @@ import {
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { PlanCTAButtons } from "@/components/PlanCTAButtons";
+import { buildPlanLabel } from "@/lib/plan";
 
 // ─────────────────────────────────────────────
 // Constants
@@ -407,32 +408,16 @@ export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean }
     }
   };
 
-  // ── Plan label helpers ──
-  // Se foi admin_trial → "Período teste"
-  // Se foi admin_plan  → "Mensal/Anual (admin)"
-  // Se foi kirvano     → "Mensal/Anual"
-  const accessSource = profile?.access_source as string | null;
+  // ── Plan label ──
+  // Helper centralizado em @/lib/plan — mesmo formato usado em DashboardHome.
+  // Formato: "Plano Jarvis — Mensal/Anual/Gratuito" ou "Plano Casal — Mensal/Anual".
   const subscriptionCancelledAt = profile?.subscription_cancelled_at ? new Date(profile.subscription_cancelled_at) : null;
-  const planLabel = (() => {
-    // Sem plano ativo: account_status != 'active' OU sem access_source
-    // (conta nova com plan default 'jarvis_mensal' do trigger NÃO é plano ativo)
-    if (profile?.account_status !== "active") return "Sem plano ativo";
-    const planName = profile?.plan === "maya_anual" ? "Anual"
-      : profile?.plan === "maya_mensal" ? "Mensal"
-      : null;
-    if (accessSource === "admin_trial") return "Plano liberado pelo admin — Período teste";
-    if (accessSource === "admin_plan") {
-      return planName
-        ? `Plano liberado pelo admin — ${planName}`
-        : "Plano liberado pelo admin";
-    }
-    // Kirvano ou demais fontes
-    if (planName) {
-      const base = `Plano Pro — ${planName}`;
-      return subscriptionCancelledAt ? `${base} (cancelado)` : base;
-    }
-    return "Plano Pro";
-  })();
+  const planLabel = buildPlanLabel({
+    plan: profile?.plan,
+    accountStatus: profile?.account_status,
+    accessSource: profile?.access_source,
+    subscriptionCancelledAt,
+  });
   const accessUntilDate = profile?.access_until ? new Date(profile.access_until) : null;
   const daysLeft = accessUntilDate
     ? Math.max(0, Math.ceil((accessUntilDate.getTime() - Date.now()) / 86400000))

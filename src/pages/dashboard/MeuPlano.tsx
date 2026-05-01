@@ -5,9 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Check, Zap, ExternalLink } from "lucide-react";
+import { Check, Zap, ExternalLink, Heart } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { isCouplePlan } from "@/lib/plan";
 
 const FEATURES = [
   "Assistente pessoal 24/7 no WhatsApp",
@@ -40,6 +41,9 @@ export default function MeuPlano() {
   const accessUntil = profile.access_until ? new Date(profile.access_until) : null;
   const isCancelling = isActive && accessUntil && accessUntil > new Date();
   const isAnnual = (profile.plan as string)?.includes("anual") || (profile.plan as string)?.includes("annual") || (profile.plan as string)?.includes("annually");
+  // Plano casal — troca o título "Jarvis" por "Casal" e adiciona ícone
+  const isCasal = isCouplePlan(profile.plan);
+  const planTitle = isCasal ? "Plano Casal" : "Plano Jarvis";
 
   return (
     <div className="space-y-6 max-w-lg">
@@ -51,14 +55,19 @@ export default function MeuPlano() {
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <Zap className="h-5 w-5 text-primary" />
-                <h2 className="text-xl font-bold">Jarvis</h2>
+                {isCasal
+                  ? <Heart className="h-5 w-5 text-pink-400 fill-pink-400/30" />
+                  : <Zap className="h-5 w-5 text-primary" />
+                }
+                <h2 className="text-xl font-bold">{planTitle}</h2>
                 {isAnnual
-                  ? <Badge className="bg-primary/20 text-primary border-primary/30">Anual</Badge>
-                  : <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30">Mensal</Badge>
+                  ? <Badge className={isCasal ? "bg-pink-500/20 text-pink-300 border-pink-500/30" : "bg-primary/20 text-primary border-primary/30"}>Anual</Badge>
+                  : <Badge className={isCasal ? "bg-pink-400/20 text-pink-200 border-pink-400/30" : "bg-blue-500/20 text-blue-300 border-blue-500/30"}>Mensal</Badge>
                 }
               </div>
-              <p className="text-sm text-muted-foreground">Acesso completo a todos os recursos</p>
+              <p className="text-sm text-muted-foreground">
+                {isCasal ? "Acesso completo + 1 parceiro compartilhando" : "Acesso completo a todos os recursos"}
+              </p>
             </div>
 
             {isActive && !isCancelling && (

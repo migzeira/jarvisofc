@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { PlanCTAButtons } from "@/components/PlanCTAButtons";
+import { buildPlanLabel } from "@/lib/plan";
 import { toast } from "sonner";
 import { format, subDays, startOfMonth, endOfMonth, endOfWeek, isToday, isTomorrow, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -406,7 +407,13 @@ export default function DashboardHome() {
           <CheckCircle className="h-5 w-5 shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold">
-              {accessSource === "admin_trial" ? "Período teste liberado pelo admin" : "Plano liberado pelo admin"}
+              {/* Mesmo formato unificado de MeuPerfil: "Plano Jarvis/Casal — Mensal/Anual/Gratuito" */}
+              {buildPlanLabel({
+                plan: profile?.plan,
+                accountStatus: profile?.account_status,
+                accessSource,
+                subscriptionCancelledAt,
+              })} (liberado pelo admin)
             </p>
             <p className="text-xs text-emerald-300/80 mt-0.5">
               Seu acesso expira {daysLeft === 0 ? "hoje" : `em ${daysLeft} dia${daysLeft > 1 ? "s" : ""}`} —{" "}
