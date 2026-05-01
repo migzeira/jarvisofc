@@ -31,7 +31,9 @@ serve(async (req) => {
 
   for (const rec of recurring ?? []) {
     try {
-      // Cria a transação
+      // Cria a transação — preserva sent_by_phone do recorrente original
+      // pra atribuir corretamente no plano casal (se aluguel é do partner,
+      // a transação mensal gerada também deve aparecer como dele).
       await supabase.from("transactions").insert({
         user_id: rec.user_id,
         description: rec.description,
@@ -40,7 +42,8 @@ serve(async (req) => {
         category: rec.category,
         transaction_date: rec.next_date,
         source: "recurring",
-      });
+        sent_by_phone: rec.sent_by_phone ?? null,
+      } as any);
 
       // Calcula próxima data — preserva day_of_month original pra não pular meses
       const next = calcNextDate(rec.next_date, rec.frequency, rec.day_of_month);

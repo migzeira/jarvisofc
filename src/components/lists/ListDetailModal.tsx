@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { SenderBadge } from "@/components/couple/SenderBadge";
 
 interface ListItem {
   id: string;
@@ -20,6 +21,7 @@ interface ListItem {
   position: number;
   source: string;
   created_at: string;
+  sent_by_phone: string | null;
 }
 
 interface Props {
@@ -28,10 +30,13 @@ interface Props {
   listId: string | null;
   listName: string;
   listSource?: string;
+  /** Plano casal: sent_by_phone do dono da lista. Itens herdam pra ficar
+   *  agrupados na visão da pessoa certa. */
+  listSentByPhone?: string | null;
   onChanged?: () => void; // chamado quando algo muda (pra atualizar grid)
 }
 
-export function ListDetailModal({ open, onOpenChange, listId, listName, listSource, onChanged }: Props) {
+export function ListDetailModal({ open, onOpenChange, listId, listName, listSource, listSentByPhone, onChanged }: Props) {
   const { user } = useAuth();
   const [items, setItems] = useState<ListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,12 +70,15 @@ export function ListDetailModal({ open, onOpenChange, listId, listName, listSour
 
     // Calcula próxima position
     const maxPos = items.reduce((m, i) => Math.max(m, i.position), -1);
-    const { error } = await supabase.from("list_items").insert({
+    // Plano casal: item herda o sent_by_phone do dono da lista.
+    // Em solo: sempre null. Compatível 100% com fluxo antigo.
+    const { error } = await (supabase.from("list_items").insert({
       list_id: listId,
       content: trimmed,
       position: maxPos + 1,
       source: "manual",
-    });
+      sent_by_phone: listSentByPhone ?? null,
+    } as any) as any);
 
     if (error) {
       console.error("[ListDetailModal] insert error:", error);
@@ -254,13 +262,17 @@ function ItemRow({
         className="mt-0.5 shrink-0"
       />
       <div className="flex-1 min-w-0">
-        <p
-          className={`text-sm leading-snug ${
-            item.completed ? "line-through text-muted-foreground/60" : "text-foreground"
-          }`}
-        >
-          {item.content}
-        </p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <p
+            className={`text-sm leading-snug ${
+              item.completed ? "line-through text-muted-foreground/60" : "text-foreground"
+            }`}
+          >
+            {item.content}
+          </p>
+          {/* Plano casal: badge mostra QUEM adicionou o item. Solo: nada. */}
+          <SenderBadge sentByPhone={item.sent_by_phone} size="xs" />
+        </div>
         {item.completed && item.completed_at && (
           <p className="text-[10px] text-muted-foreground/50 mt-0.5">
             {format(new Date(item.completed_at), "dd/MM 'às' HH:mm", { locale: ptBR })}

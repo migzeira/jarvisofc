@@ -415,7 +415,8 @@ Frase: "${message}"`;
 async function handleHabitCheckin(
   userId: string,
   message: string,
-  userTz = "America/Sao_Paulo"
+  userTz = "America/Sao_Paulo",
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: any }> {
   // Usa timezone do usuario para determinar "hoje" corretamente
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
@@ -483,7 +484,8 @@ async function handleHabitCheckin(
     habit_id: habit.id,
     user_id: userId,
     logged_date: today,
-  });
+    sent_by_phone: senderPhone, // Plano casal: tag de quem fez check-in
+  } as any);
 
   if (error) {
     if (error.code === "23505") return { response: "Ja registrado hoje! 👍" };
@@ -549,7 +551,11 @@ function computeNextMonthlyDate(from: Date, dayOfMonth: number): Date {
   return new Date(nextMonthFirstDay.getFullYear(), nextMonthFirstDay.getMonth(), effectiveDayNext);
 }
 
-async function handleRecurringCreate(userId: string, message: string): Promise<string> {
+async function handleRecurringCreate(
+  userId: string,
+  message: string,
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
+): Promise<string> {
   // Busca categorias do usuário (default + custom)
   const { data: userCatsData } = await supabase
     .from("categories")
@@ -629,6 +635,7 @@ Frase: "${message}"`;
     next_date: nextDate,
     day_of_month: dayOfMonthToSave,
     active: true,
+    sent_by_phone: senderPhone, // Plano casal: tag de quem cadastrou a recorrência
   } as any);
 
   if (error) {
@@ -2660,6 +2667,15 @@ async function applyEventUpdate(
           ? `⏰ *Hora do seu compromisso!*\n📌 *${originalData.title}* está marcado agora às ${finalTime.slice(0, 5)}`
           : `⏰ *Lembrete!*\nEm ${reminderMinutes} min você tem: *${originalData.title}* às ${finalTime.slice(0, 5)}`;
 
+        // Plano casal: preserva sent_by_phone do evento original pra manter
+        // identidade de quem registrou após edição.
+        const { data: origEvent } = await supabase
+          .from("events")
+          .select("sent_by_phone")
+          .eq("id", eventId)
+          .maybeSingle();
+        const origSentBy = (origEvent as any)?.sent_by_phone ?? null;
+
         await supabase.from("reminders").insert({
           user_id: userId,
           event_id: eventId,
@@ -2670,6 +2686,7 @@ async function applyEventUpdate(
           recurrence: "none",
           source: "whatsapp",
           status: "pending",
+          sent_by_phone: origSentBy,
         });
       }
     }
@@ -3319,6 +3336,7 @@ async function handleNotesSave(
       recurrence: "none",
       source: "whatsapp",
       status: "pending",
+      sent_by_phone: senderPhone, // Plano casal: tag de quem registrou
     });
 
     const timeStr2 = remindAt2.toLocaleTimeString("pt-BR", { timeZone: userTz, hour: "2-digit", minute: "2-digit" });
@@ -3472,6 +3490,7 @@ async function handleNotesSave(
           recurrence: "none",
           source: "whatsapp",
           status: "pending",
+          sent_by_phone: senderPhone, // Plano casal: tag de quem registrou
         });
         const timeStr = remindAt.toLocaleTimeString("pt-BR", { timeZone: userTz, hour: "2-digit", minute: "2-digit" });
         const dateStr = remindAt.toLocaleDateString("pt-BR", { timeZone: userTz, weekday: "long", day: "numeric", month: "long" });
@@ -4588,7 +4607,7 @@ async function handleReminderSnooze(
 
   const { data: lastReminder } = await supabase
     .from("reminders")
-    .select("id, title, message, event_id, whatsapp_number")
+    .select("id, title, message, event_id, whatsapp_number, sent_by_phone")
     .eq("user_id", userId)
     .eq("status", "sent")
     .gte("sent_at", thirtyMinAgo)
@@ -4631,6 +4650,7 @@ async function handleReminderSnooze(
     recurrence: "none",
     source: "snooze",
     status: "pending",
+    sent_by_phone: (lastReminder as any).sent_by_phone ?? null, // Plano casal: preserva tag original
   });
 
   if (snoozeErr) {
@@ -4769,10 +4789,12 @@ async function resolveProfileForShadow(
 ): Promise<{
   profile: { id: string; phone_number: string; timezone: string | null } | null;
   sendPhone: string;
+  partnerPhone: string | null; // Plano casal: phone do partner se a msg veio dele (null = master)
 }> {
   const rawPhone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
   const phone = sanitizePhone(rawPhone);
   let profile: { id: string; phone_number: string; timezone: string | null } | null = null;
+  let partnerPhone: string | null = null;
 
   if (lid) {
     const { data } = await supabase.from("profiles").select("id, phone_number, timezone").eq("whatsapp_lid", lid).maybeSingle();
@@ -4784,8 +4806,56 @@ async function resolveProfileForShadow(
     profile = data;
   }
 
+  // Plano casal: se não achamos master, tenta resolver via profile_partners.
+  // Mesmo padrão do main webhook (linhas ~7220+).
+  if (!profile) {
+    const phoneVariants: string[] = [];
+    if (phone) phoneVariants.push(phone, `+${phone}`, `55${phone}`);
+
+    if (lid) {
+      const { data: partnerByLid } = await (supabase as any)
+        .from("profile_partners")
+        .select("master_user_id, partner_phone")
+        .eq("partner_whatsapp_lid", lid)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (partnerByLid?.master_user_id) {
+        const { data: master } = await supabase
+          .from("profiles")
+          .select("id, phone_number, timezone")
+          .eq("id", partnerByLid.master_user_id)
+          .maybeSingle();
+        if (master) {
+          profile = master;
+          partnerPhone = partnerByLid.partner_phone;
+        }
+      }
+    }
+
+    if (!profile && phoneVariants.length > 0) {
+      const orFilter = phoneVariants.map((p) => `partner_phone.eq.${p}`).join(",");
+      const { data: partnerByPhone } = await (supabase as any)
+        .from("profile_partners")
+        .select("master_user_id, partner_phone")
+        .or(orFilter)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (partnerByPhone?.master_user_id) {
+        const { data: master } = await supabase
+          .from("profiles")
+          .select("id, phone_number, timezone")
+          .eq("id", partnerByPhone.master_user_id)
+          .maybeSingle();
+        if (master) {
+          profile = master;
+          partnerPhone = partnerByPhone.partner_phone;
+        }
+      }
+    }
+  }
+
   const sendPhone = profile?.phone_number?.replace(/\D/g, "") || phone;
-  return { profile, sendPhone };
+  return { profile, sendPhone, partnerPhone };
 }
 
 /**
@@ -4803,7 +4873,7 @@ async function handleShadowMode(
   const log: string[] = ["shadow_mode"];
 
   try {
-    const { profile, sendPhone } = await resolveProfileForShadow(replyTo, lid);
+    const { profile, sendPhone, partnerPhone } = await resolveProfileForShadow(replyTo, lid);
     if (!profile) { log.push("unknown_profile"); return log; }
 
     const { data: config } = await supabase.from("agent_configs").select("*").eq("user_id", profile.id).maybeSingle();
@@ -4831,7 +4901,8 @@ async function handleShadowMode(
       if (moduleNotes) {
         await supabase.from("notes").insert({
           user_id: profile.id, title: content.slice(0, 50), content, source: "whatsapp_forward",
-        });
+          sent_by_phone: partnerPhone, // Plano casal: tag de quem encaminhou
+        } as any);
         await sendText(sendPhone || replyTo, `📝 Anotei: "${content}" [📨 encaminhado]`);
       }
       log.push("short_text_note");
@@ -4882,7 +4953,8 @@ async function handleShadowMode(
             user_id: profile.id, type: d.type || "expense", amount,
             category: d.category || "outros", description: d.description || "Encaminhado",
             transaction_date: d.date || today, source: "whatsapp_forward",
-          });
+            sent_by_phone: partnerPhone, // Plano casal: tag de quem encaminhou
+          } as any);
           const emoji = d.type === "income" ? "🟢" : "🔴";
           const catEm = CATEGORY_EMOJI[d.category ?? "outros"] ?? "📦";
           await sendText(sendPhone || replyTo, `${emoji} Registrei: R$ ${fmtBRL(amount)} — ${d.description || "encaminhado"} (${catEm} ${d.category || "outros"}) [📨 encaminhado]`);
@@ -4942,7 +5014,8 @@ async function handleShadowMode(
       const noteContent = analysis.data?.note_content || content;
       await supabase.from("notes").insert({
         user_id: profile.id, title: noteTitle, content: noteContent, source: "whatsapp_forward",
-      });
+        sent_by_phone: partnerPhone, // Plano casal: tag de quem encaminhou
+      } as any);
       syncNotion(profile.id, noteContent).catch(() => {});
       await sendText(sendPhone || replyTo, `📝 Anotei: "${noteTitle}" [📨 encaminhado]`);
       log.push("note_saved");
@@ -6027,6 +6100,7 @@ async function executeOrder(
   userId: string,
   userPhone: string,
   ctx: Record<string, unknown>,
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<string> {
   const businessName    = ctx.business_name    as string;
   const businessPhone   = ctx.business_phone   as string;
@@ -6100,6 +6174,7 @@ async function executeOrder(
     recurrence_value: null,
     source:           "order_followup",
     status:           "pending",
+    sent_by_phone:    senderPhone, // Plano casal: tag de quem fez o pedido
   } as any).then(undefined, () => {});
 
   return ""; // vazio — confirmação já enviada acima
@@ -6114,6 +6189,7 @@ async function scheduleOrder(
   userId: string,
   userPhone: string,
   ctx: Record<string, unknown>,
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<string> {
   const businessName    = ctx.business_name    as string;
   const businessPhone   = ctx.business_phone   as string;
@@ -6168,6 +6244,7 @@ async function scheduleOrder(
     source:           "scheduled_order",
     status:           "pending",
     order_context:    orderContext,
+    sent_by_phone:    senderPhone, // Plano casal: tag de quem agendou
   } as any).then(undefined, () => {});
 
   // Formata horário pra exibir pro usuario
@@ -6392,6 +6469,7 @@ async function handleSendToContact(
 async function executeSendToContact(
   userId: string,
   ctx: Record<string, unknown>,
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<string> {
   const foundPhone     = String(ctx.foundPhone ?? "");
   const foundName      = String(ctx.foundName ?? "contato");
@@ -6420,7 +6498,8 @@ async function executeSendToContact(
         recurrence: "none",
         source: "send_to_contact",
         status: "pending",
-      });
+        sent_by_phone: senderPhone, // Plano casal: tag de quem agendou a mensagem
+      } as any);
     } catch (e) {
       console.error("[send_to_contact_confirm] falha ao agendar:", e);
       return `⚠️ Não consegui agendar a mensagem pra *${foundName}*. Tenta de novo daqui a pouco.`;
@@ -6473,6 +6552,7 @@ async function handleScheduleMeeting(
   userNickname: string | null,
   pushName: string,
   language: string,
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
 
@@ -6543,7 +6623,8 @@ async function handleScheduleMeeting(
     google_event_id: eventId ?? null,
     meeting_url: meetLink ?? null,
     source: "whatsapp_meeting",
-  });
+    sent_by_phone: senderPhone, // Plano casal: tag de quem agendou a reunião
+  } as any);
 
   // Agenda lembrete 10 min antes pro usuário (NÃO pro contato — só envia se ele confirmar)
   if (extracted.time) {
@@ -6561,7 +6642,8 @@ async function handleScheduleMeeting(
         recurrence: "none",
         status: "pending",
         source: "meeting_reminder",
-      });
+        sent_by_phone: senderPhone, // Plano casal: tag de quem agendou
+      } as any);
     } catch (e) {
       console.error("[schedule_meeting] reminder insert error:", e);
     }
@@ -6680,6 +6762,9 @@ async function handleStatementConfirm(
       return { response: "Não há transações para salvar. Envie uma nova imagem." };
     }
 
+    // Plano casal: ctx persistiu sent_by_phone do partner que encaminhou a imagem
+    const ctxSentBy = (ctx.sent_by_phone as string | null | undefined) ?? null;
+
     const today = new Date().toLocaleDateString("sv-SE");
     const rows = transactions.map(t => ({
       user_id: userId,
@@ -6689,9 +6774,10 @@ async function handleStatementConfirm(
       description: t.description,
       transaction_date: t.date || today,
       source: "whatsapp_image",
+      sent_by_phone: ctxSentBy,
     }));
 
-    const { error } = await supabase.from("transactions").insert(rows);
+    const { error } = await (supabase.from("transactions").insert(rows as any) as any);
     if (error) {
       console.error("handleStatementConfirm insert error:", error);
       return { response: "⚠️ Erro ao salvar as transações. Tente novamente enviando a imagem." };
@@ -6789,6 +6875,58 @@ async function processImageMessage(
       }
     }
 
+    // ── PLANO CASAL: resolve partner se ainda não achamos profile ──
+    // Mesmo padrão do main webhook: se a imagem veio do whatsapp do partner,
+    // resolve master via profile_partners e populates partnerPhone.
+    let partnerPhone: string | null = null;
+    if (!profile) {
+      const phoneVariants: string[] = [];
+      if (phone) phoneVariants.push(phone, `+${phone}`, `55${phone}`);
+
+      if (lid) {
+        const { data: partnerByLid } = await (supabase as any)
+          .from("profile_partners")
+          .select("master_user_id, partner_phone")
+          .eq("partner_whatsapp_lid", lid)
+          .eq("is_active", true)
+          .maybeSingle();
+        if (partnerByLid?.master_user_id) {
+          const { data: master } = await supabase
+            .from("profiles")
+            .select("id, phone_number, account_status, whatsapp_lid")
+            .eq("id", partnerByLid.master_user_id)
+            .maybeSingle();
+          if (master) {
+            profile = master;
+            partnerPhone = partnerByLid.partner_phone;
+            log.push(`partner_resolved_by_lid: ${partnerPhone}`);
+          }
+        }
+      }
+
+      if (!profile && phoneVariants.length > 0) {
+        const orFilter = phoneVariants.map((p) => `partner_phone.eq.${p}`).join(",");
+        const { data: partnerByPhone } = await (supabase as any)
+          .from("profile_partners")
+          .select("master_user_id, partner_phone")
+          .or(orFilter)
+          .eq("is_active", true)
+          .maybeSingle();
+        if (partnerByPhone?.master_user_id) {
+          const { data: master } = await supabase
+            .from("profiles")
+            .select("id, phone_number, account_status, whatsapp_lid")
+            .eq("id", partnerByPhone.master_user_id)
+            .maybeSingle();
+          if (master) {
+            profile = master;
+            partnerPhone = partnerByPhone.partner_phone;
+            log.push(`partner_resolved_by_phone: ${partnerPhone}`);
+          }
+        }
+      }
+    }
+
     // Sem profile → silêncio total (não tenta sendText para LID inválido)
     if (!profile) {
       log.push("unknown_number_silent");
@@ -6814,7 +6952,8 @@ async function processImageMessage(
           title: "Imagem encaminhada",
           content: "[Imagem recebida via encaminhamento — não identificada como documento financeiro]",
           source: "whatsapp_forward",
-        });
+          sent_by_phone: partnerPhone, // Plano casal: tag de quem encaminhou
+        } as any);
         await sendText(sendPhone, "📷 Recebi a imagem encaminhada — salvei como anotação. [📨 encaminhado]");
         return log;
       }
@@ -6837,7 +6976,8 @@ async function processImageMessage(
         description: t.description,
         transaction_date: t.date || today,
         source: "whatsapp_image",
-      });
+        sent_by_phone: partnerPhone, // Plano casal: tag de quem encaminhou a imagem
+      } as any);
       const dot = t.type === "expense" ? "🔴" : "🟢";
       const catEmoji = CATEGORY_EMOJI[t.category] ?? "📦";
       const confirmMsg = `✅ *${docTypeLabel(extraction.document_type)} registrado!*\n\n${dot} ${t.description}\n${catEmoji} Categoria: ${t.category}\n💵 Valor: R$ ${fmtBRL(t.amount)}\n\nSalvo com sucesso! 🎉`;
@@ -6862,6 +7002,7 @@ async function processImageMessage(
           period: extraction.period,
           total_expense: extraction.total_expense,
           total_income: extraction.total_income,
+          sent_by_phone: partnerPhone, // Plano casal: persiste no ctx pra handleStatementConfirm aplicar nas rows
         },
         last_activity: new Date().toISOString(),
         last_processed_id: messageId ?? null,
@@ -7676,9 +7817,9 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
       if (yes && ctx.business_name) {
         if (ctx.scheduled_at) {
-          responseText = await scheduleOrder(profile.id, sendPhone || replyTo, ctx);
+          responseText = await scheduleOrder(profile.id, sendPhone || replyTo, ctx, partnerInfo?.partner_phone ?? null);
         } else {
-          responseText = await executeOrder(profile.id, sendPhone || replyTo, ctx);
+          responseText = await executeOrder(profile.id, sendPhone || replyTo, ctx, partnerInfo?.partner_phone ?? null);
         }
         pendingAction  = undefined;
         pendingContext = undefined;
@@ -7745,11 +7886,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "budget_query") {
       responseText = await handleBudgetQuery(profile.id, text);
     } else if (intent === "recurring_create") {
-      responseText = await handleRecurringCreate(profile.id, text);
+      responseText = await handleRecurringCreate(profile.id, text, partnerInfo?.partner_phone ?? null);
     } else if (intent === "habit_create") {
       responseText = await handleHabitCreate(profile.id, sendPhone || replyTo, text, userTz);
     } else if (intent === "habit_checkin") {
-      const checkinResult = await handleHabitCheckin(profile.id, text, userTz);
+      const checkinResult = await handleHabitCheckin(profile.id, text, userTz, partnerInfo?.partner_phone ?? null);
       responseText = checkinResult.response;
       pendingAction = checkinResult.pendingAction;
       pendingContext = checkinResult.pendingContext;
@@ -7786,7 +7927,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
             habit_id: chosen.id,
             user_id: profile.id,
             logged_date: today,
-          });
+            sent_by_phone: partnerInfo?.partner_phone ?? null, // Plano casal: tag de quem fez check-in
+          } as any);
           if (insErr) {
             responseText = insErr.code === "23505" ? "Ja registrado hoje! 👍" : "Erro ao registrar. Tente novamente.";
           } else {
@@ -7944,24 +8086,24 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
     } else if (session?.pending_action === "list_await_name") {
       // Usuário disse "cria lista" sem nome — agora ele mandou o nome
-      const r = await handleListCreate(supabase as any, profile.id, `cria lista de ${text}`);
+      const r = await handleListCreate(supabase as any, profile.id, `cria lista de ${text}`, partnerInfo?.partner_phone ?? null);
       responseText = r.response;
       pendingAction = r.pendingAction ?? null;
       pendingContext = r.pendingContext ?? null;
     } else if (session?.pending_action === "list_await_items") {
       // Sequência natural após criar lista: user manda os itens
       const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
-      const r = await handleListAddItems(supabase as any, profile.id, text, ctx);
+      const r = await handleListAddItems(supabase as any, profile.id, text, ctx, partnerInfo?.partner_phone ?? null);
       responseText = r.response;
       pendingAction = r.pendingAction ?? null;
       pendingContext = r.pendingContext ?? null;
     } else if (intent === "list_create") {
-      const r = await handleListCreate(supabase as any, profile.id, text);
+      const r = await handleListCreate(supabase as any, profile.id, text, partnerInfo?.partner_phone ?? null);
       responseText = r.response;
       pendingAction = r.pendingAction ?? null;
       pendingContext = r.pendingContext ?? null;
     } else if (intent === "list_add_items") {
-      const r = await handleListAddItems(supabase as any, profile.id, text);
+      const r = await handleListAddItems(supabase as any, profile.id, text, null, partnerInfo?.partner_phone ?? null);
       responseText = r.response;
       pendingAction = r.pendingAction ?? null;
       pendingContext = r.pendingContext ?? null;
@@ -8092,7 +8234,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           recurrence: "none",
           source: "whatsapp_forward",
           status: "pending",
-        });
+          sent_by_phone: partnerInfo?.partner_phone ?? null, // Plano casal: igual aos sibling shadow_*_confirm
+        } as any);
         responseText = `✅ Lembrete criado: *${ctx.title || "Lembrete encaminhado"}* [📨 encaminhado]`;
       } else {
         responseText = "Ok, ignorei o lembrete. 🗑️";
@@ -8157,9 +8300,9 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (yes && ctx.business_name) {
         // Se tem scheduled_at → agenda pro futuro; senão → envia agora
         if (ctx.scheduled_at) {
-          responseText = await scheduleOrder(profile.id, sendPhone || replyTo, ctx);
+          responseText = await scheduleOrder(profile.id, sendPhone || replyTo, ctx, partnerInfo?.partner_phone ?? null);
         } else {
-          responseText = await executeOrder(profile.id, sendPhone || replyTo, ctx);
+          responseText = await executeOrder(profile.id, sendPhone || replyTo, ctx, partnerInfo?.partner_phone ?? null);
         }
         pendingAction  = undefined;
         pendingContext = undefined;
@@ -8449,7 +8592,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       const no  = /^(nao|n|cancela|cancelar|nao envia|nao enviar|nao manda|nao mandar|deixa pra la|pode esquecer|melhor nao|nope|nah|2)\b/.test(msgLow);
 
       if (yes) {
-        responseText = await executeSendToContact(profile.id, ctx);
+        responseText = await executeSendToContact(profile.id, ctx, partnerInfo?.partner_phone ?? null);
       } else if (no) {
         responseText = `❌ Envio cancelado. A mensagem pra *${String(ctx.foundName ?? "contato")}* não foi enviada.`;
       } else {
@@ -8461,7 +8604,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     } else if (intent === "schedule_meeting") {
       const meetResult = await handleScheduleMeeting(
-        profile.id, sendPhone || replyTo, text, userTz, agentName, userNickname, pushName, language
+        profile.id, sendPhone || replyTo, text, userTz, agentName, userNickname, pushName, language,
+        partnerInfo?.partner_phone ?? null
       );
       responseText = meetResult.response;
       pendingAction = meetResult.pendingAction;

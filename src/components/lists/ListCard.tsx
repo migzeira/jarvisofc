@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { ListChecks, MessageCircle, Trash2, CheckCircle2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { SenderBadge } from "@/components/couple/SenderBadge";
 
 export interface ListSummary {
   id: string;
@@ -13,6 +14,7 @@ export interface ListSummary {
   total_items: number;
   pending_items: number;
   preview: string[]; // até 3 itens pendentes
+  sent_by_phone: string | null; // Plano casal: dono da lista
 }
 
 const ACCENTS = [
@@ -58,9 +60,13 @@ export function ListCard({ list, onClick, onDelete }: Props) {
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-sm leading-tight mb-0.5 truncate capitalize">
-                {list.name}
-              </h3>
+              <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                <h3 className="font-semibold text-sm leading-tight truncate capitalize">
+                  {list.name}
+                </h3>
+                {/* Plano casal: badge mostra dona da lista. Solo: nada. */}
+                <SenderBadge sentByPhone={list.sent_by_phone} size="xs" />
+              </div>
               <p className="text-[11px] text-muted-foreground">
                 {list.total_items === 0
                   ? "Vazia"

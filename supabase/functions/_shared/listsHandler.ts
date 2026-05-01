@@ -305,7 +305,8 @@ async function smartParse(
 export async function handleListCreate(
   supabase: SupabaseClient,
   userId: string,
-  text: string
+  text: string,
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<ListHandlerResult> {
   // Parse via IA (cobre fala natural) + fallback regex
   const known = await getKnownListNames(supabase, userId);
@@ -343,6 +344,7 @@ export async function handleListCreate(
       user_id: userId,
       name,
       source: "whatsapp",
+      sent_by_phone: senderPhone, // Plano casal: tag de quem criou a lista
     })
     .select("id, name")
     .single();
@@ -375,6 +377,7 @@ export async function handleListCreate(
       content,
       position: idx,
       source: "whatsapp",
+      sent_by_phone: senderPhone, // Plano casal: itens herdam o tag de quem criou a lista
     }));
     const { error: itemsErr } = await (supabase as any).from("list_items").insert(rows);
     if (!itemsErr) {
@@ -405,7 +408,8 @@ export async function handleListAddItems(
   supabase: SupabaseClient,
   userId: string,
   text: string,
-  pendingContext?: Record<string, unknown> | null
+  pendingContext?: Record<string, unknown> | null,
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master)
 ): Promise<ListHandlerResult> {
   // Se chegou via pending_action="list_await_items", já temos o list_id no contexto
   let list: ListRow | null = null;
@@ -466,6 +470,7 @@ export async function handleListAddItems(
     content,
     position: startPos + idx,
     source: "whatsapp",
+    sent_by_phone: senderPhone, // Plano casal: tag de quem adicionou o item
   }));
 
   const { error } = await (supabase as any).from("list_items").insert(rows);

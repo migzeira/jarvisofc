@@ -7,6 +7,8 @@ import { ListChecks } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { SenderSelector, resolveSenderTargets, type SenderSelectorValue } from "@/components/couple/SenderSelector";
+import { useCoupleContext } from "@/hooks/useCoupleContext";
 
 interface Props {
   open: boolean;
@@ -16,11 +18,15 @@ interface Props {
 
 export function CreateListDialog({ open, onOpenChange, onCreated }: Props) {
   const { user } = useAuth();
+  const couple = useCoupleContext();
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
+  // Plano casal: pra qual lista? "Os dois" desabilitado — listas têm dono único.
+  const [target, setTarget] = useState<SenderSelectorValue>("me");
 
   const reset = () => {
     setName("");
+    setTarget("me");
     setSaving(false);
   };
 
@@ -50,15 +56,23 @@ export function CreateListDialog({ open, onOpenChange, onCreated }: Props) {
       return;
     }
 
-    const { data, error } = await supabase
+    // Plano casal: resolve sent_by_phone do target escolhido.
+    const useSelector = couple.isCouplePlan && couple.partners.length > 0;
+    const targets = useSelector
+      ? resolveSenderTargets(target, couple.masterPhone, couple.masterName, couple.partners)
+      : [{ sent_by_phone: null, notify_phone: "", label: "Você" }];
+    const sentByPhone = targets[0]?.sent_by_phone ?? null;
+
+    const { data, error } = await (supabase
       .from("lists")
       .insert({
         user_id: user.id,
         name: trimmed.toLowerCase(),
         source: "manual",
-      })
+        sent_by_phone: sentByPhone,
+      } as any)
       .select("id, name")
-      .single();
+      .single() as any);
 
     if (error) {
       console.error("[CreateListDialog] insert error:", error);
@@ -95,6 +109,15 @@ export function CreateListDialog({ open, onOpenChange, onCreated }: Props) {
             <br />
             Você também pode criar pelo WhatsApp: <em>"cria lista de compras"</em>
           </p>
+
+          {/* Plano casal: pra qual lista? Não renderiza em cliente solo */}
+          <SenderSelector
+            value={target}
+            onChange={setTarget}
+            showBoth={false}
+            label="Pra qual lista?"
+          />
+
           <div className="space-y-2">
             <Label>Nome da lista</Label>
             <Input

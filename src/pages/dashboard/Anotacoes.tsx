@@ -203,7 +203,7 @@ export default function Anotacoes() {
         .limit(500),
       supabase
         .from("lists")
-        .select("id, name, source, created_at, updated_at")
+        .select("id, name, source, created_at, updated_at, sent_by_phone")
         .eq("user_id", user.id)
         .is("archived_at", null)
         .order("updated_at", { ascending: false })
@@ -219,6 +219,7 @@ export default function Anotacoes() {
       source: string;
       created_at: string;
       updated_at: string;
+      sent_by_phone: string | null;
     }>;
 
     if (listRows.length > 0) {
@@ -256,6 +257,7 @@ export default function Anotacoes() {
           total_items: its.length,
           pending_items: pending.length,
           preview: pending.slice(0, 3).map((p) => p.content),
+          sent_by_phone: l.sent_by_phone, // Plano casal: dona da lista pro badge
         };
       });
       setLists(summaries);
@@ -342,16 +344,17 @@ export default function Anotacoes() {
     return matchesSenderFilter(n.sent_by_phone, senderFilter, couple.masterPhone);
   });
 
-  // Listas filtradas (busca cobre nome + preview dos itens; sender filter não
-  // aplica em listas porque elas são compartilhadas — itens internos é que têm tag)
+  // Listas filtradas: busca + filtro de quem registrou (cada lista tem dono).
   const filteredLists = useMemo(() => {
     const q = search.toLowerCase();
-    if (!q) return lists;
     return lists.filter((l) => {
+      // Filtro de plano casal por dona da lista
+      if (!matchesSenderFilter(l.sent_by_phone, senderFilter, couple.masterPhone)) return false;
+      if (!q) return true;
       if (l.name.toLowerCase().includes(q)) return true;
       return l.preview.some((p) => p.toLowerCase().includes(q));
     });
-  }, [lists, search]);
+  }, [lists, search, senderFilter, couple.masterPhone]);
 
   const totalCount = filtered.length + filteredLists.length;
 
@@ -573,6 +576,7 @@ export default function Anotacoes() {
             total_items: 0,
             pending_items: 0,
             preview: [],
+            sent_by_phone: null, // CreateListDialog gravou o phone real; loadData() recarrega
           });
         }}
       />
@@ -584,6 +588,7 @@ export default function Anotacoes() {
         listId={detailList?.id ?? null}
         listName={detailList?.name ?? ""}
         listSource={detailList?.source}
+        listSentByPhone={detailList?.sent_by_phone ?? null}
         onChanged={loadData}
       />
 
