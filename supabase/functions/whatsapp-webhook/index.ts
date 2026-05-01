@@ -4573,6 +4573,33 @@ async function handleReminderSet(
     return { response: "⚠️ Não consegui identificar a data/hora. Pode repetir com mais detalhes?" };
   }
 
+  // ── 🛡️ Safety net: AI alucinou hora atual como default? ──
+  //
+  // BUG REPORTADO: amigo do Miguel mandou "Me lembre amanhã de levar pet" às
+  // 18:53. AI retornou hora atual (18:53) como default em vez de 09:00 ou
+  // perguntar. Resultado: lembrete agendado pra hora errada.
+  //
+  // Regra: se AI retornou um remind_at dentro de ±5 min de NOW E a mensagem
+  // do usuário NÃO tem padrão explícito de tempo (h, h:mm, manhã/tarde/noite,
+  // daqui/em X min/hora, agora) → é alucinação. Override pra 09:00 do mesmo dia.
+  // O while-loop de push abaixo cuida do caso "09:00 já passou hoje" empurrando
+  // pra amanhã.
+  const _msgNorm = message.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const hasExplicitTime =
+    /\b\d{1,2}\s*[:h]\s*\d{0,2}\b/.test(_msgNorm) ||
+    /\b(manha|tarde|noite|madrugada)\b/.test(_msgNorm) ||
+    /\bmeio\s*dia\b|\bmeia\s*noite\b/.test(_msgNorm) ||
+    /\bdaqui\s+\d/.test(_msgNorm) ||
+    /\bem\s+\d+\s+(min|minuto|minutos|hora|horas|h)\b/.test(_msgNorm) ||
+    /\bagora\b/.test(_msgNorm);
+
+  const _diffMin = Math.abs(remindAt.getTime() - Date.now()) / 60000;
+  if (_diffMin < 5 && !hasExplicitTime) {
+    console.warn("[handleReminderSet] AI returned current-time as default — overriding to 09:00");
+    remindAt.setHours(9, 0, 0, 0);
+    parsed.remind_at = remindAt.toISOString();
+  }
+
   // ── Empurra pra próxima ocorrência futura se a hora já passou ──
   //
   // BUG HISTÓRICO (relatado por usuário 02/05): código antigo só fazia

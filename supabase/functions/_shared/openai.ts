@@ -1078,6 +1078,19 @@ Regras para remind_at:
 - "sexta" / "segunda" → próximo dia da semana mencionado
 - "semana que vem" → +7 dias
 
+🚨 REGRA CRÍTICA — DEFAULTS QUANDO FALTA HORA:
+NUNCA, EM NENHUMA HIPÓTESE, use a HORA ATUAL como default quando o usuário
+não mencionar uma hora explícita. Isso é um bug grave.
+- Se mencionou DATA mas NÃO mencionou HORA: use 09:00 como default.
+  Exemplo: "me lembre amanhã de levar pet" às 18:53 → próximo dia 09:00 (NÃO 18:53!)
+  Exemplo: "me lembra na sexta de pagar luz" → próxima sexta 09:00 (NÃO hora atual)
+  Exemplo: "me lembra semana que vem da consulta" → +7 dias 09:00
+- Se mencionou HORA mas NÃO mencionou DATA: use HOJE (se ainda não passou) ou AMANHÃ.
+- Se NÃO mencionou nem DATA nem HORA: use AMANHÃ 09:00 (fallback razoável).
+- Períodos do dia: "manhã" = 09:00, "tarde" = 14:00, "noite" = 20:00, "madrugada" = 05:00
+  Exemplo: "me lembre amanhã de manhã de levar pet" → próximo dia 09:00
+  Exemplo: "me lembra à tarde de ligar pra mãe" → hoje 14:00 (ou amanhã se já passou)
+
 Regras para recurrence (analise CUIDADOSAMENTE — é muito importante detectar corretamente):
 
 REGRA PRINCIPAL: Recurrence só é diferente de "none" quando o usuário usar EXPLICITAMENTE
