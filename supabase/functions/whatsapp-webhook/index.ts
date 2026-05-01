@@ -4404,6 +4404,20 @@ async function handleReminderSet(
   if (step === "reminder_advance_confirm") {
     const parsed = ctx.parsed as Record<string, unknown>;
     const remindAt = new Date(parsed.remind_at as string);
+
+    // Safety net: se user demorou MUITO pra responder (overnight, +24h) e
+    // remindAt ficou no passado, empurra pra próxima ocorrência futura. Sem isso,
+    // saveReminder agendaria pra um horário já passado → silenciosamente cancelado
+    // pelo grace do send-reminder e nunca chega no whatsapp.
+    {
+      let _pushed = 0;
+      const _nowMs = Date.now();
+      while (remindAt.getTime() <= _nowMs && _pushed < 7) {
+        remindAt.setDate(remindAt.getDate() + 1);
+        _pushed++;
+      }
+      if (_pushed > 0) parsed.remind_at = remindAt.toISOString();
+    }
     const msgLow = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
     // BUG histórico: lógica era yes→advance / else→saveDirect.
@@ -4463,6 +4477,18 @@ async function handleReminderSet(
   if (step === "reminder_advance") {
     const parsed = ctx.parsed as Record<string, unknown>;
     const remindAt = new Date(parsed.remind_at as string);
+
+    // Safety net (mesmo padrão do step anterior): empurra remindAt pra próxima
+    // ocorrência futura se ficou no passado por user demorar pra responder.
+    {
+      let _pushed = 0;
+      const _nowMs = Date.now();
+      while (remindAt.getTime() <= _nowMs && _pushed < 7) {
+        remindAt.setDate(remindAt.getDate() + 1);
+        _pushed++;
+      }
+      if (_pushed > 0) parsed.remind_at = remindAt.toISOString();
+    }
     const msgLow = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
     // Mapeamento de button IDs para minutos
@@ -4547,8 +4573,31 @@ async function handleReminderSet(
     return { response: "⚠️ Não consegui identificar a data/hora. Pode repetir com mais detalhes?" };
   }
 
-  if (remindAt <= new Date()) {
+  // ── Empurra pra próxima ocorrência futura se a hora já passou ──
+  //
+  // BUG HISTÓRICO (relatado por usuário 02/05): código antigo só fazia
+  // `remindAt.setDate(remindAt.getDate() + 1)` UMA vez e nunca atualizava
+  // `parsed.remind_at` (a string original). Resultado:
+  //   - Variável local `remindAt` ficava correta (próxima ocorrência futura)
+  //   - Mas pendingContext armazenava `parsed` com remind_at no PASSADO
+  //   - Quando user respondia "Sim, me avisa antes" + "45 minutos antes",
+  //     o advance_confirm step relia parsed.remind_at (ontem) e agendava
+  //     o lembrete pra ontem - 45min → silenciosamente cancelado pelo grace
+  //     do send-reminder, e hoje no horário esperado nada chegava no whats.
+  //
+  // Fix:
+  //   1. While loop pra cobrir caso de >1 dia no passado (com guarda de 7d
+  //      pra não loopar infinito)
+  //   2. Sincroniza parsed.remind_at com remindAt depois do push, garantindo
+  //      que o pendingContext armazene a data CORRIGIDA, não a original.
+  let pushedDays = 0;
+  const nowMs = Date.now();
+  while (remindAt.getTime() <= nowMs && pushedDays < 7) {
     remindAt.setDate(remindAt.getDate() + 1);
+    pushedDays++;
+  }
+  if (pushedDays > 0) {
+    parsed.remind_at = remindAt.toISOString();
   }
 
   // ── Garante que recorrência detectada via regex prevaleça sobre IA ──
@@ -8204,6 +8253,16 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         if (isNaN(remindAt.getTime())) {
           responseText = "⚠️ A data ficou inválida. Pode mandar de novo o lembrete?";
         } else {
+          // Safety net: se remindAt ficou no passado (user demorou pra confirmar),
+          // empurra pra próxima ocorrência futura. Mesmo padrão usado em handleReminderSet.
+          let _pushed = 0;
+          const _nowMs = Date.now();
+          while (remindAt.getTime() <= _nowMs && _pushed < 7) {
+            remindAt.setDate(remindAt.getDate() + 1);
+            _pushed++;
+          }
+          if (_pushed > 0) proposed.remind_at = remindAt.toISOString();
+
           const saveResult = await saveReminder(
             profile.id, sendPhone || replyTo, proposed, remindAt, 0,
             language, userNickname, userTz, partnerInfo?.partner_phone ?? null,
