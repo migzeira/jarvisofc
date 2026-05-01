@@ -619,105 +619,82 @@ export default function Habitos() {
     setConfigSaving(true);
 
     try {
-      // Plano casal: pra quem é esse hábito?
-      // - Edição PURA (já ativo): preserva sent_by_phone original
-      // - Reativação (existe mas inativo): usa o novo presetTarget escolhido
-      // - Criação: usa presetTarget (Eu / Parceiro / Os dois)
+      // Plano casal: resolve destinatários do presetTarget.
       // Cliente solo: targets sempre [{master}]
-      const isPureEdit = configModal.editingHabit && configModal.editingHabit.is_active;
-      const useTargetSelector = !isPureEdit && couple.isCouplePlan && couple.partners.length > 0;
+      const useTargetSelector = couple.isCouplePlan && couple.partners.length > 0;
       const targets = useTargetSelector
         ? resolveSenderTargets(presetTarget, couple.masterPhone, couple.masterName, couple.partners)
         : [{ sent_by_phone: null, notify_phone: userPhone, label: "Você" }];
 
-      if (configModal.editingHabit && configModal.editingHabit.is_active) {
-        // EDIÇÃO PURA — não muda destinatário (preserva sent_by_phone original)
+      if (configModal.editingHabit) {
+        // EDIÇÃO ou REATIVAÇÃO — atualiza hábito existente + cria novos
+        // hábitos pros targets adicionais (caso "Os dois" e havia só 1 antes).
+        // O hábito existente é "consumido" pelo primeiro target (mantém id),
+        // os outros viram hábitos novos.
         const habitId = configModal.editingHabit.id;
+        const firstTarget = targets[0];
+        const firstNotifyPhone = firstTarget.notify_phone || userPhone;
+
         await (supabase.from("habits" as any).update({
           is_active: true,
           habit_config: cfg,
+          sent_by_phone: firstTarget.sent_by_phone,
           updated_at: new Date().toISOString(),
         } as any).eq("id", habitId) as any);
 
+        // Recria reminders do hábito principal (delete pending + insert novos)
         await (supabase.from("reminders" as any) as any)
           .delete()
           .eq("habit_id", habitId)
           .eq("status", "pending");
 
-        if (userPhone) {
-          // Pega sent_by_phone original do hábito pra propagar nos reminders novos
-          const origSenderPhone = (configModal.editingHabit as any).sent_by_phone ?? null;
-          const notifyPhone = origSenderPhone || userPhone;
-          const remindersToCreate = buildReminders(preset, cfg, user.id, notifyPhone, habitId, origSenderPhone);
+        if (firstNotifyPhone) {
+          const remindersToCreate = buildReminders(preset, cfg, user.id, firstNotifyPhone, habitId, firstTarget.sent_by_phone);
           if (remindersToCreate.length > 0) {
             await (supabase.from("reminders" as any).insert(remindersToCreate as any) as any);
           }
         }
-        toast.success(`${preset.icon} ${preset.name} atualizado!`);
-      } else if (configModal.editingHabit && !configModal.editingHabit.is_active) {
-        // REATIVAÇÃO — pode mudar de destinatário (1 target só, "Os dois" não
-        // faz sentido aqui pois o hábito é único). Pega o primeiro target.
-        const target = targets[0];
-        const notifyPhone = target.notify_phone || userPhone;
-        const habitId = configModal.editingHabit.id;
 
-        await (supabase.from("habits" as any).update({
-          is_active: true,
-          habit_config: cfg,
-          sent_by_phone: target.sent_by_phone,
-          updated_at: new Date().toISOString(),
-        } as any).eq("id", habitId) as any);
+        // Targets extras (caso "Os dois") — cria hábitos novos pra cada
+        for (const extraTarget of targets.slice(1)) {
+          const extraNotify = extraTarget.notify_phone || userPhone;
+          const { data: newHabit, error: habitErr } = await (supabase.from("habits" as any).insert({
+            user_id: user.id,
+            name: preset.name,
+            description: preset.desc,
+            frequency: preset.recurrence,
+            times_per_day: 1,
+            reminder_times: JSON.stringify([cfg.time ?? cfg.times?.[0] ?? "08:00"]),
+            target_days: JSON.stringify(cfg.days ?? [0, 1, 2, 3, 4, 5, 6]),
+            icon: preset.icon,
+            color: preset.color,
+            is_active: true,
+            preset_key: preset.key,
+            habit_config: cfg,
+            sent_by_phone: extraTarget.sent_by_phone,
+          } as any).select("id").single() as any);
 
-        await (supabase.from("reminders" as any) as any)
-          .delete()
-          .eq("habit_id", habitId)
-          .eq("status", "pending");
-
-        if (notifyPhone) {
-          const remindersToCreate = buildReminders(preset, cfg, user.id, notifyPhone, habitId, target.sent_by_phone);
-          if (remindersToCreate.length > 0) {
-            await (supabase.from("reminders" as any).insert(remindersToCreate as any) as any);
-          }
-        }
-        toast.success(`${preset.icon} ${preset.name} reativado pra ${target.label}!`);
-
-        // Se "Os dois", precisa criar 1 hábito adicional pro outro target
-        if (targets.length > 1) {
-          for (const extraTarget of targets.slice(1)) {
-            const extraNotify = extraTarget.notify_phone || userPhone;
-            const { data: newHabit, error: habitErr } = await (supabase.from("habits" as any).insert({
-              user_id: user.id,
-              name: preset.name,
-              description: preset.desc,
-              frequency: preset.recurrence,
-              times_per_day: 1,
-              reminder_times: JSON.stringify([cfg.time ?? cfg.times?.[0] ?? "08:00"]),
-              target_days: JSON.stringify(cfg.days ?? [0, 1, 2, 3, 4, 5, 6]),
-              icon: preset.icon,
-              color: preset.color,
-              is_active: true,
-              preset_key: preset.key,
-              habit_config: cfg,
-              sent_by_phone: extraTarget.sent_by_phone,
-            } as any).select("id").single() as any);
-
-            if (habitErr) {
-              if (habitErr.code === "23505") {
-                console.warn(`[savePreset reativação] preset já existe pra ${extraTarget.label} — pulando`);
-                continue;
-              }
-              console.error(habitErr);
+          if (habitErr) {
+            // Constraint única (user_id, preset_key) — provavelmente o outro
+            // target já tinha esse preset ativo. Pula sem erro.
+            if (habitErr.code === "23505") {
+              console.warn(`[savePreset edit] preset já existe pra ${extraTarget.label} — pulando`);
               continue;
             }
-            if (!newHabit) continue;
-            if (extraNotify) {
-              const remindersToCreate = buildReminders(preset, cfg, user.id, extraNotify, (newHabit as any).id, extraTarget.sent_by_phone);
-              if (remindersToCreate.length > 0) {
-                await (supabase.from("reminders" as any).insert(remindersToCreate as any) as any);
-              }
+            console.error(habitErr);
+            continue;
+          }
+          if (!newHabit) continue;
+          if (extraNotify) {
+            const remindersToCreate = buildReminders(preset, cfg, user.id, extraNotify, (newHabit as any).id, extraTarget.sent_by_phone);
+            if (remindersToCreate.length > 0) {
+              await (supabase.from("reminders" as any).insert(remindersToCreate as any) as any);
             }
           }
         }
+
+        const labels = targets.map((t) => t.label).join(" e ");
+        toast.success(`${preset.icon} ${preset.name} atualizado pra ${labels}!`);
       } else {
         // Cria 1 hábito por target. Cada um é um hábito independente — recebe
         // notificação no whatsapp_number do destinatário (master ou partner).
@@ -1329,15 +1306,18 @@ export default function Habitos() {
               )}
 
               {/* Plano casal: pra quem é esse hábito?
-                  Mostra em CRIAÇÃO (editingHabit=null) e REATIVAÇÃO (editingHabit
-                  existe mas is_active=false). Em edição pura (hábito já ativo
-                  sendo modificado), esconde — mantém destinatário original. */}
-              {(!configModal.editingHabit || !configModal.editingHabit.is_active) && (
-                <SenderSelector
-                  value={presetTarget}
-                  onChange={setPresetTarget}
-                  label="Pra quem é esse hábito?"
-                />
+                  Sempre visível no modal de preset (criação, reativação E
+                  edição). Permite trocar o destinatário a qualquer momento —
+                  ex: ativou só pra você e agora quer pros dois. */}
+              <SenderSelector
+                value={presetTarget}
+                onChange={setPresetTarget}
+                label="Pra quem é esse hábito?"
+              />
+              {configModal.editingHabit && configModal.editingHabit.is_active && (
+                <p className="text-[11px] text-muted-foreground/70 -mt-1">
+                  💡 Mudar destinatário aqui apaga e recria os lembretes do hábito.
+                </p>
               )}
 
               <div className="flex gap-2 pt-2">
