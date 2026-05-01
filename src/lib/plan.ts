@@ -37,18 +37,24 @@ export function getPlanDisplayName(plan: string | null | undefined): string {
  * Label completo pra exibir no card "Seu plano" e banners do dashboard.
  *
  * Formato unificado independente da origem (admin/kirvano/etc):
- *   - "Plano Jarvis — Mensal"   (maya_mensal)
- *   - "Plano Jarvis — Anual"    (maya_anual)
- *   - "Plano Casal — Mensal"    (maya_casal_mensal)
- *   - "Plano Casal — Anual"     (maya_casal_anual)
- *   - "Plano Jarvis — Gratuito" (admin_trial sem plano mensal/anual setado)
+ *   - "Plano Jarvis — Mensal"   (admin_plan/kirvano com maya_mensal)
+ *   - "Plano Jarvis — Anual"    (admin_plan/kirvano com maya_anual)
+ *   - "Plano Casal — Mensal"    (admin_plan/kirvano com maya_casal_mensal)
+ *   - "Plano Casal — Anual"     (admin_plan/kirvano com maya_casal_anual)
+ *   - "Plano Jarvis — Gratuito" (qualquer plan + access_source = admin_trial)
  *   - "Sem plano ativo"         (account_status != active)
  *
  * Sufixo "(cancelado)" se subscriptionCancelledAt estiver setado.
  *
- * Decisão "Gratuito": access_source = "admin_trial" e plano não bate com
- * mensal/anual — quando admin libera N dias via "Período teste / bônus" sem
- * clicar em Mensal/Anual, fica como "Gratuito" com a data de vencimento.
+ * REGRA CRÍTICA: access_source vence sobre o campo plan na hora de decidir
+ * o duration label. Motivo: o botão "Período teste / bônus" do admin só
+ * altera access_source pra "admin_trial" e estende access_until, mas NÃO
+ * mexe em plan — então uma conta que estava em maya_mensal e ganhou 2 dias
+ * bônus continua com plan=maya_mensal. Sem essa precedência, o label
+ * mostraria "Mensal" mesmo sendo período gratuito de extensão.
+ *
+ * Family (Jarvis/Casal) continua vindo do campo plan via isCouplePlan(),
+ * porque mesmo em trial o sistema sabe se a conta é compartilhada ou solo.
  */
 export function buildPlanLabel(opts: {
   plan: string | null | undefined;
@@ -63,13 +69,14 @@ export function buildPlanLabel(opts: {
   const planFamily = isCasal ? "Plano Casal" : "Plano Jarvis";
 
   let durationLabel: string;
-  if (planValue === "maya_anual" || planValue === "maya_casal_anual") {
+  // ORDEM IMPORTA: admin_trial vence sobre plan field — significa extensão
+  // de acesso bonificada, não plano pago, mesmo que o plan herdado diga outro.
+  if (opts.accessSource === "admin_trial") {
+    durationLabel = "Gratuito";
+  } else if (planValue === "maya_anual" || planValue === "maya_casal_anual") {
     durationLabel = "Anual";
   } else if (planValue === "maya_mensal" || planValue === "maya_casal_mensal") {
     durationLabel = "Mensal";
-  } else if (opts.accessSource === "admin_trial") {
-    // Período bônus liberado pelo admin sem plano pago atrelado
-    durationLabel = "Gratuito";
   } else {
     // Plano legacy/desconhecido com conta ativa — fallback genérico
     durationLabel = "Ativo";
