@@ -219,12 +219,17 @@ export default function Lembretes() {
       .order("created_at", { ascending: false })
       .limit(500);
 
+    // Ordenação: pendentes primeiro (acionáveis no topo), depois enviados/concluídos.
+    // DENTRO de cada grupo, ordena por created_at DESC — "ordem de chegada", lembrete
+    // mais recentemente criado fica em cima independente da hora de disparo (send_at).
+    // Antes ordenava por send_at, então um lembrete recém-criado pra 16:28 ficava
+    // EMBAIXO de outro mais antigo pra 10:00 — confundia o usuário.
     const sorted = ((data as any[]) ?? []).sort((a, b) => {
       const aP = a.status === "pending", bP = b.status === "pending";
       if (aP && !bP) return -1;
       if (!aP && bP) return 1;
-      if (aP && bP) return new Date(a.send_at).getTime() - new Date(b.send_at).getTime();
-      return new Date(b.send_at).getTime() - new Date(a.send_at).getTime();
+      // Mesmo status → mais recente em cima (created_at desc)
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
     setReminders(sorted);
     setLoading(false);

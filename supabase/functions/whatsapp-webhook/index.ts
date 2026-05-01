@@ -4406,11 +4406,25 @@ async function handleReminderSet(
     const remindAt = new Date(parsed.remind_at as string);
     const msgLow = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
+    // BUG histórico: lógica era yes→advance / else→saveDirect.
+    // "cancela" caía no else e salvava o lembrete mesmo assim. Agora trata
+    // cancelamento como primeira branca explícita pra qualquer resposta de cancel.
+    const isCancel =
+      /^(cancela(r)?|cancelar|deixa|esquece|esquecer|esqueca|nao quero|nao precisa|nao preciso|deixa pra la|esquece pra la|abortar|aborta)\b/.test(msgLow);
+    if (isCancel) {
+      return { response: "❌ Beleza, cancelei. Nada foi salvo.\n\n_Manda de novo quando quiser._" };
+    }
+
     const wantsAdvance =
       msgLow === "button:advance_confirm_yes" ||
       msgLow === "1" ||
       /^(sim|quero|pode|s|yes|claro|ok|confirma|obrigad)/.test(msgLow);
-    // Note: "2" ("Só na hora") falls through naturally to saveReminder(0) below
+
+    // "Só na hora" — botão 2 ou texto explícito. Antes era else implícito.
+    const wantsAtTime =
+      msgLow === "button:advance_confirm_no" ||
+      msgLow === "2" ||
+      /^(so na hora|sem aviso|sem antecedencia|na hora|salva|salvar|pode salvar)\b/.test(msgLow);
 
     if (wantsAdvance) {
       // Envia botões de opções de tempo (fire-and-forget)
@@ -4431,8 +4445,17 @@ async function handleReminderSet(
       };
     }
 
-    // Não quer aviso antecipado → salva na hora exata
-    return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz, senderPhone);
+    if (wantsAtTime) {
+      // Não quer aviso antecipado → salva na hora exata
+      return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz, senderPhone);
+    }
+
+    // Resposta ambígua — nem yes, nem at-time, nem cancel. Pergunta de novo.
+    return {
+      response: `🤔 Não entendi. Quer aviso antes do lembrete *"${parsed.title}"*?\n\n*1.* Sim, me avisa antes\n*2.* Só na hora\n*3.* Cancela tudo`,
+      pendingAction: "reminder_set",
+      pendingContext: { step: "reminder_advance_confirm", parsed },
+    };
   }
 
   // ─── STEP: reminder_advance ───
@@ -4454,6 +4477,13 @@ async function handleReminderSet(
       const advMin = buttonAdvanceMap[msgLow];
       const advancedTime = new Date(remindAt.getTime() - advMin * 60 * 1000);
       return await saveReminder(userId, phone, parsed, advancedTime, advMin, lang, userNickname, userTz, senderPhone);
+    }
+
+    // Cancelamento explícito também durante a escolha de antecedência
+    const isCancelAdv =
+      /^(cancela(r)?|cancelar|deixa|esquece|esquecer|esqueca|nao quero|nao precisa|nao preciso|deixa pra la|esquece pra la|abortar|aborta)\b/.test(msgLow);
+    if (isCancelAdv) {
+      return { response: "❌ Beleza, cancelei. Nada foi salvo.\n\n_Manda de novo quando quiser._" };
     }
 
     // ── Detecta se usuário está especificando recorrência na resposta ──
