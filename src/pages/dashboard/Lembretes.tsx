@@ -189,6 +189,8 @@ export default function Lembretes() {
   const [agendaReminderMinutes, setAgendaReminderMinutes] = useState("30");
   const [agendaDesc, setAgendaDesc] = useState("");
   const [agendaSaving, setAgendaSaving] = useState(false);
+  // Plano casal: pra qual agenda? "me" / partner_phone / "both"
+  const [agendaTarget, setAgendaTarget] = useState<SenderSelectorValue>("me");
 
   // ── Dialog: Novo lembrete de mensagem ──
   const [msgOpen, setMsgOpen] = useState(false);
@@ -198,6 +200,8 @@ export default function Lembretes() {
   const [msgContent, setMsgContent] = useState("");
   const [msgSendAt, setMsgSendAt] = useState("");
   const [msgSaving, setMsgSaving] = useState(false);
+  // Plano casal: quem está enviando? (assina mensagem com nome do remetente)
+  const [msgTarget, setMsgTarget] = useState<SenderSelectorValue>("me");
 
   useEffect(() => { if (user) load(); }, [user]);
 
@@ -337,66 +341,89 @@ export default function Lembretes() {
     const phone = profile?.phone_number ?? "";
     if (!phone) { toast.error("Cadastre seu número de WhatsApp em Meu Perfil primeiro"); setAgendaSaving(false); return; }
 
-    // Cria o evento na agenda
-    const { data: eventData, error: eventError } = await supabase
-      .from("events")
-      .insert({
-        user_id: user!.id,
-        title: agendaTitle.trim(),
-        description: agendaDesc.trim() || null,
-        event_date: agendaDate,
-        event_time: agendaTime || null,
-        end_time: agendaEndTime || null,
-        event_type: agendaEventType || null,
-        reminder: true,
-        reminder_minutes_before: parseInt(agendaReminderMinutes),
-        source: "manual",
-        status: "pending",
-      })
-      .select()
-      .single();
+    // Plano casal: resolve targets (1 ou 2 dependendo de "Os dois").
+    // Cliente solo: targets = [{master}] e nada muda.
+    const targets = couple.isCouplePlan && couple.partners.length > 0
+      ? resolveSenderTargets(agendaTarget, phone, couple.masterName, couple.partners)
+      : [{ sent_by_phone: null, notify_phone: phone, label: "Você" }];
 
-    if (eventError || !eventData) {
-      toast.error("Erro ao criar evento na agenda");
-      setAgendaSaving(false);
-      return;
-    }
-
-    // Calcula horário do lembrete (X minutos antes do evento)
-    // Interpreta a data/hora como horário de Brasília (BRT = UTC-3) para armazenar UTC correto
+    // Calcula horário do lembrete (X minutos antes do evento) — calculado uma vez
     const timeStr = agendaTime || "00:00";
     const brtDateString = `${agendaDate}T${timeStr}:00-03:00`; // força offset BRT
     const eventDateTime = new Date(brtDateString);
     const reminderMinutes = parseInt(agendaReminderMinutes);
     const reminderSendAt = new Date(eventDateTime.getTime() - reminderMinutes * 60 * 1000);
 
-    // Monta mensagem do lembrete
     const reminderMsg = agendaTime
       ? `⏰ Lembrete: Você tem *${agendaTitle.trim()}* em ${reminderMinutes} minutos! (${agendaTime.replace(":", "h")})`
       : `⏰ Lembrete: Você tem *${agendaTitle.trim()}* hoje!`;
 
-    // Cria o lembrete vinculado ao evento
-    const { error: reminderError } = await supabase.from("reminders").insert({
-      user_id: user!.id,
-      whatsapp_number: phone,
-      title: agendaTitle.trim(),
-      message: reminderMsg,
-      send_at: reminderSendAt.toISOString(),
-      recurrence: "none",
-      recurrence_value: null,
-      source: "event",
-      event_id: (eventData as any).id,
-      status: "pending",
-    });
+    let createdAny = false;
+    let lastError: string | null = null;
 
-    if (reminderError) {
-      toast.error("Evento criado, mas houve um erro ao criar o lembrete associado");
-    } else {
-      toast.success("Evento e lembrete de agenda criados com sucesso!");
+    // Cria 1 evento + 1 reminder por target. Cada target tem seu próprio
+    // sent_by_phone + whatsapp_number (master ou partner) — assim o lembrete
+    // é entregue no whatsapp da pessoa certa e o badge aparece correto.
+    for (const t of targets) {
+      const notifyPhone = t.notify_phone || phone;
+
+      const { data: eventData, error: eventError } = await (supabase
+        .from("events")
+        .insert({
+          user_id: user!.id,
+          title: agendaTitle.trim(),
+          description: agendaDesc.trim() || null,
+          event_date: agendaDate,
+          event_time: agendaTime || null,
+          end_time: agendaEndTime || null,
+          event_type: agendaEventType || null,
+          reminder: true,
+          reminder_minutes_before: reminderMinutes,
+          source: "manual",
+          status: "pending",
+          sent_by_phone: t.sent_by_phone,
+        } as any)
+        .select()
+        .single() as any);
+
+      if (eventError || !eventData) {
+        lastError = `Erro ao criar evento pra ${t.label}`;
+        console.error("[handleCreateAgenda] event error:", eventError);
+        continue;
+      }
+
+      const { error: reminderError } = await (supabase.from("reminders").insert({
+        user_id: user!.id,
+        whatsapp_number: notifyPhone,
+        title: agendaTitle.trim(),
+        message: reminderMsg,
+        send_at: reminderSendAt.toISOString(),
+        recurrence: "none",
+        recurrence_value: null,
+        source: "event",
+        event_id: (eventData as any).id,
+        status: "pending",
+        sent_by_phone: t.sent_by_phone,
+      } as any) as any);
+
+      if (reminderError) {
+        lastError = `Evento criado, mas houve um erro no lembrete de ${t.label}`;
+        console.error("[handleCreateAgenda] reminder error:", reminderError);
+      } else {
+        createdAny = true;
+      }
+    }
+
+    if (createdAny) {
+      const labels = targets.map((t) => t.label).join(" e ");
+      toast.success(`Evento e lembrete criados pra ${labels}!`);
       setAgendaTitle(""); setAgendaDate(""); setAgendaTime(""); setAgendaEndTime("");
       setAgendaEventType("reuniao"); setAgendaReminderMinutes("30"); setAgendaDesc("");
+      setAgendaTarget("me");
       setAgendaOpen(false);
       load();
+    } else {
+      toast.error(lastError ?? "Erro ao criar evento");
     }
     setAgendaSaving(false);
   };
@@ -447,23 +474,39 @@ export default function Lembretes() {
       .single();
 
     const userPhone = profile?.phone_number ?? "";
-    const userName = profile?.display_name || "seu contato";
+    const masterName = profile?.display_name || couple.masterName || "seu contato";
 
     if (!userPhone) { toast.error("Cadastre seu número de WhatsApp em Meu Perfil primeiro"); setMsgSaving(false); return; }
+
+    // Plano casal: descobre quem está enviando.
+    // - "me" / valor inválido → master (display_name)
+    // - phone de partner → partner (partner_nickname || partner_name)
+    // Em mensagens, "Os dois" não faz sentido (1 mensagem só com 1 assinatura),
+    // então caso o user marque "both", mantemos master como assinante.
+    let senderName = masterName;
+    let senderPhone: string | null = null;
+    if (couple.isCouplePlan && couple.partners.length > 0 && msgTarget !== "me" && msgTarget !== "both") {
+      const partner = couple.partners.find((p) => p.partner_phone === msgTarget);
+      if (partner) {
+        senderName = partner.partner_nickname || partner.partner_name || senderName;
+        senderPhone = partner.partner_phone;
+      }
+    }
 
     const contactFirst = selectedContact.name.split(" ")[0];
     const greeting = buildGreeting();
 
-    // Monta a mensagem completa no estilo Jarvis
+    // Mensagem assinada com o nome de quem mandou (importante no plano casal:
+    // quem recebe vê "Miguel pediu pra te passar um recado" ou "Cibele pediu...")
     const fullMessage =
       `${greeting}, *${contactFirst}*! 👋\n\n` +
-      `Aqui é o *Jarvis*, assistente virtual de *${userName}*.\n\n` +
-      `${userName} me pediu para te passar um recado:\n\n` +
+      `Aqui é o *Jarvis*, assistente virtual de *${senderName}*.\n\n` +
+      `${senderName} me pediu para te passar um recado:\n\n` +
       `💬 _"${msgContent.trim()}"_\n\n` +
       `——————————————\n` +
       `_Mensagem enviada via Jarvis_ 🤖`;
 
-    const { error } = await supabase.from("reminders").insert({
+    const { error } = await (supabase.from("reminders").insert({
       user_id: user!.id,
       whatsapp_number: selectedContact.phone,
       title: `Mensagem para ${selectedContact.name}`,
@@ -474,12 +517,14 @@ export default function Lembretes() {
       source: "send_to_contact",
       event_id: null,
       status: "pending",
-    });
+      sent_by_phone: senderPhone,
+    } as any) as any);
 
     if (error) toast.error("Erro ao criar lembrete de mensagem");
     else {
-      toast.success(`Mensagem para ${selectedContact.name} agendada!`);
+      toast.success(`Mensagem de ${senderName} para ${selectedContact.name} agendada!`);
       setSelectedContact(null); setContactSearch(""); setMsgContent(""); setMsgSendAt("");
+      setMsgTarget("me");
       setMsgOpen(false); load();
     }
     setMsgSaving(false);
@@ -660,8 +705,11 @@ export default function Lembretes() {
           </p>
         </div>
         <div className="flex items-center gap-1.5 mt-1 flex-shrink-0">
-          {(r.status === "failed" || r.status === "sent") && (
-            <button onClick={() => handleRetry(r.id, r.status)} title="Reagendar" className="text-muted-foreground hover:text-amber-400 transition-colors">
+          {/* Mensagens enviadas NÃO podem ser reagendadas — não faz sentido reenviar
+              uma mensagem que já chegou no destinatário. Só lembretes com falha
+              ganham retry, pra cobrir cenário onde Evolution API estava fora. */}
+          {r.status === "failed" && (
+            <button onClick={() => handleRetry(r.id, r.status)} title="Tentar novamente" className="text-muted-foreground hover:text-amber-400 transition-colors">
               <RefreshCw className="h-4 w-4" />
             </button>
           )}
@@ -849,6 +897,7 @@ export default function Lembretes() {
         if (!v) {
           setAgendaTitle(""); setAgendaDate(""); setAgendaTime(""); setAgendaEndTime("");
           setAgendaEventType("reuniao"); setAgendaReminderMinutes("30"); setAgendaDesc("");
+          setAgendaTarget("me");
         }
       }}>
         <DialogContent className="bg-card border-border max-w-md max-h-[90vh] overflow-y-auto">
@@ -862,6 +911,14 @@ export default function Lembretes() {
               Cria o evento na sua agenda e um lembrete automático no WhatsApp antes do horário.
               Se o Google Calendar estiver conectado, o link do Meet é gerado automaticamente.
             </p>
+
+            {/* Plano casal: pra qual agenda? Renderiza nada se cliente solo. */}
+            <SenderSelector
+              value={agendaTarget}
+              onChange={setAgendaTarget}
+              label="Pra qual agenda?"
+            />
+
             <div className="space-y-2">
               <Label>Título do evento <span className="text-destructive">*</span></Label>
               <Input
@@ -934,6 +991,7 @@ export default function Lembretes() {
         if (!v) {
           setSelectedContact(null); setContactSearch("");
           setMsgContent(""); setMsgSendAt("");
+          setMsgTarget("me");
         }
       }}>
         <DialogContent className="bg-card border-border max-w-md max-h-[90vh] overflow-y-auto">
@@ -946,6 +1004,15 @@ export default function Lembretes() {
             <p className="text-xs text-muted-foreground bg-indigo-500/5 border border-indigo-500/20 rounded-md p-3">
               O Jarvis envia a mensagem para o contato no horário escolhido, com apresentação profissional automática.
             </p>
+
+            {/* Plano casal: quem está enviando? Mensagem é assinada com o nome desse remetente.
+                "Os dois" não faz sentido aqui (1 mensagem = 1 remetente), então showBoth={false}. */}
+            <SenderSelector
+              value={msgTarget}
+              onChange={setMsgTarget}
+              showBoth={false}
+              label="Quem está enviando?"
+            />
 
             {/* Busca de contato */}
             <div className="space-y-2">
@@ -1032,15 +1099,22 @@ export default function Lembretes() {
               <Input type="datetime-local" value={msgSendAt} onChange={e => setMsgSendAt(e.target.value)} />
             </div>
 
-            {/* Preview da mensagem */}
-            {selectedContact && msgContent.trim() && (
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">Prévia da mensagem:</p>
-                <div className="bg-muted/30 border border-border rounded-md p-3 text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
-                  {`${buildGreeting()}, *${selectedContact.name.split(" ")[0]}*! 👋\n\nAqui é o *Jarvis*, assistente virtual.\n\nSeu contato me pediu para te passar um recado:\n\n💬 _"${msgContent.trim()}"_\n\n——————————————\n_Mensagem enviada via Jarvis_ 🤖`}
+            {/* Preview da mensagem — reflete o sender escolhido (master ou partner) */}
+            {selectedContact && msgContent.trim() && (() => {
+              let previewSenderName = couple.masterName || "seu contato";
+              if (couple.isCouplePlan && couple.partners.length > 0 && msgTarget !== "me" && msgTarget !== "both") {
+                const partner = couple.partners.find((p) => p.partner_phone === msgTarget);
+                if (partner) previewSenderName = partner.partner_nickname || partner.partner_name || previewSenderName;
+              }
+              return (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">Prévia da mensagem:</p>
+                  <div className="bg-muted/30 border border-border rounded-md p-3 text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
+                    {`${buildGreeting()}, *${selectedContact.name.split(" ")[0]}*! 👋\n\nAqui é o *Jarvis*, assistente virtual de *${previewSenderName}*.\n\n${previewSenderName} me pediu para te passar um recado:\n\n💬 _"${msgContent.trim()}"_\n\n——————————————\n_Mensagem enviada via Jarvis_ 🤖`}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             <Button
               onClick={handleCreateMessage}
