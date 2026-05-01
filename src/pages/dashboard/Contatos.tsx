@@ -10,6 +10,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { Plus, Trash2, UserCircle2, Search, Phone, Pencil, Check, X, Store, User } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SenderSelector, resolveSenderTargets, type SenderSelectorValue } from "@/components/couple/SenderSelector";
+import { SenderBadge } from "@/components/couple/SenderBadge";
+import { SenderFilter, matchesSenderFilter, type SenderFilterValue } from "@/components/couple/SenderFilter";
+import { useCoupleContext } from "@/hooks/useCoupleContext";
 
 interface Contact {
   id: string;
@@ -20,6 +24,7 @@ interface Contact {
   created_at: string;
   type: "person" | "business";
   category: string | null;
+  sent_by_phone: string | null;
 }
 
 const BUSINESS_CATEGORIES = [
@@ -38,16 +43,22 @@ const BUSINESS_CATEGORIES = [
 
 export default function Contatos() {
   const { user } = useAuth();
+  const couple = useCoupleContext();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "person" | "business">("all");
+  // Plano casal: filtro "quem registrou" (Todos / Eu / Partner)
+  const [senderFilter, setSenderFilter] = useState<SenderFilterValue>("all");
+
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [newNotes, setNewNotes] = useState("");
   const [newType, setNewType] = useState<"person" | "business">("person");
   const [newCategory, setNewCategory] = useState("");
+  // Plano casal: pra qual agenda de contatos? (default = "me" = master)
+  const [newTarget, setNewTarget] = useState<SenderSelectorValue>("me");
   const [saving, setSaving] = useState(false);
 
   // Inline edit state
@@ -126,7 +137,21 @@ export default function Contatos() {
     let phone = newPhone.replace(/\D/g, "");
     if (!phone.startsWith("55") && phone.length <= 11) phone = `55${phone}`;
 
-    const { error } = await supabase.from("contacts").upsert(
+    // Plano casal: resolve quem está cadastrando.
+    // - "me"  → sent_by_phone = null (master)
+    // - phone → sent_by_phone = phone do partner
+    // Sem "Os dois" pra contatos (constraint user_id,phone impede mesmo phone
+    // duplicado por user — 1 contato pertence a 1 pessoa). Cliente solo: o
+    // selector nem renderiza, sent_by_phone fica null, fluxo idêntico ao antigo.
+    const useTargetSelector = couple.isCouplePlan && couple.partners.length > 0;
+    const targets = useTargetSelector
+      ? resolveSenderTargets(newTarget, couple.masterPhone, couple.masterName, couple.partners)
+      : [{ sent_by_phone: null, notify_phone: "", label: "Você" }];
+
+    // Como showBoth={false} no SenderSelector, sempre temos 1 target.
+    const target = targets[0];
+
+    const { error } = await (supabase.from("contacts").upsert(
       {
         user_id: user!.id,
         name: newName.trim(),
@@ -135,17 +160,21 @@ export default function Contatos() {
         source: "manual",
         type: newType,
         category: newType === "business" ? (newCategory || null) : null,
-      },
+        sent_by_phone: target.sent_by_phone,
+      } as any,
       { onConflict: "user_id,phone" }
-    );
+    ) as any);
+
     setSaving(false);
     if (error) {
       toast.error("Erro ao salvar contato");
+      console.error("[Contatos] upsert error:", error);
     } else {
-      toast.success("Contato adicionado!");
+      toast.success(`Contato salvo pra ${target.label}!`);
       setAdding(false);
       setNewName(""); setNewPhone(""); setNewNotes("");
       setNewType("person"); setNewCategory("");
+      setNewTarget("me");
       load();
     }
   };
@@ -194,7 +223,10 @@ export default function Contatos() {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
+  // Plano casal: filtra ANTES por sent_by_phone (Eu/Partner) e DEPOIS por
+  // tipo/busca. Em cliente solo, matchesSenderFilter("all", ...) sempre passa.
   const filtered = contacts.filter(c => {
+    if (!matchesSenderFilter(c.sent_by_phone, senderFilter, couple.masterPhone)) return false;
     if (typeFilter === "person" && c.type !== "person") return false;
     if (typeFilter === "business" && c.type !== "business") return false;
     if (!search.trim()) return true;
@@ -202,8 +234,12 @@ export default function Contatos() {
     return c.name.toLowerCase().includes(q) || c.phone.includes(search);
   });
 
-  const countPerson = contacts.filter(c => c.type === "person").length;
-  const countBusiness = contacts.filter(c => c.type === "business").length;
+  // Contadores respeitam o filtro de senderFilter pra ficar consistente
+  const senderFiltered = contacts.filter(c =>
+    matchesSenderFilter(c.sent_by_phone, senderFilter, couple.masterPhone)
+  );
+  const countPerson = senderFiltered.filter(c => c.type === "person").length;
+  const countBusiness = senderFiltered.filter(c => c.type === "business").length;
 
   const formatPhone = (phone: string) => {
     const n = phone.replace(/\D/g, "");
@@ -244,6 +280,15 @@ export default function Contatos() {
         <Card className="bg-card border-border">
           <CardHeader><CardTitle className="text-base">Novo contato</CardTitle></CardHeader>
           <CardContent className="space-y-3">
+            {/* Plano casal: pra qual agenda salvar? "Os dois" desabilitado
+                porque cada contato tem dono único (constraint user_id,phone). */}
+            <SenderSelector
+              value={newTarget}
+              onChange={setNewTarget}
+              showBoth={false}
+              label="Salvar na agenda de quem?"
+            />
+
             {/* Tipo: Pessoa ou Estabelecimento */}
             <div className="space-y-1">
               <Label className="text-xs">Tipo *</Label>
@@ -324,6 +369,11 @@ export default function Contatos() {
         </Card>
       )}
 
+      {/* Plano casal: filtro "quem registrou". Renderiza nada em cliente solo. */}
+      {contacts.length > 0 && (
+        <SenderFilter value={senderFilter} onChange={setSenderFilter} />
+      )}
+
       {contacts.length > 0 && (
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
@@ -337,7 +387,8 @@ export default function Contatos() {
               }`}
             >
               Todos
-              <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{contacts.length}</Badge>
+              {/* Conta respeita o filtro do plano casal (Eu/Partner) */}
+              <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{senderFiltered.length}</Badge>
             </button>
             <button
               type="button"
@@ -431,8 +482,10 @@ export default function Contatos() {
                         </button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-1.5 group/name">
+                      <div className="flex items-center gap-1.5 group/name flex-wrap">
                         <p className="text-sm font-medium truncate">{c.name}</p>
+                        {/* Plano casal: badge mostra QUEM cadastrou. Em solo, nada renderiza. */}
+                        <SenderBadge sentByPhone={c.sent_by_phone} size="xs" />
                         <button
                           onClick={() => startEdit(c)}
                           className="opacity-0 group-hover/name:opacity-100 p-0.5 rounded hover:bg-muted transition-all"

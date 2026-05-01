@@ -8234,8 +8234,19 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         /^(2|estabelecimento|empresa|loja|restaurante|farmacia|negocio|comercio|biz)\b/i.test(text);
 
       if (isPerson && ctName && ctPhone) {
+        // Plano casal: sent_by_phone identifica QUEM cadastrou (master vs partner).
+        // Se partnerInfo está populado, mensagem veio de um partner — grava o phone
+        // dele. Senão (NULL) = master cadastrou (ou cliente solo).
         const { error } = await supabase.from("contacts").upsert(
-          { user_id: profile.id, name: ctName, phone: ctPhone, source: "whatsapp", type: "person", category: null } as any,
+          {
+            user_id: profile.id,
+            name: ctName,
+            phone: ctPhone,
+            source: "whatsapp",
+            type: "person",
+            category: null,
+            sent_by_phone: partnerInfo?.partner_phone ?? null,
+          } as any,
           { onConflict: "user_id,phone" }
         );
         const firstName = ctName.split(" ")[0];
@@ -8284,8 +8295,17 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
       const label = LABELS[CATEGORIES.indexOf(category)] ?? "Outro";
 
+      // Plano casal: sent_by_phone identifica quem cadastrou o estabelecimento.
       const { error } = await supabase.from("contacts").upsert(
-        { user_id: profile.id, name: ccName, phone: ccPhone, source: "whatsapp", type: "business", category } as any,
+        {
+          user_id: profile.id,
+          name: ccName,
+          phone: ccPhone,
+          source: "whatsapp",
+          type: "business",
+          category,
+          sent_by_phone: partnerInfo?.partner_phone ?? null,
+        } as any,
         { onConflict: "user_id,phone" }
       );
       responseText = error
