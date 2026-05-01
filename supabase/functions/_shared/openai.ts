@@ -1210,6 +1210,111 @@ Pedido: "${message}"`;
 }
 
 // ─────────────────────────────────────────────
+// REMINDER PARSE — modo lenient pra "Foi isso?"
+// ─────────────────────────────────────────────
+// Quando parseReminderIntent strict falha, tenta uma interpretação permissiva
+// que SEMPRE retorna algo (com defaults razoáveis) pra propor ao usuário.
+// O handler usa pra mostrar "Não entendi 100%, foi isso aqui que você quis
+// dizer? *X às Y*. Responde sim que eu salvo!" — UX muito melhor que
+// "reformule sua mensagem".
+export async function parseReminderLenient(
+  message: string,
+  nowIso: string,
+  lang = "pt-BR",
+  userTz = "America/Sao_Paulo"
+): Promise<ReminderParsed | null> {
+  // Primeiro tenta strict — se rolar, retorna direto.
+  const strict = await parseReminderIntent(message, nowIso, lang, userTz);
+  if (strict) return strict;
+
+  // Strict falhou — tenta interpretação permissiva. Prompt deixa claro que é
+  // pra fazer o melhor palpite com defaults, porque user vai confirmar depois.
+  const langLabel = lang === "en" ? "English" : lang === "es" ? "Spanish" : "Portuguese Brazilian";
+  const offsetMatch = nowIso.match(/([+-]\d{2}:\d{2})$/);
+  const tzHint = offsetMatch ? `UTC${offsetMatch[1]}` : "UTC-03:00";
+
+  const prompt = `Hora atual: ${nowIso} (${tzHint}).
+
+CONTEXTO: O usuário quer criar um lembrete mas a mensagem está confusa ou incompleta. Sua tarefa é fazer o MELHOR PALPITE possível usando defaults razoáveis. O sistema vai pedir confirmação ao usuário antes de salvar, então é ok ter incertezas.
+
+Pedido: "${message}"
+
+Retorne JSON (escreva title/message em ${langLabel}):
+{
+  "title": "texto curto do que lembrar (max 60 chars)",
+  "message": "começa com ⏰ + título",
+  "remind_at": "ISO 8601 com offset, sua MELHOR INTERPRETAÇÃO da data/hora",
+  "recurrence": "none | daily | weekly | monthly | day_of_month | hourly",
+  "recurrence_value": null ou número (0-6 weekly, 1-31 day_of_month, 1-24 hourly)
+}
+
+DEFAULTS quando info estiver faltando:
+- Sem hora explícita: assume 09:00 (manhã)
+- Sem data e hora ainda não passou: usa hoje. Sem data e hora já passou: amanhã.
+- "todo/todos/toda/todas/diariamente/sempre" → recurrence "daily"
+- "toda semana/semanal/semanalmente" sem dia → recurrence "weekly"
+- "toda [dia da semana]" → recurrence "weekly" + value (0=dom..6=sáb)
+- "todo dia X" / "mensalmente dia X" → recurrence "day_of_month" + value
+- "a cada X horas" → recurrence "hourly" + value
+- Senão → recurrence "none"
+
+Retorne JSON válido SEMPRE — mesmo com defaults. NUNCA retorne null ou erro.`;
+
+  try {
+    const result = await chat(
+      [{ role: "user", content: prompt }],
+      "Voce extrai dados de lembretes mesmo com info incompleta. Sempre retorna JSON valido com defaults razoaveis.",
+      true
+    );
+    const parsed = JSON.parse(result) as ReminderParsed;
+
+    // Validação flexível com defaults — não retorna null por nada
+    if (!parsed.remind_at || isNaN(Date.parse(parsed.remind_at))) {
+      // Default: amanhã 09:00 no fuso do usuário
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const y = tomorrow.toLocaleString("sv-SE", { timeZone: userTz }).slice(0, 10);
+      const tzOffset = offsetMatch ? offsetMatch[1] : "-03:00";
+      parsed.remind_at = `${y}T09:00:00${tzOffset}`;
+    }
+
+    const validRecurrences = ["none", "daily", "weekly", "monthly", "day_of_month", "hourly"];
+    if (!parsed.recurrence || !validRecurrences.includes(parsed.recurrence)) {
+      parsed.recurrence = "none";
+    }
+
+    if (parsed.recurrence === "weekly" && parsed.recurrence_value != null) {
+      const v = Number(parsed.recurrence_value);
+      if (!Number.isInteger(v) || v < 0 || v > 6) parsed.recurrence_value = null;
+    }
+    if (parsed.recurrence === "day_of_month") {
+      const v = Number(parsed.recurrence_value);
+      if (!Number.isInteger(v) || v < 1 || v > 31) {
+        // Sem dia válido pra day_of_month — degrada pra none com remind_at do dia
+        parsed.recurrence = "none";
+        parsed.recurrence_value = null;
+      }
+    }
+    if (parsed.recurrence === "hourly") {
+      const v = Number(parsed.recurrence_value);
+      if (!Number.isInteger(v) || v < 1 || v > 24) parsed.recurrence_value = 1;
+    }
+
+    if (typeof parsed.title !== "string" || !parsed.title.trim()) {
+      parsed.title = "Lembrete";
+    }
+    if (typeof parsed.message !== "string" || !parsed.message.trim()) {
+      parsed.message = `⏰ ${parsed.title}`;
+    }
+
+    return parsed;
+  } catch (e) {
+    console.warn("[parseReminderLenient] failed:", (e as Error).message?.slice(0, 200));
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────
 // REMINDER ANSWER — IA fallback
 // ─────────────────────────────────────────────
 // Usado quando parseReminderAnswer (regex) retorna "unknown".

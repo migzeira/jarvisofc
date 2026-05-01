@@ -14,6 +14,7 @@ import {
   extractReceiptFromImage,
   extractStatementFromImage,
   parseReminderIntent,
+  parseReminderLenient,
   analyzeForwardedContent,
   classifyReminderWithAI,
   type ChatMessage,
@@ -4316,6 +4317,66 @@ async function handleReminderEdit(
 }
 
 // ─────────────────────────────────────────────
+// PROPOSE REMINDER INTERPRETATION — "Foi isso?"
+// ─────────────────────────────────────────────
+// Formata um lembrete parcialmente entendido como proposta legível pro
+// usuário confirmar com "sim". UX muito melhor que "reformule sua mensagem":
+// o sistema mostra o palpite dele e o user só responde sim/não.
+//
+// Fluxo:
+//   1. Mensagem original confusa → handleReminderSet falha em parseReminderIntent
+//   2. parseReminderLenient extrai melhor palpite com defaults
+//   3. proposeReminderInterpretation formata a proposta e salva em pending_action
+//   4. User responde "sim" → reminder_interpret_confirm executa saveReminder
+//   5. User responde qualquer outra coisa → assume reformulação, processa de novo
+function proposeReminderInterpretation(
+  parsed: Record<string, unknown>,
+  lang: string,
+  userTz: string,
+): { response: string; pendingAction: string; pendingContext: unknown } {
+  const remindAt = new Date(parsed.remind_at as string);
+  const locale = langToLocale(lang);
+  const timeStr = remindAt.toLocaleTimeString(locale, {
+    timeZone: userTz, hour: "2-digit", minute: "2-digit",
+  });
+  const dateStr = remindAt.toLocaleDateString(locale, {
+    timeZone: userTz, weekday: "long", day: "numeric", month: "long",
+  });
+  const title = String(parsed.title || "Lembrete");
+
+  // Linha de recorrência humanizada
+  let recurrenceLine = "";
+  const rec = parsed.recurrence as string;
+  const recVal = parsed.recurrence_value as number | null;
+  if (rec === "daily") recurrenceLine = "🔁 Todos os dias";
+  else if (rec === "weekly" && recVal !== null && recVal !== undefined) {
+    const days = ["domingos", "segundas", "terças", "quartas", "quintas", "sextas", "sábados"];
+    recurrenceLine = `🔁 Toda ${days[recVal] ?? "semana"}`;
+  } else if (rec === "weekly") recurrenceLine = "🔁 Toda semana";
+  else if (rec === "monthly") recurrenceLine = "🔁 Todo mês";
+  else if (rec === "day_of_month" && recVal != null) recurrenceLine = `🔁 Todo dia ${recVal}`;
+  else if (rec === "hourly" && recVal != null) recurrenceLine = `🔁 A cada ${recVal}h`;
+
+  const lines = [
+    "🤔 Não entendi 100% — *foi isso aqui que você quis dizer?*",
+    "",
+    `📝 *${title}*`,
+    rec === "daily" || rec === "hourly"
+      ? `🕐 Às *${timeStr}*`
+      : `🕐 ${dateStr} às *${timeStr}*`,
+  ];
+  if (recurrenceLine) lines.push(recurrenceLine);
+  lines.push("");
+  lines.push("Responde *sim* que eu salvo, ou manda a frase de novo do seu jeito.");
+
+  return {
+    response: lines.join("\n"),
+    pendingAction: "reminder_interpret_confirm",
+    pendingContext: { parsed },
+  };
+}
+
+// ─────────────────────────────────────────────
 // LEMBRETE AVULSO (com recorrência)
 // ─────────────────────────────────────────────
 async function handleReminderSet(
@@ -4437,11 +4498,22 @@ async function handleReminderSet(
   const parsed = await parseReminderIntent(message, nowIso, lang, userTz);
 
   if (!parsed) {
+    // Strict parse falhou — tenta lenient (sempre retorna algo) e propõe
+    // confirmação ao usuário. UX muito melhor que pedir reformular.
+    const lenient = await parseReminderLenient(message, nowIso, lang, userTz);
+    if (lenient) {
+      return proposeReminderInterpretation(lenient as unknown as Record<string, unknown>, lang, userTz);
+    }
     return { response: "⚠️ Não entendi o lembrete. Tente: *me lembra de ligar pro João amanhã às 14h*" };
   }
 
   const remindAt = new Date(parsed.remind_at);
   if (isNaN(remindAt.getTime())) {
+    // Hora inválida — tenta lenient pra propor com defaults
+    const lenient = await parseReminderLenient(message, nowIso, lang, userTz);
+    if (lenient && !isNaN(new Date(lenient.remind_at).getTime())) {
+      return proposeReminderInterpretation(lenient as unknown as Record<string, unknown>, lang, userTz);
+    }
     return { response: "⚠️ Não consegui identificar a data/hora. Pode repetir com mais detalhes?" };
   }
 
@@ -8084,6 +8156,43 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (session?.pending_action === "anota_await_content_reminder") {
       const r = await handleReminderSet(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz, partnerInfo?.partner_phone ?? null);
       responseText = r.response; pendingAction = r.pendingAction; pendingContext = r.pendingContext;
+    } else if (session?.pending_action === "reminder_interpret_confirm") {
+      // Usuario respondendo a "Não entendi 100%, foi isso aqui?"
+      // - "sim/ok/isso/...": executa saveReminder com o parsed proposto
+      // - "não/cancela/...": cancela e pede reformular
+      // - qualquer outro texto: assume reformulação, processa de novo do zero
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const proposed = ctx.parsed as Record<string, unknown> | undefined;
+      const msgClean = text.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const yes = /^(sim|s|isso|exato|exatamente|confirma|confirmar|salva|salvar|positivo|claro|aham|isso mesmo|isso ai|isso aí|por favor|ok|okay|certo|pode|pode salvar|perfeito|beleza|blz|👍|✅|yes|yep|yeah)\b/i.test(msgClean);
+      const no = /^(nao|n|negativo|cancela|cancelar|deixa|errado|nao foi|nao quero|nope|no)\b/i.test(msgClean);
+
+      if (yes && proposed) {
+        // Confirmou — salva o lembrete proposto direto, sem perguntar antecedência
+        // (já mostramos o resumo completo, user já validou).
+        const remindAt = new Date(proposed.remind_at as string);
+        if (isNaN(remindAt.getTime())) {
+          responseText = "⚠️ A data ficou inválida. Pode mandar de novo o lembrete?";
+        } else {
+          const saveResult = await saveReminder(
+            profile.id, sendPhone || replyTo, proposed, remindAt, 0,
+            language, userNickname, userTz, partnerInfo?.partner_phone ?? null,
+          );
+          responseText = saveResult.response;
+        }
+        pendingAction = undefined;
+        pendingContext = undefined;
+      } else if (no) {
+        responseText = "❌ Beleza, cancelei. Reformula e me manda de novo!";
+        pendingAction = undefined;
+        pendingContext = undefined;
+      } else {
+        // Texto qualquer = user reformulou — processa como novo reminder_set
+        const r = await handleReminderSet(profile.id, sendPhone || replyTo, text, null, language, userNickname, userTz, partnerInfo?.partner_phone ?? null);
+        responseText = r.response;
+        pendingAction = r.pendingAction;
+        pendingContext = r.pendingContext;
+      }
     } else if (session?.pending_action === "list_await_name") {
       // Usuário disse "cria lista" sem nome — agora ele mandou o nome
       const r = await handleListCreate(supabase as any, profile.id, `cria lista de ${text}`, partnerInfo?.partner_phone ?? null);

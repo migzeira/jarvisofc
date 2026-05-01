@@ -526,17 +526,21 @@ export function classifyIntent(msg: string): Intent {
   ) return "reminder_edit";
 
   // Lembrete simples — cobre formas imperativas, subjuntivo e indiretas
+  // Lista de palavras que aparecem após "me lembre/lembra" pra detectar intent.
+  // Inclui plurais (todos/todas), advérbios temporais (diariamente, sempre, etc.),
+  // dias da semana sem o "de" antes, e horários implícitos. Bug histórico: "me lembre
+  // todos os dias as 6:45 de tomar creatina" não pegava porque "todos" não tava.
   if (
     // Formas diretas: "me lembra", "me lembre", "me avisa", etc.
     /^me lembra\b|^me lembre\b|^me avisa\b|^me notifica\b/.test(m) ||
     // Formas de criação explícita
     /^quero um lembrete|^cria(r)? (um )?lembrete|^salva (um )?lembrete|^adiciona (um )?lembrete|^lembrete:/.test(m) ||
-    // "me lembra/lembre" em qualquer posição com referência de tempo/assunto
-    /\bme lembra (de|que|do|da|desse|disso|às|as|amanha|hoje|semana|todo|toda|daqui|em \d|dia \d|sobre)\b/.test(m) ||
-    /\bme lembre (de|que|do|da|desse|disso|às|as|amanha|hoje|semana|todo|toda|daqui|em \d|dia \d|sobre)\b/.test(m) ||
-    /\bme avisa (às|as|quando|amanha|hoje|dia \d|daqui)\b/.test(m) ||
+    // "me lembra/lembre" em qualquer posição com referência de tempo/assunto/recorrência
+    /\bme lembra (de|que|do|da|desse|disso|às|as|amanha|hoje|semana|todo|toda|todos|todas|cada|sempre|diariamente|semanalmente|mensalmente|daqui|em \d|dia \d|sobre|na|no|pra|para|antes|depois|segunda|terca|terça|quarta|quinta|sexta|sabado|sábado|domingo)\b/.test(m) ||
+    /\bme lembre (de|que|do|da|desse|disso|às|as|amanha|hoje|semana|todo|toda|todos|todas|cada|sempre|diariamente|semanalmente|mensalmente|daqui|em \d|dia \d|sobre|na|no|pra|para|antes|depois|segunda|terca|terça|quarta|quinta|sexta|sabado|sábado|domingo)\b/.test(m) ||
+    /\bme avisa (às|as|quando|amanha|hoje|dia \d|todo|toda|todos|todas|cada|sempre|daqui|de|que|do|da|sobre)\b/.test(m) ||
     // Formas indiretas: "voce me lembra", "quero que voce me lembra/lembre"
-    /\b(voce|você) me (lembra|lembre)\b/.test(m) ||
+    /\b(voce|você) me (lembra|lembre|avisa|avise)\b/.test(m) ||
     /(quero que|pode|preciso que).*(me lembra|me lembre|me avisa)\b/.test(m)
   ) return "reminder_set";
 
