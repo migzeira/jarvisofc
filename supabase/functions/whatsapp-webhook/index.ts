@@ -4317,6 +4317,68 @@ async function handleReminderEdit(
 }
 
 // ─────────────────────────────────────────────
+// EXTRACT TIME FROM REPLY — pra resposta "te lembro às 9h?"
+// ─────────────────────────────────────────────
+// User responde tipo "11h", "às 14:30", "à tarde", "manhã", "8 da noite", etc.
+// Retorna {h, m} ou null se não conseguiu identificar uma hora.
+// Suporta 12h/24h conversão via "X da tarde/noite" (5 da tarde → 17h).
+function extractTimeFromReply(message: string): { h: number; m: number } | null {
+  const m = message.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+  // Detecta período pra disambiguar 12h vs 24h ("5 da tarde" = 17h)
+  const isAfternoon = /\b(da|de|pela)\s+tarde\b/.test(m);
+  const isEvening = /\b(da|de|pela)\s+noit/.test(m); // noite/noitinha
+
+  // 1. HH:MM → "14:30", "9:15"
+  const colonMatch = m.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (colonMatch) {
+    let h = parseInt(colonMatch[1]);
+    const min = parseInt(colonMatch[2]);
+    if (h >= 1 && h <= 11 && (isAfternoon || isEvening)) h += 12;
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return { h, m: min };
+  }
+
+  // 2. HhMM → "18h30", "9h", "14h00"
+  const hMatch = m.match(/\b(\d{1,2})h(\d{0,2})\b/);
+  if (hMatch) {
+    let h = parseInt(hMatch[1]);
+    const min = parseInt(hMatch[2] || "0");
+    if (h >= 1 && h <= 11 && (isAfternoon || isEvening)) h += 12;
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return { h, m: min };
+  }
+
+  // 3. "X horas" / "X hora" → "8 horas", "9 hora"
+  const horasMatch = m.match(/\b(\d{1,2})\s+horas?\b/);
+  if (horasMatch) {
+    let h = parseInt(horasMatch[1]);
+    if (h >= 1 && h <= 11 && (isAfternoon || isEvening)) h += 12;
+    if (h >= 0 && h <= 23) return { h, m: 0 };
+  }
+
+  // 4. "X da/de/pela tarde/noite/manhã/madrugada" → X com conversão 12h→24h
+  // Importante checar antes dos períodos sozinhos pra capturar o digito.
+  const periodMatch = m.match(/\b(\d{1,2})\s+(?:da|de|pela)\s+(tarde|noit\w*|manha\w*|madrugada)\b/);
+  if (periodMatch) {
+    let h = parseInt(periodMatch[1]);
+    const period = periodMatch[2];
+    if (period.startsWith("tarde") && h >= 1 && h <= 11) h += 12;
+    if (period.startsWith("noit") && h >= 1 && h <= 11) h += 12;
+    // manha e madrugada: número direto (sem conversão)
+    if (h >= 0 && h <= 23) return { h, m: 0 };
+  }
+
+  // 5. Períodos sozinhos
+  if (/\bmeio[-\s]?dia\b/.test(m)) return { h: 12, m: 0 };
+  if (/\bmeia[-\s]?noite\b/.test(m)) return { h: 0, m: 0 };
+  if (/\bmadrugada\b/.test(m)) return { h: 5, m: 0 };
+  if (/\bnoit/.test(m)) return { h: 20, m: 0 }; // noite/noitinha
+  if (/\btarde\b/.test(m)) return { h: 14, m: 0 };
+  if (/\bmanha\b/.test(m)) return { h: 9, m: 0 };
+
+  return null;
+}
+
+// ─────────────────────────────────────────────
 // PROPOSE REMINDER INTERPRETATION — "Foi isso?"
 // ─────────────────────────────────────────────
 // Formata um lembrete parcialmente entendido como proposta legível pro
@@ -4398,6 +4460,51 @@ async function handleReminderSet(
   // ── Recupera contexto pendente (fluxo de antecedência) ──
   const ctx = (session?.pending_context as Record<string, unknown>) ?? {};
   const step = (ctx.step as string) ?? null;
+
+  // ─── STEP: reminder_confirm_default_time ───
+  // User respondendo ao prompt "te lembro às 9h, beleza?". Possíveis respostas:
+  //   - Cancelamento explícito → não salva nada
+  //   - Texto contendo hora ("11h", "às 14", "tarde") → atualiza hora e salva
+  //   - Qualquer outro texto ("ok", "sim", "beleza", "valeu") → salva 09:00
+  if (step === "reminder_confirm_default_time") {
+    const parsed = ctx.parsed as Record<string, unknown>;
+    const remindAt = new Date(parsed.remind_at as string);
+    const msgClean = message.toLowerCase().trim().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+    // Cancelamento — pega antes de tudo
+    const isCancel =
+      /^(cancela(r)?|cancelar|deixa|esquece|esquecer|esqueca|nao quero|nao precisa|nao preciso|deixa pra la|esquece pra la|abortar|aborta)\b/.test(msgClean);
+    if (isCancel) {
+      return { response: "❌ Beleza, cancelei. Manda de novo quando quiser!" };
+    }
+
+    // Tenta extrair hora alternativa da resposta. Se achar, atualiza parsed.remind_at
+    // preservando a data (ex: continua amanhã, mas troca 09:00 → 11:00).
+    const newTime = extractTimeFromReply(message);
+    if (newTime) {
+      const dateStr = remindAt.toLocaleDateString("sv-SE", { timeZone: userTz });
+      const tzOffLocal = getTzOffset(userTz);
+      const hh = String(newTime.h).padStart(2, "0");
+      const mm = String(newTime.m).padStart(2, "0");
+      parsed.remind_at = `${dateStr}T${hh}:${mm}:00${tzOffLocal}`;
+      remindAt.setTime(new Date(parsed.remind_at).getTime());
+
+      // Se a nova hora cai no passado (ex: user manda "11h" às 14h, querendo
+      // "11h de hoje" mas já passou), empurra pra amanhã.
+      let _pushed = 0;
+      const _nowMs = Date.now();
+      while (remindAt.getTime() <= _nowMs && _pushed < 7) {
+        remindAt.setDate(remindAt.getDate() + 1);
+        _pushed++;
+      }
+      if (_pushed > 0) parsed.remind_at = remindAt.toISOString();
+    }
+
+    // Salva direto — sem perguntar antecedência. UX limpa: user já confirmou
+    // a hora, não vamos encher de pergunta. Quem quer aviso antes inclui na
+    // mensagem original ("me lembre amanhã às 9h, 30 min antes").
+    return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz, senderPhone);
+  }
 
   // ─── STEP: reminder_advance_confirm ───
   // Usuário respondeu ao botão "Quer que eu te avise antes?"
@@ -4573,17 +4680,20 @@ async function handleReminderSet(
     return { response: "⚠️ Não consegui identificar a data/hora. Pode repetir com mais detalhes?" };
   }
 
-  // ── 🛡️ Safety net: AI alucinou hora atual como default? ──
+  // ── 🕐 Sem hora explícita → propõe 09:00 e pergunta se é beleza ──
   //
-  // BUG REPORTADO: amigo do Miguel mandou "Me lembre amanhã de levar pet" às
-  // quinta 18:53. AI corretamente entendeu "amanhã" = sexta, MAS sem hora
-  // explícita usou o mesmo HH:MM (18:53) que o user mandou a msg. Resultado:
-  // sexta 18:53 (24h no futuro, não dentro de 5min de now).
+  // BUG ANTES: user mandava "Me lembre amanhã de levar pet" (sem hora),
+  // AI usava hora-atual-do-momento como default → lembrete em horário ruim.
   //
-  // CHECK CORRETO: comparar HORA-DO-DIA (HH:MM) no fuso do user, não diff
-  // absoluto. Se remindAt.HH:MM ≈ now.HH:MM no userTz E mensagem não tem
-  // padrão de tempo explícito → é alucinação. Override pra 09:00 do MESMO DIA
-  // que AI escolheu (preservando a data, ex: "amanhã" continua amanhã).
+  // SOLUÇÃO ATUAL: se a msg não tem tempo explícito, pergunta ao user antes
+  // de salvar. Mostra "te lembro amanhã às 9h, beleza?" e aceita:
+  //   - "sim/ok/beleza/qualquer texto sem hora" → salva 09:00
+  //   - "11h"/"às 14"/"tarde"/etc → salva no horário que ele falou
+  //   - "cancela" → desiste
+  //
+  // Detecta presença de tempo via regex (h, h:mm, manhã/tarde/noite, daqui/em
+  // X, agora). Se tem → AI já parseou certo, segue fluxo normal. Se não tem
+  // → ASK em vez de assumir.
   const _msgNorm = message.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const hasExplicitTime =
     /\b\d{1,2}\s*[:h]\s*\d{0,2}\b/.test(_msgNorm) ||
@@ -4593,28 +4703,38 @@ async function handleReminderSet(
     /\bem\s+\d+\s+(min|minuto|minutos|hora|horas|h)\b/.test(_msgNorm) ||
     /\bagora\b/.test(_msgNorm);
 
-  // Helper: extrai minutos-do-dia (0-1439) no userTz
-  const _minutesOfDay = (d: Date): number => {
-    const hm = d.toLocaleTimeString("en-US", {
-      timeZone: userTz, hour12: false, hour: "2-digit", minute: "2-digit",
-    });
-    const [h, m] = hm.split(":").map(Number);
-    return h * 60 + m;
-  };
-  const _remindMin = _minutesOfDay(remindAt);
-  const _nowMin = _minutesOfDay(new Date());
-  // Distância circular (00:01 e 23:59 são 2min, não 1438min)
-  const _rawDiff = Math.abs(_remindMin - _nowMin);
-  const _hmDiff = Math.min(_rawDiff, 1440 - _rawDiff);
-
-  if (_hmDiff <= 5 && !hasExplicitTime) {
-    console.warn(`[handleReminderSet] AI usou hora atual como default (${_nowMin / 60 | 0}h${_nowMin % 60}) — override pra 09:00`);
-    // Preserva a DATA escolhida pelo AI (ex: "amanhã" continua sendo amanhã),
-    // só troca o HH:MM pra 09:00 no userTz. Reconstrói ISO via offset do tz.
-    const dateStr = remindAt.toLocaleDateString("sv-SE", { timeZone: userTz }); // YYYY-MM-DD no userTz
+  if (!hasExplicitTime) {
+    // Override pra 09:00 no userTz, preservando a DATA que AI escolheu (pode
+    // ter sido "amanhã" que AI parseou certo, mas a hora era hora-atual).
+    const dateStr = remindAt.toLocaleDateString("sv-SE", { timeZone: userTz });
     const tzOff = getTzOffset(userTz);
     parsed.remind_at = `${dateStr}T09:00:00${tzOff}`;
     remindAt.setTime(new Date(parsed.remind_at).getTime());
+
+    // Se 09:00 hoje já passou, empurra pra amanhã. While loop com guard de 7d.
+    let _pushed = 0;
+    const _nowMs = Date.now();
+    while (remindAt.getTime() <= _nowMs && _pushed < 7) {
+      remindAt.setDate(remindAt.getDate() + 1);
+      _pushed++;
+    }
+    if (_pushed > 0) parsed.remind_at = remindAt.toISOString();
+
+    // Build prompt de confirmação
+    const locale = langToLocale(lang);
+    const dateStrFmt = remindAt.toLocaleDateString(locale, {
+      timeZone: userTz, weekday: "long", day: "numeric", month: "long",
+    });
+
+    return {
+      response:
+        `🕐 Você não me disse a hora — *te lembro ${dateStrFmt} às 9h da manhã*?\n\n` +
+        `_Pode confirmar com "ok" ou "beleza"._\n` +
+        `_Pra outro horário: "às 11h", "à tarde", "às 18:30"._\n` +
+        `_Pra desistir: "cancela"._`,
+      pendingAction: "reminder_set",
+      pendingContext: { step: "reminder_confirm_default_time", parsed },
+    };
   }
 
   // ── Empurra pra próxima ocorrência futura se a hora já passou ──
