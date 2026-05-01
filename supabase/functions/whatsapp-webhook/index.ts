@@ -4576,14 +4576,14 @@ async function handleReminderSet(
   // ── 🛡️ Safety net: AI alucinou hora atual como default? ──
   //
   // BUG REPORTADO: amigo do Miguel mandou "Me lembre amanhã de levar pet" às
-  // 18:53. AI retornou hora atual (18:53) como default em vez de 09:00 ou
-  // perguntar. Resultado: lembrete agendado pra hora errada.
+  // quinta 18:53. AI corretamente entendeu "amanhã" = sexta, MAS sem hora
+  // explícita usou o mesmo HH:MM (18:53) que o user mandou a msg. Resultado:
+  // sexta 18:53 (24h no futuro, não dentro de 5min de now).
   //
-  // Regra: se AI retornou um remind_at dentro de ±5 min de NOW E a mensagem
-  // do usuário NÃO tem padrão explícito de tempo (h, h:mm, manhã/tarde/noite,
-  // daqui/em X min/hora, agora) → é alucinação. Override pra 09:00 do mesmo dia.
-  // O while-loop de push abaixo cuida do caso "09:00 já passou hoje" empurrando
-  // pra amanhã.
+  // CHECK CORRETO: comparar HORA-DO-DIA (HH:MM) no fuso do user, não diff
+  // absoluto. Se remindAt.HH:MM ≈ now.HH:MM no userTz E mensagem não tem
+  // padrão de tempo explícito → é alucinação. Override pra 09:00 do MESMO DIA
+  // que AI escolheu (preservando a data, ex: "amanhã" continua amanhã).
   const _msgNorm = message.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const hasExplicitTime =
     /\b\d{1,2}\s*[:h]\s*\d{0,2}\b/.test(_msgNorm) ||
@@ -4593,11 +4593,28 @@ async function handleReminderSet(
     /\bem\s+\d+\s+(min|minuto|minutos|hora|horas|h)\b/.test(_msgNorm) ||
     /\bagora\b/.test(_msgNorm);
 
-  const _diffMin = Math.abs(remindAt.getTime() - Date.now()) / 60000;
-  if (_diffMin < 5 && !hasExplicitTime) {
-    console.warn("[handleReminderSet] AI returned current-time as default — overriding to 09:00");
-    remindAt.setHours(9, 0, 0, 0);
-    parsed.remind_at = remindAt.toISOString();
+  // Helper: extrai minutos-do-dia (0-1439) no userTz
+  const _minutesOfDay = (d: Date): number => {
+    const hm = d.toLocaleTimeString("en-US", {
+      timeZone: userTz, hour12: false, hour: "2-digit", minute: "2-digit",
+    });
+    const [h, m] = hm.split(":").map(Number);
+    return h * 60 + m;
+  };
+  const _remindMin = _minutesOfDay(remindAt);
+  const _nowMin = _minutesOfDay(new Date());
+  // Distância circular (00:01 e 23:59 são 2min, não 1438min)
+  const _rawDiff = Math.abs(_remindMin - _nowMin);
+  const _hmDiff = Math.min(_rawDiff, 1440 - _rawDiff);
+
+  if (_hmDiff <= 5 && !hasExplicitTime) {
+    console.warn(`[handleReminderSet] AI usou hora atual como default (${_nowMin / 60 | 0}h${_nowMin % 60}) — override pra 09:00`);
+    // Preserva a DATA escolhida pelo AI (ex: "amanhã" continua sendo amanhã),
+    // só troca o HH:MM pra 09:00 no userTz. Reconstrói ISO via offset do tz.
+    const dateStr = remindAt.toLocaleDateString("sv-SE", { timeZone: userTz }); // YYYY-MM-DD no userTz
+    const tzOff = getTzOffset(userTz);
+    parsed.remind_at = `${dateStr}T09:00:00${tzOff}`;
+    remindAt.setTime(new Date(parsed.remind_at).getTime());
   }
 
   // ── Empurra pra próxima ocorrência futura se a hora já passou ──
