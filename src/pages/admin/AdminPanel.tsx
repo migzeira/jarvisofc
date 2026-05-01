@@ -15,8 +15,9 @@ import {
   Users, MessageSquare, Settings, Shield, Search, Eye, MessageCircle,
   Clock, CheckCircle, XCircle, RefreshCw, Download, CreditCard, AlertTriangle,
   TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Webhook, ChevronDown, ChevronUp, Link2, Link2Off,
-  Activity, BarChart3, UserCheck, UserX, Send, Copy, UserSearch, Bug, Mail,
+  Activity, BarChart3, UserCheck, UserX, Send, Copy, UserSearch, Bug, Mail, Heart,
 } from "lucide-react";
+import { isCouplePlan, getPlanDisplayName } from "@/lib/plan";
 import { Textarea } from "@/components/ui/textarea";
 import { format, subDays } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
@@ -254,7 +255,7 @@ export default function AdminPanel() {
 
     let q = supabase
       .from("profiles")
-      .select("id, display_name, email, phone_number, whatsapp_lid, created_at, account_status", { count: "exact" });
+      .select("id, display_name, email, phone_number, whatsapp_lid, created_at, account_status, plan", { count: "exact" });
 
     if (search) {
       q = q.or(`display_name.ilike.%${search}%,phone_number.ilike.%${search}%,email.ilike.%${search}%`);
@@ -1232,9 +1233,22 @@ export default function AdminPanel() {
                     <TableBody>
                       {pendingProfilesList.map(p => (
                         <TableRow key={p.id}>
-                          <TableCell className="font-medium">{p.display_name || "—"}</TableCell>
+                          <TableCell className="font-medium">
+                            <div className="flex items-center gap-1.5">
+                              <span>{p.display_name || "—"}</span>
+                              {isCouplePlan(p.plan) && (
+                                <span title={`Plano ${getPlanDisplayName(p.plan)}`} className="inline-flex items-center text-pink-400">
+                                  <Heart className="h-3 w-3 fill-pink-400/40" />
+                                </span>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell className="text-sm font-mono">{p.phone_number || <span className="text-muted-foreground italic">Não informado</span>}</TableCell>
-                          <TableCell><Badge variant="secondary">{p.plan}</Badge></TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className={isCouplePlan(p.plan) ? "bg-pink-500/15 text-pink-300 border-pink-500/30" : ""}>
+                              {getPlanDisplayName(p.plan)}
+                            </Badge>
+                          </TableCell>
                           <TableCell className="text-sm">{formatDate(p.created_at)}</TableCell>
                           <TableCell>
                             <Button
@@ -1278,7 +1292,17 @@ export default function AdminPanel() {
                   <TableBody>
                     {filteredProfiles.map(p => (
                       <TableRow key={p.id}>
-                        <TableCell className="font-medium">{p.display_name || "—"}</TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-1.5">
+                            <span>{p.display_name || "—"}</span>
+                            {/* Marcador discreto de plano casal — admin reconhece de bate-pronto */}
+                            {isCouplePlan(p.plan) && (
+                              <span title={`Plano ${getPlanDisplayName(p.plan)}`} className="inline-flex items-center gap-0.5 text-pink-400">
+                                <Heart className="h-3 w-3 fill-pink-400/40" />
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-sm text-muted-foreground max-w-[220px] truncate" title={p.email || ""}>{p.email || "—"}</TableCell>
                         <TableCell className="text-sm">{p.phone_number || "—"}</TableCell>
                         <TableCell>{statusBadge(p.account_status)}</TableCell>

@@ -13,10 +13,11 @@ import { format, differenceInDays, addDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, MessageSquare, ArrowLeft, Bot, User } from "lucide-react";
+import { RefreshCw, MessageSquare, ArrowLeft, Bot, User, Heart, UserMinus } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
+import { isCouplePlan, getPlanDisplayName } from "@/lib/plan";
 
 const INTENT_LABELS: Record<string, string> = {
   finance_record: "Registrar gasto/receita",
@@ -319,6 +320,93 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
     }
   };
 
+  /**
+   * Toggle plano casal ↔ solo.
+   *
+   * Lógica de mapeamento:
+   *   maya_mensal       ↔ maya_casal_mensal
+   *   maya_anual        ↔ maya_casal_anual
+   *
+   * Side effects:
+   *   - Não mexe em access_until / access_source / account_status — só troca a
+   *     família do plano. Dias contratados ficam preservados.
+   *   - profile_partners não é alterado (admin pode flipar várias vezes sem
+   *     perder os parceiros já cadastrados; em ConfigCasal o casal preenche).
+   *   - Dashboard pega a mudança automaticamente via useCoupleContext (lê
+   *     profiles.plan e flipa isCouplePlan).
+   *   - Webhook continua resolvendo partner via profile_partners; ficar solo
+   *     com partners ativos NÃO bloqueia mensagens deles, só desliga UI/badges.
+   *     Se o admin quer cortar partner também, vai em ConfigCasal e desativa.
+   *
+   * Edge case: plano não-mensal/anual padrão (ex: "starter", null, "maya_premium")
+   *   → toast erro pedindo pra ativar plano Mensal/Anual primeiro.
+   */
+  const handleToggleCouple = async () => {
+    if (actionInProgress) return;
+
+    const currentPlan = profile?.plan ?? null;
+    const isCasal = isCouplePlan(currentPlan);
+
+    // Mapeamento: troca prefixo maya_ ↔ maya_casal_
+    let newPlan: string | null = null;
+    if (currentPlan === "maya_mensal") newPlan = "maya_casal_mensal";
+    else if (currentPlan === "maya_anual") newPlan = "maya_casal_anual";
+    else if (currentPlan === "maya_casal_mensal") newPlan = "maya_mensal";
+    else if (currentPlan === "maya_casal_anual") newPlan = "maya_anual";
+
+    if (!newPlan) {
+      toast.error(
+        "Plano atual não tem versão Casal/Solo. Ative primeiro um plano Mensal ou Anual.",
+        { duration: 5000 }
+      );
+      return;
+    }
+
+    const action = isCasal ? "Voltar pra Solo" : "Transformar em Casal";
+    if (!window.confirm(`${action}?\n\nPlano atual: ${getPlanDisplayName(currentPlan)}\nNovo plano: ${getPlanDisplayName(newPlan)}\n\nDias contratados (access_until) ficam preservados.`)) return;
+
+    setActionInProgress("toggle_couple");
+    try {
+      const { error } = await (supabase.from("profiles").update({
+        plan: newPlan,
+        // NÃO toca em access_until / access_source / account_status
+      } as any).eq("id", userId) as any);
+
+      if (error) {
+        toast.error("Erro ao alternar plano: " + error.message);
+        return;
+      }
+
+      // Atualiza estado local pra UI refletir na hora
+      setProfile((p: any) => ({ ...p, plan: newPlan }));
+
+      // Conta números de partners ativos pra mostrar info no toast
+      const { count: activePartnersCount } = await (supabase
+        .from("profile_partners")
+        .select("id", { count: "exact", head: true })
+        .eq("master_user_id", userId)
+        .eq("is_active", true) as any);
+
+      if (newPlan.startsWith("maya_casal")) {
+        const partnerInfo = (activePartnersCount ?? 0) > 0
+          ? ` ${activePartnersCount} parceiro(s) já cadastrado(s).`
+          : " Cliente vai precisar cadastrar o parceiro em Configurações > Casal.";
+        toast.success(`✅ Conta agora é Casal (${getPlanDisplayName(newPlan)}).${partnerInfo}`);
+      } else {
+        const partnerWarning = (activePartnersCount ?? 0) > 0
+          ? ` Atenção: ${activePartnersCount} parceiro(s) ativo(s) ficaram cadastrados mas as badges/filtros do casal sumiram do dashboard. Pra cortar acesso de fato, desative em Configurações > Casal.`
+          : "";
+        toast.success(`✅ Conta voltou pra Solo (${getPlanDisplayName(newPlan)}).${partnerWarning}`, {
+          duration: partnerWarning ? 8000 : 4000,
+        });
+      }
+
+      onProfileUpdate?.();
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
   const handleSuspend = async () => {
     if (actionInProgress) return;
     // Confirmação obrigatória em ação destrutiva — cliente para de receber respostas do Jarvis
@@ -488,7 +576,12 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
                 <p className="text-xs text-muted-foreground">Dias cadastrado</p>
               </div>
               <div className="bg-muted/50 rounded-lg p-3 text-center">
-                <p className="text-lg font-bold">{profile?.plan || "—"}</p>
+                <p className="text-lg font-bold flex items-center justify-center gap-1.5">
+                  {getPlanDisplayName(profile?.plan)}
+                  {isCouplePlan(profile?.plan) && (
+                    <Heart className="h-3.5 w-3.5 text-pink-400 fill-pink-400/40" />
+                  )}
+                </p>
                 <p className="text-xs text-muted-foreground">Plano</p>
               </div>
             </div>
@@ -518,6 +611,47 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
                 >
                   {actionInProgress === "anual" ? "Ativando..." : "Anual (+365d)"}
                 </Button>
+              </div>
+
+              {/* Toggle Solo ↔ Casal — preserva access_until, só troca prefixo do plano.
+                  Funciona em conta nova (após ativar Mensal/Anual), conta já ativa,
+                  e na própria conta admin. Edge case: se plano não for mensal/anual,
+                  a função handler exibe toast erro orientando a ativar primeiro. */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
+                <span className="text-xs text-muted-foreground">Modalidade:</span>
+                <Button
+                  size="sm"
+                  variant="default"
+                  className={
+                    isCouplePlan(profile?.plan)
+                      ? "h-8 text-xs bg-orange-600 hover:bg-orange-500 gap-1.5"
+                      : "h-8 text-xs bg-pink-600 hover:bg-pink-500 gap-1.5"
+                  }
+                  disabled={!!actionInProgress}
+                  onClick={handleToggleCouple}
+                  title={
+                    isCouplePlan(profile?.plan)
+                      ? "Voltar pra plano Solo (1 pessoa) — preserva os dias contratados"
+                      : "Transformar em conta Casal — libera 1 parceiro, preserva os dias contratados"
+                  }
+                >
+                  {isCouplePlan(profile?.plan) ? (
+                    <>
+                      <UserMinus className="h-3.5 w-3.5" />
+                      {actionInProgress === "toggle_couple" ? "Voltando..." : "Voltar pra Solo"}
+                    </>
+                  ) : (
+                    <>
+                      <Heart className="h-3.5 w-3.5" />
+                      {actionInProgress === "toggle_couple" ? "Convertendo..." : "Transformar em Casal"}
+                    </>
+                  )}
+                </Button>
+                {isCouplePlan(profile?.plan) && (
+                  <Badge className="bg-pink-500/15 text-pink-300 border-pink-500/30 text-[10px] gap-1">
+                    <Heart className="h-2.5 w-2.5" /> Casal
+                  </Badge>
+                )}
               </div>
 
               <div className="flex flex-wrap items-end gap-2 pt-2 border-t border-border">

@@ -124,6 +124,8 @@ export function CoupleContextProvider({ children }: { children: ReactNode }) {
 
   // Realtime: re-carrega partners quando há mudança em profile_partners
   // (cadastro/remoção pelo ConfigCasal). Sem isso, dashboard precisava recarregar.
+  // Também escuta o próprio profiles row pra pegar mudança de plano (admin
+  // toggle Solo↔Casal aplica imediato sem precisar refresh).
   useEffect(() => {
     if (!user) return;
     const channel = supabase
@@ -135,6 +137,16 @@ export function CoupleContextProvider({ children }: { children: ReactNode }) {
           schema: "public",
           table: "profile_partners",
           filter: `master_user_id=eq.${user.id}`,
+        },
+        () => load()
+      )
+      .on(
+        "postgres_changes" as any,
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "profiles",
+          filter: `id=eq.${user.id}`,
         },
         () => load()
       )
