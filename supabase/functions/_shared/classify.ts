@@ -473,7 +473,11 @@ export function classifyIntent(msg: string): Intent {
     /titulo (da|de|dessa?) anota(c[aã]o|cao)/.test(m) ||
     // Frases de contexto
     /para nao esquecer|pra nao esquecer|nao quero esquecer/.test(m) ||
-    /preciso lembrar|lembrar de /.test(m)
+    // BUG histórico: tinha `|lembrar de ` aqui que pegava QUALQUER frase do
+    // tipo "Lembrar de ir no cabeleiro 16:07" como nota, quando na verdade
+    // era lembrete óbvio com tempo. Removido — só "preciso lembrar" continua,
+    // que é intent mais ambíguo mas tem o "preciso" como qualificador.
+    /preciso lembrar/.test(m)
   )
     return "notes_save";
 
@@ -533,6 +537,11 @@ export function classifyIntent(msg: string): Intent {
   if (
     // Formas diretas: "me lembra", "me lembre", "me avisa", etc.
     /^me lembra\b|^me lembre\b|^me avisa\b|^me notifica\b/.test(m) ||
+    // Imperativo direto sem o "me": "Lembrar de ir no cabeleiro 16h",
+    // "Lembre de pagar a conta amanhã". Bug histórico: usuário escrevia
+    // "Lembrar de ir no cabeleiro 16:07" e Jarvis classificava como nota.
+    /^lembrar (de|que|do|da|me|nos|na|no|pra|para|sobre)\b/.test(m) ||
+    /^lembre (de|que|do|da|me|nos|na|no|pra|para|sobre)\b/.test(m) ||
     // Formas de criação explícita
     /^quero um lembrete|^cria(r)? (um )?lembrete|^salva (um )?lembrete|^adiciona (um )?lembrete|^lembrete:/.test(m) ||
     // "me lembra/lembre" em qualquer posição com referência de tempo/assunto/recorrência
