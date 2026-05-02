@@ -153,12 +153,36 @@ serve(async (req) => {
   const nowUtcHour = new Date().getUTCHours();
   console.log(`[daily-briefing] Running at UTC hour: ${nowUtcHour}`);
 
+  // ── Modo teste: body { "user_id": "...", "force_send": true } ──
+  // Permite chamar manualmente pra DEBUGAR um user específico sem
+  // afetar todos os usuários do sistema. Quando user_id é passado:
+  //   - Loop processa SÓ esse user (ignora os outros)
+  //   - force_send=true ignora o check de userCurrentHour === briefing_hour
+  // Sem body ou sem user_id: comportamento normal (loop em todos com hour match).
+  let testUserId: string | null = null;
+  let forceSend = false;
+  try {
+    const body = await req.json();
+    if (typeof body?.user_id === "string" && body.user_id.length > 0) {
+      testUserId = body.user_id;
+    }
+    if (body?.force_send === true) forceSend = true;
+  } catch {
+    // Body vazio ou inválido — segue fluxo normal do cron
+  }
+
   // Busca todos os usuários ativos com número de telefone configurado
-  const { data: users, error: usersErr } = await supabase
+  // (ou só o user específico se modo teste)
+  let usersQuery = supabase
     .from("profiles")
     .select("id, phone_number, timezone")
     .eq("account_status", "active")
     .not("phone_number", "is", null);
+  if (testUserId) {
+    usersQuery = usersQuery.eq("id", testUserId);
+    console.log(`[daily-briefing] TEST MODE: filtering to user_id=${testUserId}, force_send=${forceSend}`);
+  }
+  const { data: users, error: usersErr } = await usersQuery;
 
   if (usersErr) {
     console.error("Error fetching users:", usersErr);
@@ -202,7 +226,8 @@ serve(async (req) => {
       // Só envia se a hora atual no fuso do usuário bate com o horário configurado.
       // Comportamento padrão: WhatsApp guarda mensagens offline e entrega quando
       // o user volta — essa é a feature default da plataforma. Não esperamos online.
-      if (userCurrentHour !== userBriefingHour) {
+      // EXCEÇÃO: modo teste com force_send=true ignora o check (pra debug manual).
+      if (!forceSend && userCurrentHour !== userBriefingHour) {
         skipped++;
         continue;
       }
