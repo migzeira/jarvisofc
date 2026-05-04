@@ -4692,15 +4692,22 @@ async function handleReminderSet(
   //   - "cancela" → desiste
   //
   // Detecta presença de tempo via regex (h, h:mm, manhã/tarde/noite, daqui/em
-  // X, agora). Se tem → AI já parseou certo, segue fluxo normal. Se não tem
-  // → ASK em vez de assumir.
+  // X, agora, NN min/hora). Se tem → AI já parseou certo, segue fluxo normal.
+  // Se não tem → ASK em vez de assumir.
+  //
+  // BUG REPORTADO 03/05: regex anterior falhava em "Em 5minutos me lembra"
+  // (sem espaço entre dígito e unidade) e em "5 minutos me lembra" (sem
+  // prefixo "em"/"daqui"). User precisava escrever "Daqui 5 minutos" pra
+  // funcionar. Fix: relaxa "em \d" pra qualquer dígito após "em ", e
+  // adiciona padrão genérico "\d+ min/hora" sem precisar de prefixo.
   const _msgNorm = message.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const hasExplicitTime =
-    /\b\d{1,2}\s*[:h]\s*\d{0,2}\b/.test(_msgNorm) ||
-    /\b(manha|tarde|noite|madrugada)\b/.test(_msgNorm) ||
+    /\b\d{1,2}\s*[:h]\s*\d{0,2}\b/.test(_msgNorm) ||                     // 14:30, 9h, 18h30
+    /\b(manha|tarde|noite|madrugada)\b/.test(_msgNorm) ||                // períodos
     /\bmeio\s*dia\b|\bmeia\s*noite\b/.test(_msgNorm) ||
-    /\bdaqui\s+\d/.test(_msgNorm) ||
-    /\bem\s+\d+\s+(min|minuto|minutos|hora|horas|h)\b/.test(_msgNorm) ||
+    /\bdaqui\s+\d/.test(_msgNorm) ||                                     // "daqui 5 min"
+    /\bem\s+\d/.test(_msgNorm) ||                                        // "em 5min" (sem espaço entre dígito e unidade)
+    /\b\d+\s*(min|minuto|minutos|seg|segundo|segundos|hora|horas)\b/.test(_msgNorm) || // "5 minutos", "5minutos", "2 horas" sem prefixo
     /\bagora\b/.test(_msgNorm);
 
   if (!hasExplicitTime) {
