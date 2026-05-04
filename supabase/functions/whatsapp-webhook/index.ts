@@ -4824,6 +4824,38 @@ async function handleReminderSet(
   return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz, senderPhone);
 }
 
+/**
+ * Alinha send_at ao INÍCIO do minuto pra casar com tick do pg_cron.
+ *
+ * Bug original: AI parseava "em 5 minutos" às 13:48:32 como 13:53:32 (preserva
+ * segundos do "now"). Cron roda em :00 de cada minuto e checa send_at <= NOW.
+ *   - Tick 13:53:00 → 13:53:32 > 13:53:00 → ignora
+ *   - Tick 13:54:00 → 13:53:32 ≤ 13:54:00 → envia
+ * Resultado: confirmação dizia "13:53" mas msg chegava 13:54 (1min de atraso).
+ *
+ * Fix: zera segundos/ms. 13:53:32 → 13:53:00. Cron do tick 13:53:00 pega.
+ *
+ * Edge case — rounding down deixaria no passado:
+ * "em 1 min" às 13:48:00 → AI = 13:49:00 (já alinhado, fica). OK.
+ * "em 30s" às 13:48:35 → AI = 13:49:05 → round 13:49:00 → ainda futuro (25s),
+ *   user recebe ~25s mais cedo. Aceitável (a confirmação mostra HH:MM ainda).
+ * "em 30s" às 13:48:55 → AI = 13:49:25 → round 13:49:00 → 13:49:00 < 13:48:55? NÃO,
+ *   13:49:00 está 5s no futuro. Keep. User recebe ~5s, OK.
+ *
+ * Único cenário ruim: AI retorna send_at <= NOW por algum bug. Aí round + push:
+ * se aligned <= NOW, sobe pro próximo minuto. Defensivo.
+ */
+function alignSendAtToMinute(d: Date): Date {
+  const aligned = new Date(d);
+  aligned.setSeconds(0, 0);
+  // Defensive: se rounding deixou no passado (raro, só se AI já voltou no passado),
+  // sobe pro próximo minuto pra cron pegar
+  if (aligned.getTime() <= Date.now()) {
+    aligned.setMinutes(aligned.getMinutes() + 1);
+  }
+  return aligned;
+}
+
 /** Salva o lembrete no banco e retorna confirmação formatada */
 async function saveReminder(
   userId: string,
@@ -4851,12 +4883,17 @@ async function saveReminder(
     };
   }
 
+  // Alinha send_at ao minuto pra casar com tick do cron e evitar atraso de 1min
+  const sendAt = alignSendAtToMinute(remindAt);
+  // Sobrescreve a referência local pra confirmação mostrar o mesmo HH:MM salvo
+  remindAt = sendAt;
+
   const { error } = await supabase.from("reminders").insert({
     user_id: userId,
     whatsapp_number: phone,
     title: parsed.title,
     message: parsed.message,
-    send_at: remindAt.toISOString(),
+    send_at: sendAt.toISOString(),
     recurrence: parsed.recurrence,
     recurrence_value: parsed.recurrence_value,
     source: "whatsapp",
