@@ -63,7 +63,7 @@ export default function Login() {
           <div className="flex items-center justify-center mb-4">
             <img src={logoEscrita} alt="Hey Jarvis" fetchPriority="high" decoding="async" className="h-8 w-auto object-contain" />
           </div>
-          <CardTitle className="text-xl">Entrar na sua conta</CardTitle>
+          <CardTitle className="text-xl">🔐 Entrar na sua conta</CardTitle>
           <CardDescription>Digite seu email e senha para acessar</CardDescription>
         </CardHeader>
         <form onSubmit={handleLogin}>
