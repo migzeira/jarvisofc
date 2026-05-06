@@ -1083,6 +1083,22 @@ export default function AdminPanel() {
         if (lower !== "claude" && lower !== "openai") return "Use 'claude' ou 'openai'";
         return null;
       }
+      case "ai_finance_provider": {
+        // Pass 1 da extração de transações financeiras.
+        const lower = v.toLowerCase();
+        if (lower !== "claude" && lower !== "openai") return "Use 'claude' ou 'openai'";
+        return null;
+      }
+      case "deepseek_api_key": {
+        // DeepSeek usa formato sk-... igual OpenAI. Aceita mascarado pra manter valor.
+        if (v.includes("•")) return null;
+        if (!/^sk-[A-Za-z0-9_-]{20,}$/.test(v)) return "Deve começar com 'sk-' (ex: sk-abc123...)";
+        return null;
+      }
+      case "ai_pass2_enabled": {
+        if (!/^(true|false)$/i.test(v)) return "Use 'true' ou 'false'";
+        return null;
+      }
       default:
         return null;
     }
@@ -1099,9 +1115,12 @@ export default function AdminPanel() {
     { key: "renewal_link_annual", label: "Link de Renovação — Plano Anual", type: "text", hint: "Checkout Kirvano enviado nos lembretes de clientes do plano anual" },
     { key: "renewal_reminders_enabled", label: "Lembretes de Renovação Ativos", type: "text", hint: "'true' envia lembretes automáticos; 'false' desativa" },
     { key: "overdue_grace_days", label: "Dias de Tolerância (OVERDUE)", type: "text", hint: "Grace period quando Kirvano sinaliza atraso. Default: 7" },
-    // Inteligência Artificial — roteamento Claude/OpenAI
-    { key: "openai_api_key", label: "OpenAI API Key", type: "password", hint: "Cola a key (sk-proj-... ou sk-...). Usado quando Provider de Chat = 'openai'. Fallback automático pra Claude se OpenAI falhar." },
-    { key: "ai_chat_provider", label: "Provider de Chat", type: "text", hint: "'claude' (default, mais robusto) ou 'openai' (mais barato — usa GPT-4o-mini em chat geral, modo sombra e fallback de lembrete). Extrações estruturadas continuam sempre no Claude." },
+    // Inteligência Artificial — roteamento Claude/OpenAI/DeepSeek
+    { key: "openai_api_key", label: "OpenAI API Key", type: "password", hint: "Cola a key (sk-proj-... ou sk-...). Usado quando provider de Chat ou Finanças = 'openai'. Fallback automático pra Claude se OpenAI falhar." },
+    { key: "deepseek_api_key", label: "DeepSeek API Key", type: "password", hint: "Cola a key DeepSeek (sk-...). Usado no Pass 2 da categorização (re-categoriza quando IA fica em dúvida). ~90% mais barato que GPT-4o. Fallback automático pra OpenAI." },
+    { key: "ai_chat_provider", label: "Provider de Chat (geral)", type: "text", hint: "'claude' (default, mais robusto) ou 'openai' (mais barato — GPT-4o-mini em chat geral, modo sombra e fallback de lembrete)." },
+    { key: "ai_finance_provider", label: "Provider de Extração Financeira (Pass 1)", type: "text", hint: "'claude' (default — Haiku 4.5) ou 'openai' (GPT-4o-mini, ~85% mais barato). Controla SÓ o Pass 1 da extração de transações. Não afeta chat geral." },
+    { key: "ai_pass2_enabled", label: "Pass 2 Categorização Ativo", type: "text", hint: "'true' ativa Pass 2: quando Pass 1 retorna 'outros' ou baixa confiança, DeepSeek (com fallback GPT-4o) re-categoriza usando histórico do user. 'false' (default) mantém só Pass 1." },
   ];
 
   // Calcula erros por campo e se o form é submetível.
@@ -2016,7 +2035,7 @@ export default function AdminPanel() {
                 { title: "Google OAuth (Calendar + Sheets)", keys: ["google_client_id", "google_client_secret"] },
                 { title: "Notion OAuth", keys: ["notion_client_id", "notion_client_secret"] },
                 { title: "Renovação & Cobrança", keys: ["renewal_link_monthly", "renewal_link_annual", "renewal_reminders_enabled", "overdue_grace_days"] },
-                { title: "Inteligência Artificial", keys: ["ai_chat_provider", "openai_api_key"] },
+                { title: "Inteligência Artificial", keys: ["ai_chat_provider", "ai_finance_provider", "ai_pass2_enabled", "openai_api_key", "deepseek_api_key"] },
               ];
               const renderField = (key: string) => {
                 const f = SETTINGS_FIELDS.find(x => x.key === key);

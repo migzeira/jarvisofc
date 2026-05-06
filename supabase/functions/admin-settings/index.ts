@@ -36,12 +36,16 @@ const ALLOWED_KEYS = [
   // Roteamento de IA — permite usar OpenAI (mais barato) em tarefas de chat
   // simples mantendo Claude pra extrações estruturadas críticas.
   "openai_api_key",        // mascarado na exibição (lógica abaixo)
-  "ai_chat_provider",      // "claude" (default) | "openai"
+  "ai_chat_provider",      // "claude" (default) | "openai" — chat geral
+  // Categorização financeira em 2 passos (Pass 1 + Pass 2)
+  "ai_finance_provider",   // "claude" (default) | "openai" — Pass 1 da extração de transações
+  "deepseek_api_key",      // mascarado — usado no Pass 2 (re-categorização)
+  "ai_pass2_enabled",      // "true" | "false" (default false) — liga/desliga Pass 2
 ];
 
 // Keys cuja value deve ser mascarada quando exibida no painel.
 // "secret" cobre google_client_secret e notion_client_secret automaticamente.
-const SECRET_KEY_NAMES = new Set(["openai_api_key"]);
+const SECRET_KEY_NAMES = new Set(["openai_api_key", "deepseek_api_key"]);
 
 serve(async (req) => {
   const CORS = getCorsHeaders(req);
