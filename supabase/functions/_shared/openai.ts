@@ -30,11 +30,14 @@ export interface ChatMessage {
 //   - Cada chamada é logada em public.ai_usage_log pra acompanhar custo.
 // ─────────────────────────────────────────────
 
-type AIProvider = "claude" | "openai";
+type AIProvider = "claude" | "openai" | "deepseek";
 
 interface AIConfig {
-  provider: AIProvider;
+  provider: AIProvider;        // chat geral (modo sombra, lembretes, etc.)
+  financeProvider: AIProvider; // Pass 1 da extração financeira (default "claude")
   openaiKey: string;
+  deepseekKey: string;
+  pass2Enabled: boolean;       // liga/desliga Pass 2 da categorização
 }
 
 // Cache em memória (60s) — evita ler app_settings a cada chamada.
@@ -46,7 +49,13 @@ async function getAIConfig(): Promise<AIConfig> {
   const now = Date.now();
   if (_aiConfigCache && now < _aiConfigCacheExpiry) return _aiConfigCache;
 
-  const fallback: AIConfig = { provider: "claude", openaiKey: OPENAI_KEY_ENV };
+  const fallback: AIConfig = {
+    provider: "claude",
+    financeProvider: "claude",
+    openaiKey: OPENAI_KEY_ENV,
+    deepseekKey: Deno.env.get("DEEPSEEK_API_KEY") ?? "",
+    pass2Enabled: false,
+  };
 
   if (!_aiSupabase) {
     _aiConfigCache = fallback;
@@ -58,7 +67,13 @@ async function getAIConfig(): Promise<AIConfig> {
     const { data } = await _aiSupabase
       .from("app_settings")
       .select("key, value")
-      .in("key", ["ai_chat_provider", "openai_api_key"]);
+      .in("key", [
+        "ai_chat_provider",
+        "ai_finance_provider",
+        "openai_api_key",
+        "deepseek_api_key",
+        "ai_pass2_enabled",
+      ]);
 
     const map = new Map<string, string>();
     for (const row of data ?? []) {
@@ -67,9 +82,26 @@ async function getAIConfig(): Promise<AIConfig> {
 
     const providerRaw = (map.get("ai_chat_provider") ?? "").toLowerCase().trim();
     const provider: AIProvider = providerRaw === "openai" ? "openai" : "claude";
-    const openaiKey = (map.get("openai_api_key") ?? "").trim() || OPENAI_KEY_ENV;
 
-    const cfg: AIConfig = { provider, openaiKey };
+    // Pass 1 financeiro: separado do chat geral. Default "claude" preserva
+    // comportamento atual (extração financeira sempre foi Claude).
+    const financeRaw = (map.get("ai_finance_provider") ?? "").toLowerCase().trim();
+    const financeProvider: AIProvider = financeRaw === "openai" ? "openai" : "claude";
+
+    const openaiKey = (map.get("openai_api_key") ?? "").trim() || OPENAI_KEY_ENV;
+    const deepseekKey = (map.get("deepseek_api_key") ?? "").trim()
+      || (Deno.env.get("DEEPSEEK_API_KEY") ?? "");
+
+    const pass2Raw = (map.get("ai_pass2_enabled") ?? "").toLowerCase().trim();
+    const pass2Enabled = pass2Raw === "true";
+
+    const cfg: AIConfig = {
+      provider,
+      financeProvider,
+      openaiKey,
+      deepseekKey,
+      pass2Enabled,
+    };
     _aiConfigCache = cfg;
     _aiConfigCacheExpiry = now + AI_CONFIG_TTL_MS;
     return cfg;
@@ -90,6 +122,7 @@ interface AIUsageEntry {
   fallbackUsed?: boolean;
   errorMessage?: string;
   durationMs?: number;
+  confidence?: number; // 0.00-1.00, só pra calls de categorização
 }
 
 function logAIUsage(entry: AIUsageEntry): void {
@@ -106,6 +139,7 @@ function logAIUsage(entry: AIUsageEntry): void {
       fallback_used: entry.fallbackUsed ?? false,
       error_message: entry.errorMessage ?? null,
       duration_ms: entry.durationMs ?? null,
+      confidence: entry.confidence ?? null,
     })
     .then(() => {})
     .catch(() => {}); // silent — telemetria não pode quebrar IA
@@ -168,6 +202,211 @@ async function chatOpenAI(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Chamada à DeepSeek (deepseek-chat). API 100% compatível com OpenAI.
+ *  Retorna { text, tokensIn, tokensOut } ou throw. */
+async function chatDeepSeek(
+  messages: ChatMessage[],
+  systemPrompt: string | undefined,
+  jsonMode: boolean,
+  apiKey: string
+): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+  const fullMessages: Array<{ role: string; content: string }> = [];
+  if (systemPrompt) fullMessages.push({ role: "system", content: systemPrompt });
+  for (const m of messages) fullMessages.push({ role: m.role, content: m.content });
+
+  const body: Record<string, unknown> = {
+    model: Deno.env.get("DEEPSEEK_MODEL") ?? "deepseek-chat",
+    messages: fullMessages,
+    max_tokens: 800, // pass 2 precisa de mais espaço pra JSON estruturado
+  };
+  if (jsonMode) {
+    // DeepSeek aceita response_format.type = "json_object" igual OpenAI.
+    body.response_format = { type: "json_object" };
+    const lastIsUser = fullMessages[fullMessages.length - 1]?.role === "user";
+    const lastContent = String(fullMessages[fullMessages.length - 1]?.content ?? "");
+    if (lastIsUser && !/json/i.test(lastContent)) {
+      fullMessages[fullMessages.length - 1].content = lastContent + "\n\nResponda em JSON válido.";
+    }
+  }
+
+  // Timeout de 20s — DeepSeek pode ser mais lento que OpenAI mas não deve
+  // travar fluxo do WhatsApp. Se passar disso, cascata cai pro GPT-4o.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+
+  try {
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`DeepSeek ${res.status}: ${errText.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    const text = String(data?.choices?.[0]?.message?.content ?? "");
+    const tokensIn = Number(data?.usage?.prompt_tokens ?? 0);
+    const tokensOut = Number(data?.usage?.completion_tokens ?? 0);
+    return { text, tokensIn, tokensOut };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("DeepSeek timeout after 20s");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Chamada à OpenAI usando modelo FORTE (gpt-4o, não mini) — usado como
+ *  fallback do Pass 2 quando DeepSeek falha. */
+async function chatOpenAIStrong(
+  messages: ChatMessage[],
+  systemPrompt: string | undefined,
+  jsonMode: boolean,
+  apiKey: string
+): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+  const fullMessages: Array<{ role: string; content: string }> = [];
+  if (systemPrompt) fullMessages.push({ role: "system", content: systemPrompt });
+  for (const m of messages) fullMessages.push({ role: m.role, content: m.content });
+
+  const body: Record<string, unknown> = {
+    model: Deno.env.get("OPENAI_PASS2_MODEL") ?? "gpt-4o",
+    messages: fullMessages,
+    max_tokens: 800,
+  };
+  if (jsonMode) {
+    body.response_format = { type: "json_object" };
+    const lastIsUser = fullMessages[fullMessages.length - 1]?.role === "user";
+    const lastContent = String(fullMessages[fullMessages.length - 1]?.content ?? "");
+    if (lastIsUser && !/json/i.test(lastContent)) {
+      fullMessages[fullMessages.length - 1].content = lastContent + "\n\nResponda em JSON válido.";
+    }
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25_000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`OpenAI(strong) ${res.status}: ${errText.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    const text = String(data?.choices?.[0]?.message?.content ?? "");
+    const tokensIn = Number(data?.usage?.prompt_tokens ?? 0);
+    const tokensOut = Number(data?.usage?.completion_tokens ?? 0);
+    return { text, tokensIn, tokensOut };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("OpenAI(strong) timeout after 25s");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Pass 2 da categorização: cascata DeepSeek → GPT-4o.
+ *
+ * - Tenta DeepSeek primeiro (90% mais barato que GPT-4o)
+ * - Se DeepSeek falhar/timeout: cai pra GPT-4o (mais robusto)
+ * - Se ambos falharem: throw — caller deve manter resultado do Pass 1
+ *
+ * Loga TODA call em ai_usage_log com provider correto pra telemetria.
+ *
+ * @returns { text, provider, fallbackUsed } onde provider indica qual modelo
+ *          gerou o resultado final (útil pra debug/telemetria upstream).
+ */
+async function chatPass2(
+  messages: ChatMessage[],
+  systemPrompt: string | undefined,
+  functionName: string
+): Promise<{ text: string; provider: "deepseek" | "openai"; fallbackUsed: boolean }> {
+  const cfg = await getAIConfig();
+  const hasDeepSeek = cfg.deepseekKey.length > 0;
+  const hasOpenAI = cfg.openaiKey.length > 0;
+
+  if (!hasDeepSeek && !hasOpenAI) {
+    throw new Error("Pass 2 sem provider: nem deepseek_api_key nem openai_api_key configurados");
+  }
+
+  // 1. Tenta DeepSeek primeiro (se configurado)
+  if (hasDeepSeek) {
+    const start = Date.now();
+    try {
+      const result = await chatDeepSeek(messages, systemPrompt, true, cfg.deepseekKey);
+      logAIUsage({
+        provider: "deepseek",
+        functionName,
+        model: Deno.env.get("DEEPSEEK_MODEL") ?? "deepseek-chat",
+        tokensIn: result.tokensIn,
+        tokensOut: result.tokensOut,
+        durationMs: Date.now() - start,
+      });
+      return { text: result.text, provider: "deepseek", fallbackUsed: false };
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.error(`[pass2] DeepSeek falhou em ${functionName}: ${errMsg} → tentando GPT-4o`);
+      logAIUsage({
+        provider: "deepseek",
+        functionName,
+        model: Deno.env.get("DEEPSEEK_MODEL") ?? "deepseek-chat",
+        errorMessage: errMsg,
+        durationMs: Date.now() - start,
+      });
+      // Continua e tenta GPT-4o abaixo
+    }
+  }
+
+  // 2. Fallback: GPT-4o (se configurado)
+  if (hasOpenAI) {
+    const start = Date.now();
+    try {
+      const result = await chatOpenAIStrong(messages, systemPrompt, true, cfg.openaiKey);
+      logAIUsage({
+        provider: "openai",
+        functionName,
+        model: Deno.env.get("OPENAI_PASS2_MODEL") ?? "gpt-4o",
+        tokensIn: result.tokensIn,
+        tokensOut: result.tokensOut,
+        fallbackUsed: hasDeepSeek, // se DeepSeek existia e a gente caiu aqui, é fallback
+        durationMs: Date.now() - start,
+      });
+      return { text: result.text, provider: "openai", fallbackUsed: hasDeepSeek };
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.error(`[pass2] GPT-4o falhou em ${functionName}: ${errMsg}`);
+      logAIUsage({
+        provider: "openai",
+        functionName,
+        model: Deno.env.get("OPENAI_PASS2_MODEL") ?? "gpt-4o",
+        errorMessage: errMsg,
+        fallbackUsed: hasDeepSeek,
+        durationMs: Date.now() - start,
+      });
+      throw e;
+    }
+  }
+
+  throw new Error("Pass 2 sem fallback disponível");
 }
 
 /**
@@ -415,6 +654,149 @@ Responda SOMENTE com o JSON, sem explicações.`;
     }
   }
   return transactions;
+}
+
+/** Tipo de retorno do Pass 2: transação re-categorizada com confidence. */
+export interface DeepCategorizedTransaction {
+  amount: number;
+  description: string;
+  type: "expense" | "income";
+  category: string;
+  installments?: number | null;
+  confidence: number; // 0.00-1.00
+}
+
+/** Histórico de transação do user passado ao Pass 2 pra contextualizar a IA. */
+export interface UserHistoryItem {
+  description: string;
+  category: string;
+  amount: number;
+}
+
+/**
+ * Pass 2 da categorização — re-categoriza uma transação que o Pass 1 ficou em
+ * dúvida (category="outros" ou confidence baixa). Usa modelo MAIS forte
+ * (DeepSeek com fallback GPT-4o) e contexto do histórico do user pra descobrir
+ * padrões pessoais (ex: "João" sempre é pet → categoria "Pet").
+ *
+ * IMPORTANTE: NÃO re-extrai amount/description/type — confia no que Pass 1
+ * retornou nesses campos. Foco exclusivo em CATEGORIZAR melhor.
+ *
+ * Se Pass 2 falhar (ambos providers caírem), throw — caller deve manter o
+ * resultado original do Pass 1 e marcar needs_review=true.
+ *
+ * @param text          Mensagem original do user (mesmo input que Pass 1 viu)
+ * @param currentTx     Transação como Pass 1 categorizou (será revisada)
+ * @param userHistory   Últimas 30 transações do user (description, category, amount)
+ * @param userCategories Lista de categorias válidas (default + custom do user)
+ */
+export async function extractTransactionsDeep(
+  text: string,
+  currentTx: { amount: number; description: string; type: "expense" | "income"; category: string; installments?: number | null },
+  userHistory: UserHistoryItem[] = [],
+  userCategories: string[] = DEFAULT_CATEGORIES
+): Promise<DeepCategorizedTransaction> {
+  // Normaliza categorias (mesma lógica de extractTransactions)
+  const seen = new Set<string>();
+  const allCats: string[] = [];
+  for (const c of [...userCategories, ...DEFAULT_CATEGORIES]) {
+    const k = c.toLowerCase().trim();
+    if (k && !seen.has(k)) { seen.add(k); allCats.push(c); }
+  }
+  const catList = allCats.join(", ");
+
+  // Monta seção de histórico — só os últimos 30, formato compacto pro modelo entender padrões
+  const historyText = userHistory.length > 0
+    ? userHistory
+        .slice(0, 30)
+        .map((h) => `- "${h.description}" → ${h.category} (R$${h.amount.toFixed(2)})`)
+        .join("\n")
+    : "(usuário ainda não tem histórico relevante)";
+
+  const system = `Você é um especialista em categorização financeira brasileira. Analise o contexto histórico do usuário para descobrir padrões pessoais. Responda APENAS JSON válido.`;
+
+  const prompt = `Re-categorize esta transação que a IA inicial não soube classificar com certeza.
+
+TRANSAÇÃO ATUAL (do Pass 1):
+- Mensagem original: "${text}"
+- Descrição: "${currentTx.description}"
+- Valor: R$ ${currentTx.amount.toFixed(2)}
+- Tipo: ${currentTx.type}
+- Categoria atual (a revisar): "${currentTx.category}"
+
+CATEGORIAS DISPONÍVEIS: [${catList}]
+
+HISTÓRICO DAS ÚLTIMAS TRANSAÇÕES DESSE USUÁRIO (use pra descobrir padrões pessoais):
+${historyText}
+
+INSTRUÇÕES:
+1. Analise a mensagem original + descrição + histórico do user. Procure padrões: nomes próprios que sempre aparecem com mesma categoria, estabelecimentos recorrentes, valores típicos.
+2. Escolha a MELHOR categoria da lista disponível. Use sua intuição contextual — não só palavras-chave.
+3. Se nem com histórico você conseguir categorizar com certeza, mantenha "outros" mas com confidence baixa.
+4. Retorne confidence honesto: 0.95+ se tem certeza forte, 0.7-0.9 se tem certeza moderada, 0.5-0.7 se é palpite, <0.5 se está mesmo no escuro.
+
+EXEMPLOS DE RACIOCÍNIO:
+- "Paguei João 200" + histórico mostra "João → Pet R$150 (semana passada)" → categoria: Pet, confidence: 0.92
+- "Posto Shell 100" + histórico mostra padrão de transporte → categoria: transporte, confidence: 0.95
+- "Transferi 500" sem contexto + histórico vazio → categoria: outros, confidence: 0.30
+
+Retorne SOMENTE este JSON (sem markdown):
+{
+  "category": "uma das categorias disponíveis",
+  "confidence": número entre 0.0 e 1.0,
+  "reasoning": "1 frase curta explicando por que escolheu (pra debug)"
+}`;
+
+  const { text: rawResponse, provider, fallbackUsed } = await chatPass2(
+    [{ role: "user", content: prompt }],
+    system,
+    "extractTransactionsDeep"
+  );
+
+  // Parse defensivo — se modelo retornar lixo, tem que cair gracefully
+  let parsed: { category?: string; confidence?: number; reasoning?: string };
+  try {
+    // Modelo pode envolver em ```json ... ``` ou prefixar texto. Extrai primeiro {...}
+    let jsonStr = rawResponse.trim();
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) jsonStr = fenceMatch[1].trim();
+    if (!jsonStr.startsWith("{")) {
+      const braceMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (braceMatch) jsonStr = braceMatch[0];
+    }
+    parsed = JSON.parse(jsonStr);
+  } catch (e) {
+    console.error(`[extractTransactionsDeep] JSON parse falhou (provider=${provider}, fallback=${fallbackUsed}): ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`[extractTransactionsDeep] raw response: ${rawResponse.slice(0, 300)}`);
+    // Retorna current sem mudança + confidence baixa pra caller marcar needs_review
+    return {
+      ...currentTx,
+      installments: currentTx.installments ?? null,
+      confidence: 0.3,
+    };
+  }
+
+  // Safety net 1: categoria DEVE estar na lista válida; se não, mantém current
+  const allCatsLower = new Set(allCats.map((c) => c.toLowerCase()));
+  const newCategory = String(parsed.category ?? "").trim();
+  const finalCategory = newCategory && allCatsLower.has(newCategory.toLowerCase())
+    ? newCategory
+    : currentTx.category;
+
+  // Safety net 2: confidence DEVE estar em [0, 1]; clampa pra range válido
+  const rawConf = Number(parsed.confidence ?? 0);
+  const finalConfidence = Number.isFinite(rawConf)
+    ? Math.max(0, Math.min(1, rawConf))
+    : 0.3;
+
+  return {
+    amount: currentTx.amount,
+    description: currentTx.description,
+    type: currentTx.type,
+    category: finalCategory,
+    installments: currentTx.installments ?? null,
+    confidence: finalConfidence,
+  };
 }
 
 /** Tipo de retorno da extração de evento */
