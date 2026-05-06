@@ -5689,6 +5689,41 @@ async function handleIncomingRelay(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Categorias de estabelecimento onde o Jarvis automatiza o pedido end-to-end
+ * (coleta itens, envia ao estabelecimento, acompanha confirmações).
+ *
+ * Como ampliar: quando um novo fluxo de pedido for desenvolvido (ex: farmácia,
+ * mercado, restaurante), adicionar a categoria aqui E ajustar:
+ *   - Mensagem de confirmação em contact_save_category (mostra "Agora posso pedir...")
+ *   - handleOrderOnBehalf não bloqueia mais essa categoria
+ *   - Prompt de extração de itens (chatPass2/extractOrderItems) precisa entender
+ *     vocabulário da nova categoria.
+ *
+ * Mantenha em lowercase pra match com o que é salvo na coluna `contacts.category`.
+ */
+const SUPPORTS_ORDER_AUTOMATION = new Set<string>([
+  "pizzaria",
+  // FUTURO: "restaurante", "lanchonete", "hamburguer", "sushi", "acai" — quando
+  // os respectivos fluxos de coleta estiverem implementados.
+]);
+
+/**
+ * Mensagem padrão usada quando o Jarvis salvou contato OU recusou pedido em
+ * estabelecimento de categoria não suportada. Educa sobre usos alternativos
+ * deixando claro que QUANDO o Jarvis envia mensagem, o envio sai do número
+ * dele (do agente), não do número pessoal do usuário.
+ */
+function buildUnsupportedCategoryHelp(businessName: string): string {
+  const firstName = businessName.split(" ")[0];
+  return (
+    `Mas posso te ajudar com:\n` +
+    `• _"Manda mensagem pra ${firstName} dizendo..."_ 💬\n` +
+    `   _(eu envio do meu número, não do seu)_\n` +
+    `• Criar lembrete pra você fazer o pedido depois ⏰`
+  );
+}
+
+/**
  * Encerra uma order_session e CANCELA qualquer reminder de follow-up pendente
  * pra evitar que o Jarvis pergunte "já chegou?" depois que o usuário já encerrou.
  */
@@ -6053,6 +6088,21 @@ async function handleOrderOnBehalf(
         sender_name: userNickname || pushName || "seu usuário",
         user_phone: userPhone,
       },
+    };
+  }
+
+  // ── Bloqueio por categoria — Jarvis automatiza pedido só pras categorias
+  //    listadas em SUPPORTS_ORDER_AUTOMATION. Pra outras, retorna mensagem
+  //    educativa explicando alternativas. Cobre também contatos antigos
+  //    salvos sem categoria (category=null/vazia) — bloqueia por segurança.
+  const matchedCategory = String((matched as any).category ?? "").toLowerCase().trim();
+  if (!SUPPORTS_ORDER_AUTOMATION.has(matchedCategory)) {
+    const categoryLabel = matchedCategory || "tipo desconhecido";
+    return {
+      response:
+        `⚠️ No momento eu só faço pedidos automáticos em *pizzarias*. ` +
+        `*${matched.name}* está salva como *${categoryLabel}*, então o pedido você precisa fazer direto com eles.\n\n` +
+        buildUnsupportedCategoryHelp(matched.name as string),
     };
   }
 
@@ -8863,9 +8913,20 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         } as any,
         { onConflict: "user_id,phone" }
       );
-      responseText = error
-        ? `⚠️ Erro ao salvar. Tente de novo.`
-        : `✅ *${ccName}* salvo como *Estabelecimento* (${label})!\n\nAgora posso fazer pedidos lá pra você. Basta dizer:\n_"Jarvis, pede uma pizza de calabresa na ${ccName}"_ 🍕`;
+
+      if (error) {
+        responseText = `⚠️ Erro ao salvar. Tente de novo.`;
+      } else if (SUPPORTS_ORDER_AUTOMATION.has(category)) {
+        // Categoria com automação de pedido implementada (hoje: pizzaria)
+        responseText = `✅ *${ccName}* salvo como *Estabelecimento* (${label})!\n\nAgora posso fazer pedidos lá pra você. Basta dizer:\n_"Jarvis, pede uma pizza de calabresa na ${ccName}"_ 🍕`;
+      } else {
+        // Categoria sem automação — honesto sobre o que faz e o que NÃO faz,
+        // mas mostra usos alternativos pra contato seguir útil.
+        responseText =
+          `✅ *${ccName}* salvo como *Estabelecimento* (${label})!\n\n` +
+          `⚠️ *Importante:* no momento eu só faço pedidos automáticos em *pizzarias*. Pra ${label.toLowerCase()}, o pedido você precisa fazer direto com eles.\n\n` +
+          buildUnsupportedCategoryHelp(ccName);
+      }
       pendingAction  = undefined;
       pendingContext = undefined;
 
