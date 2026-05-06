@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { FinancialInsightCard } from "@/components/FinancialInsightCard";
+import { PendingReviewCard } from "@/components/PendingReviewCard";
 import { CategoryCreateModal, CATEGORY_COLORS, type CategoryRow } from "@/components/CategoryCreateModal";
 import { TransactionEditModal, type Transaction as TxEditType } from "@/components/TransactionEditModal";
 import { SenderBadge } from "@/components/couple/SenderBadge";
@@ -782,6 +783,15 @@ export default function Financas() {
 
           {/* Resumo Inteligente do Jarvis (gerado por IA, cache 4h) */}
           <FinancialInsightCard />
+
+          {/* Pendências de categorização — só aparece quando há transações
+              com needs_review=true (Pass 2 ficou em dúvida). Some sozinho
+              quando lista esvazia. */}
+          <PendingReviewCard
+            transactions={transactions}
+            categoryOptions={categoryOptionsForEdit}
+            onUpdate={loadData}
+          />
 
           {/* Hero: 4 KPI cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
