@@ -554,11 +554,14 @@ export const DEFAULT_CATEGORIES = [
 
 /** Extrai dados estruturados de transações financeiras do texto do usuário.
  *  Se o usuário tem categorias customizadas (criadas via app), passe-as em
- *  userCategories para que o Jarvis use elas também. Fallback: DEFAULT_CATEGORIES. */
+ *  userCategories para que o Jarvis use elas também. Fallback: DEFAULT_CATEGORIES.
+ *
+ *  Retorna confidence (0.0-1.0) por transação. Se modelo não retornar, defaulta
+ *  pra 0.7 (assume confiança média — não dispara Pass 2 desnecessariamente). */
 export async function extractTransactions(
   text: string,
   userCategories: string[] = DEFAULT_CATEGORIES
-): Promise<Array<{ amount: number; description: string; type: "expense" | "income"; category: string; installments?: number }>> {
+): Promise<Array<{ amount: number; description: string; type: "expense" | "income"; category: string; installments?: number; confidence: number }>> {
   const system = `Você é um extrator de dados financeiros. Responda APENAS com JSON válido, sem markdown.`;
 
   // Normaliza a lista: garante defaults presentes + remove duplicatas (case-insensitive)
@@ -577,7 +580,7 @@ export async function extractTransactions(
   const catList = allCats.join(", ");
 
   const prompt = `Extraia transações financeiras do texto abaixo. Retorne JSON com array "transactions".
-Cada item: { "amount": número, "description": string, "type": "expense" ou "income", "category": uma de [${catList}], "installments": número ou null }
+Cada item: { "amount": número, "description": string, "type": "expense" ou "income", "category": uma de [${catList}], "installments": número ou null, "confidence": número 0.0-1.0 }
 
 REGRAS IMPORTANTES:
 1. EXPENSE vs INCOME — decida pelo CONTEXTO da mensagem:
@@ -611,26 +614,34 @@ REGRAS IMPORTANTES:
 
 5. Valores com sufixo "k" significam milhares: "20k" = 20000, "1.5k" = 1500, "3k" = 3000.
 
+6. CONFIDENCE — adicione campo "confidence" (0.0 a 1.0) honesto:
+   - 0.95+ se categoria é óbvia ("uber" → transporte, "ifood" → alimentacao)
+   - 0.80-0.95 se boa categoria mas não 100% certo
+   - 0.60-0.80 se ficou na dúvida entre 2 categorias possíveis
+   - 0.40-0.60 se chutou (ex: nome próprio sem contexto, "Transferi pro João")
+   - <0.40 se categorizou em "outros" porque mesmo assim ficou em dúvida
+
 Texto: "${text}"
 
 Exemplos EXPENSE:
-"340 gasolina" → { "amount": 340, "description": "Gasolina", "type": "expense", "category": "transporte", "installments": null }
-"gastei 200 de gasolina" → { "amount": 200, "description": "Gasolina", "type": "expense", "category": "transporte", "installments": null }
-"comprei celular 300 em 3x" → { "amount": 300, "description": "Celular", "type": "expense", "category": "outros", "installments": 3 }
-"sofá 1200 parcelado em 12x" → { "amount": 1200, "description": "Sofá", "type": "expense", "category": "outros", "installments": 12 }
-"comprei tv 2000 em 10 vezes" → { "amount": 2000, "description": "TV", "type": "expense", "category": "outros", "installments": 10 }
-"paguei 500 no mercado" → { "amount": 500, "description": "Mercado", "type": "expense", "category": "alimentacao", "installments": null }
+"340 gasolina" → { "amount": 340, "description": "Gasolina", "type": "expense", "category": "transporte", "installments": null, "confidence": 0.95 }
+"gastei 200 de gasolina" → { "amount": 200, "description": "Gasolina", "type": "expense", "category": "transporte", "installments": null, "confidence": 0.95 }
+"comprei celular 300 em 3x" → { "amount": 300, "description": "Celular", "type": "expense", "category": "outros", "installments": 3, "confidence": 0.40 }
+"sofá 1200 parcelado em 12x" → { "amount": 1200, "description": "Sofá", "type": "expense", "category": "outros", "installments": 12, "confidence": 0.40 }
+"comprei tv 2000 em 10 vezes" → { "amount": 2000, "description": "TV", "type": "expense", "category": "outros", "installments": 10, "confidence": 0.40 }
+"paguei 500 no mercado" → { "amount": 500, "description": "Mercado", "type": "expense", "category": "alimentacao", "installments": null, "confidence": 0.95 }
+"transferi 200 pro João" → { "amount": 200, "description": "João", "type": "expense", "category": "outros", "installments": null, "confidence": 0.30 }
 
 Exemplos INCOME:
-"salário 20k" → { "amount": 20000, "description": "Salário", "type": "income", "category": "trabalho", "installments": null }
-"salario 8000" → { "amount": 8000, "description": "Salário", "type": "income", "category": "trabalho", "installments": null }
-"recebi 1000 de freela" → { "amount": 1000, "description": "Freela", "type": "income", "category": "trabalho", "installments": null }
-"freelance 1500" → { "amount": 1500, "description": "Freelance", "type": "income", "category": "trabalho", "installments": null }
-"bonus 500" → { "amount": 500, "description": "Bônus", "type": "income", "category": "trabalho", "installments": null }
-"13o de 8000" → { "amount": 8000, "description": "13º salário", "type": "income", "category": "trabalho", "installments": null }
-"pagamento único 20k registra hoje" → { "amount": 20000, "description": "Pagamento único", "type": "income", "category": "outros", "installments": null }
-"registra receita de 20k hoje" → { "amount": 20000, "description": "Receita", "type": "income", "category": "outros", "installments": null }
-"recebi 5000 do cliente" → { "amount": 5000, "description": "Cliente", "type": "income", "category": "trabalho", "installments": null }
+"salário 20k" → { "amount": 20000, "description": "Salário", "type": "income", "category": "trabalho", "installments": null, "confidence": 0.98 }
+"salario 8000" → { "amount": 8000, "description": "Salário", "type": "income", "category": "trabalho", "installments": null, "confidence": 0.98 }
+"recebi 1000 de freela" → { "amount": 1000, "description": "Freela", "type": "income", "category": "trabalho", "installments": null, "confidence": 0.95 }
+"freelance 1500" → { "amount": 1500, "description": "Freelance", "type": "income", "category": "trabalho", "installments": null, "confidence": 0.95 }
+"bonus 500" → { "amount": 500, "description": "Bônus", "type": "income", "category": "trabalho", "installments": null, "confidence": 0.95 }
+"13o de 8000" → { "amount": 8000, "description": "13º salário", "type": "income", "category": "trabalho", "installments": null, "confidence": 0.95 }
+"pagamento único 20k registra hoje" → { "amount": 20000, "description": "Pagamento único", "type": "income", "category": "outros", "installments": null, "confidence": 0.50 }
+"registra receita de 20k hoje" → { "amount": 20000, "description": "Receita", "type": "income", "category": "outros", "installments": null, "confidence": 0.50 }
+"recebi 5000 do cliente" → { "amount": 5000, "description": "Cliente", "type": "income", "category": "trabalho", "installments": null, "confidence": 0.85 }
 
 Responda SOMENTE com o JSON, sem explicações.`;
 
@@ -652,6 +663,13 @@ Responda SOMENTE com o JSON, sem explicações.`;
     if (t.installments != null && (t.installments < 2 || t.installments > 48)) {
       t.installments = null;
     }
+    // Safety net: confidence ausente ou fora de [0,1] → default 0.7 (médio)
+    // 0.7 é escolha proposital: NÃO dispara Pass 2 se modelo esqueceu de
+    // retornar (assume Pass 1 confiou). Pass 2 só dispara se confidence < 0.7.
+    const rawConf = Number(t.confidence ?? NaN);
+    t.confidence = Number.isFinite(rawConf)
+      ? Math.max(0, Math.min(1, rawConf))
+      : 0.7;
   }
   return transactions;
 }
@@ -797,6 +815,175 @@ Retorne SOMENTE este JSON (sem markdown):
     installments: currentTx.installments ?? null,
     confidence: finalConfidence,
   };
+}
+
+/** Transação retornada pelo orquestrador Pass1 + Pass2.
+ *  needsReview = true se mesmo Pass 2 ficou em dúvida — caller deve marcar
+ *  needs_review=true ao inserir na tabela transactions. */
+export interface TransactionWithMeta {
+  amount: number;
+  description: string;
+  type: "expense" | "income";
+  category: string;
+  installments?: number | null;
+  confidence: number;
+  needsReview: boolean;
+}
+
+/**
+ * Orquestrador: Pass 1 (extractTransactions) + Pass 2 condicional
+ * (extractTransactionsDeep) quando o admin tiver `ai_pass2_enabled=true`.
+ *
+ * Lógica:
+ *  1. Roda Pass 1 (modelo rápido — Claude Haiku ou GPT-4o-mini)
+ *  2. Se Pass 2 desligado no painel → retorna Pass 1 + needsReview=false (compat)
+ *  3. Identifica transações que precisam de Pass 2:
+ *     - category === "outros" OU confidence < 0.7
+ *  4. Busca histórico do user (até 30 transações, 1 query) só se houver tx
+ *     que precisa de Pass 2 — evita custo desnecessário.
+ *  5. Para cada tx que precisa, chama extractTransactionsDeep.
+ *  6. Se Pass 2 falhar (ambos providers caírem), mantém Pass 1 e marca
+ *     needsReview=true. Nunca quebra fluxo do user.
+ *  7. Marca needsReview=true se Pass 2 ainda retornou "outros" OU confidence < 0.5
+ *
+ * @param text           Mensagem original do user (mesma que vai pro Pass 1)
+ * @param userCategories Categorias custom do user (já normalizadas)
+ * @param userId         UUID do user — pra buscar histórico
+ */
+export async function extractTransactionsWithPass2(
+  text: string,
+  userCategories: string[],
+  userId: string
+): Promise<TransactionWithMeta[]> {
+  // Pass 1 sempre roda — comportamento atual preservado
+  const transactions = await extractTransactions(text, userCategories);
+  if (transactions.length === 0) return [];
+
+  const cfg = await getAIConfig();
+
+  // Pass 2 desligado OU sem providers configurados → retorna Pass 1 limpo
+  // (mesmo comportamento que ANTES desta feature existir)
+  const hasAnyProvider = cfg.deepseekKey.length > 0 || cfg.openaiKey.length > 0;
+  if (!cfg.pass2Enabled || !hasAnyProvider) {
+    return transactions.map((t) => ({
+      amount: t.amount,
+      description: t.description,
+      type: t.type,
+      category: t.category,
+      installments: t.installments ?? null,
+      confidence: t.confidence,
+      needsReview: false,
+    }));
+  }
+
+  // Identifica quais transações precisam de Pass 2
+  const indicesNeedingPass2: number[] = [];
+  for (let i = 0; i < transactions.length; i++) {
+    const t = transactions[i];
+    const lowConf = t.confidence < 0.7;
+    const isOthers = (t.category ?? "").toLowerCase().trim() === "outros";
+    if (lowConf || isOthers) indicesNeedingPass2.push(i);
+  }
+
+  // Nenhuma precisa de Pass 2 — retorna Pass 1 com needsReview=false
+  if (indicesNeedingPass2.length === 0) {
+    return transactions.map((t) => ({
+      amount: t.amount,
+      description: t.description,
+      type: t.type,
+      category: t.category,
+      installments: t.installments ?? null,
+      confidence: t.confidence,
+      needsReview: false,
+    }));
+  }
+
+  // Busca histórico do user UMA VEZ (mesmo se várias tx precisarem de Pass 2)
+  let userHistory: UserHistoryItem[] = [];
+  if (_aiSupabase) {
+    try {
+      const { data } = await _aiSupabase
+        .from("transactions")
+        .select("description, category, amount")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      userHistory = (data ?? []).map((h: any) => ({
+        description: String(h.description ?? ""),
+        category: String(h.category ?? "outros"),
+        amount: Number(h.amount ?? 0),
+      }));
+    } catch (e) {
+      // Erro buscando histórico: Pass 2 ainda roda, só sem contexto
+      console.error(`[pass2] erro buscando historico do user ${userId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Roda Pass 2 só nas que precisam (serial — geralmente 1-2 tx por mensagem)
+  const results: TransactionWithMeta[] = [];
+  const needSet = new Set(indicesNeedingPass2);
+
+  for (let i = 0; i < transactions.length; i++) {
+    const t = transactions[i];
+
+    // Não precisa de Pass 2 — usa Pass 1 direto
+    if (!needSet.has(i)) {
+      results.push({
+        amount: t.amount,
+        description: t.description,
+        type: t.type,
+        category: t.category,
+        installments: t.installments ?? null,
+        confidence: t.confidence,
+        needsReview: false,
+      });
+      continue;
+    }
+
+    // Precisa de Pass 2
+    try {
+      const deep = await extractTransactionsDeep(
+        text,
+        {
+          amount: t.amount,
+          description: t.description,
+          type: t.type,
+          category: t.category,
+          installments: t.installments ?? null,
+        },
+        userHistory,
+        userCategories
+      );
+
+      // Pass 2 ainda em "outros" ou confidence muito baixa → needs_review
+      const stillOthers = deep.category.toLowerCase().trim() === "outros";
+      const veryLowConf = deep.confidence < 0.5;
+
+      results.push({
+        amount: deep.amount,
+        description: deep.description,
+        type: deep.type,
+        category: deep.category,
+        installments: deep.installments ?? null,
+        confidence: deep.confidence,
+        needsReview: stillOthers || veryLowConf,
+      });
+    } catch (e) {
+      // Pass 2 falhou completamente — mantém Pass 1, marca pra revisão
+      console.error(`[pass2] falhou no idx ${i}: ${e instanceof Error ? e.message : String(e)}`);
+      results.push({
+        amount: t.amount,
+        description: t.description,
+        type: t.type,
+        category: t.category,
+        installments: t.installments ?? null,
+        confidence: t.confidence,
+        needsReview: true,
+      });
+    }
+  }
+
+  return results;
 }
 
 /** Tipo de retorno da extração de evento */

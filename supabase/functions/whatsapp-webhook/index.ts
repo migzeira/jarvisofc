@@ -6,6 +6,7 @@ import { syncGoogleCalendar, syncGoogleSheets, syncNotion, createCalendarEventWi
 import {
   chat,
   extractTransactions,
+  extractTransactionsWithPass2,
   extractEvent,
   parseAgendaQuery,
   extractAgendaEdit,
@@ -845,7 +846,10 @@ async function handleFinanceRecord(
     .map((c: any) => String(c.name ?? "").toLowerCase().trim())
     .filter(Boolean);
 
-  const transactions = await extractTransactions(message, userCategories);
+  // Orquestrador: Pass 1 sempre + Pass 2 condicional (gated por ai_pass2_enabled).
+  // Quando Pass 2 desligado, comportamento e retorno são equivalentes ao
+  // extractTransactions original — needsReview vem sempre false.
+  const transactions = await extractTransactionsWithPass2(message, userCategories, userId);
 
   if (!transactions.length) {
     return "Não consegui identificar os valores. Pode repetir? Ex: *gastei 200 reais de gasolina*";
@@ -869,6 +873,7 @@ async function handleFinanceRecord(
       source: "whatsapp",
       transaction_date: todayUserTz,
       sent_by_phone: senderPhone,
+      needs_review: t.needsReview, // marcado true quando Pass 2 ainda ficou em dúvida
     }));
 
     const { error } = await (supabase.from("transactions").insert(inserts as any) as any);
@@ -917,6 +922,7 @@ async function handleFinanceRecord(
         installment_number: i + 1,
         installment_total: numInstallments,
         sent_by_phone: senderPhone,
+        needs_review: t.needsReview, // todas as parcelas herdam needsReview da tx pai
       } as any);
 
       monthNames.push(d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", ""));
