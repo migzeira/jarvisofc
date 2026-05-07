@@ -271,14 +271,23 @@ export function classifyIntent(msg: string): Intent {
     // Padrão D: NÚMERO (reais) TIPO_INCOME (sem preposição)
     /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?(salario|renda|receita|rendimento|freelance|freela|bonus|recebimento|comissao)\b/.test(m) ||
     // Padrão E: NÚMERO + (preposição opcional) + CATEGORIA_EXPENSE inequívoca
-    // "27,92 mercado", "100 na farmácia", "50 do uber", "200 com gasolina"
+    // "27,92 mercado", "100 na farmácia", "50 do uber", "200 com gasolina", "66 reais cerveja"
     // Lista intencionalmente conservadora — só categorias inequívocas de gasto.
-    // Palavras ambíguas (livro, presente, roupa, sapato) ficam fora pra não
-    // capturar notas tipo "anota 5 ideias de presente" / "anota 3 livros que quero ler".
-    /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?((no|na|nos|nas|do|da|dos|das|de|em|com|pra|para|pro)\s+)?(mercado|supermercado|sacolao|hortifruti|padaria|restaurante|lanchonete|sorveteria|acai|pizza|hamburguer|hamburgueria|ifood|rappi|delivery|uber|99|taxi|onibus|metro|gasolina|combustivel|posto|estacionamento|pedagio|farmacia|drogaria|remedio|medicamento|aluguel|condominio|luz|agua|internet|gas|energia|netflix|spotify|prime|disney|hbo|paramount|cinema|teatro|academia|gym|ginastica|barbearia|cabeleireiro|manicure|pedicure|petshop|veterinario|mensalidade)\b/.test(m) ||
+    // Palavras ambíguas (livro, presente, roupa, sapato, viagem, consulta, exame, festa)
+    // ficam fora pra não capturar notas tipo "anota 5 ideias de presente" / "anota 3 livros".
+    // Expandido em 2026-05-06 com vocabulário comum: bebidas (cerveja, vinho, bar),
+    // comida (lanche, pastel, sushi), beleza (salão, depilação), pet (ração), serviços
+    // (faxina, encanador). Ampliar com cuidado — sempre testando false positives.
+    /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?((no|na|nos|nas|do|da|dos|das|de|em|com|pra|para|pro)\s+)?(mercado|supermercado|sacolao|hortifruti|feira|acougue|peixaria|padaria|restaurante|lanchonete|sorveteria|acai|pizza|hamburguer|hamburgueria|ifood|rappi|delivery|sushi|sashimi|tapioca|lanche|pastel|pasteis|sanduiche|churrasco|marmita|sorvete|picole|salgado|doce|chocolate|pao|cafe|brigadeiro|esfiha|kibe|coxinha|hotdog|cerveja|chopp|chope|vinho|drink|drinks|whisky|cachaca|caipirinha|vodka|gin|bar|pub|balada|boteco|uber|99|taxi|onibus|metro|trem|balsa|lyft|cabify|gasolina|combustivel|posto|estacionamento|pedagio|farmacia|drogaria|remedio|medicamento|dentista|oftalmo|psicologo|fisioterapia|vacina|aluguel|condominio|luz|agua|internet|gas|energia|faxina|jardineiro|eletricista|encanador|pintor|mudanca|marceneiro|netflix|spotify|prime|disney|hbo|paramount|cinema|teatro|ingresso|show|hotel|voo|parque|museu|academia|gym|ginastica|barbearia|cabeleireiro|salao|manicure|pedicure|depilacao|sobrancelha|escova|alongamento|tatuagem|piercing|tintura|petshop|veterinario|racao|mensalidade)\b/.test(m) ||
     // Padrão E2: NÚMERO + preposição + qualquer palavra (>=3 letras) — categoria genérica
     // "100 no posto X", "50 na lojinha Y" — IA decide categoria
     /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?(no|na|nos|nas|do|da|dos|das|em|com|pra|para|pro)\s+[a-z]{3,}/.test(m) ||
+    // Padrão E3: NÚMERO + "reais" OBRIGATÓRIO + qualquer palavra (>=3 letras) SEM preposição
+    // Captura formas naturais como "66 reais cerveja", "200 reais bar X", "50 reais ferramenta".
+    // "reais" obrigatório aqui evita falso positivo em notas tipo "5 ideias", "3 livros",
+    // "10 minutos" — porque essas frases não dizem "reais" explicitamente.
+    // IA decide a categoria depois — esse padrão só serve pra disparar finance_record.
+    /^(r\$\s*)?\d[\d.,]*\s+reais?\s+[a-z]{3,}/.test(m) ||
     // Padrão F: "registra/salva/anota" + número COM sinal financeiro inequívoco
     // (R$ explícito OU "reais" OU decimal X,XX) — sem isso, tratamos como nota
     /^(registra|registrar|salva|salvar|anota|anotar)\s+(uma?\s+|um\s+)?(r\$\s*\d|\d+[.,]\d{2}\b|\d+\s*(reais|real)\b)/.test(m) ||
