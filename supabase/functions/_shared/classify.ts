@@ -282,12 +282,18 @@ export function classifyIntent(msg: string): Intent {
     // Padrão E2: NÚMERO + preposição + qualquer palavra (>=3 letras) — categoria genérica
     // "100 no posto X", "50 na lojinha Y" — IA decide categoria
     /^(r\$\s*)?\d[\d.,]*\s*(reais\s+)?(no|na|nos|nas|do|da|dos|das|em|com|pra|para|pro)\s+[a-z]{3,}/.test(m) ||
-    // Padrão E3: NÚMERO + "reais" OBRIGATÓRIO + qualquer palavra (>=3 letras) SEM preposição
-    // Captura formas naturais como "66 reais cerveja", "200 reais bar X", "50 reais ferramenta".
-    // "reais" obrigatório aqui evita falso positivo em notas tipo "5 ideias", "3 livros",
-    // "10 minutos" — porque essas frases não dizem "reais" explicitamente.
+    // Padrão E3: NÚMERO + SINAL-DE-DINHEIRO + qualquer palavra (>=3 letras) SEM preposição
+    // Captura formas naturais como "66 reais cerveja", "200 paus bar", "50 conto sofá",
+    // "100 cash mercado", "30 pila salgado" — gírias e variações comuns no BR.
+    // O sinal de dinheiro é OBRIGATÓRIO aqui pra evitar falso positivo em notas
+    // tipo "5 ideias", "3 livros", "10 minutos" (essas não têm sinal de dinheiro).
     // IA decide a categoria depois — esse padrão só serve pra disparar finance_record.
-    /^(r\$\s*)?\d[\d.,]*\s+reais?\s+[a-z]{3,}/.test(m) ||
+    /^(r\$\s*)?\d[\d.,]*\s*(r\$|\$+|reais?|real|conto[s]?|pau[s]?|pila[s]?|cash|dinheiro|grana|bufunfa|mango[s]?|prata|prato[s]?|verdinha[s]?)\s+[a-z]{3,}/.test(m) ||
+    // Padrão E4: $ ou R$ + NÚMERO + palavra (sinal monetário ANTES do número)
+    // Captura "$66 cerveja", "R$66 cerveja", "R$ 66 cerveja", "$ 200 mercado".
+    // Não exige preposição nem sinal repetido depois — o $/R$ inicial já confirma
+    // que é dinheiro. Permite variações com/sem espaço entre o sinal e o valor.
+    /^r?\$\s*\d[\d.,]*\s+[a-z]{3,}/.test(m) ||
     // Padrão F: "registra/salva/anota" + número COM sinal financeiro inequívoco
     // (R$ explícito OU "reais" OU decimal X,XX) — sem isso, tratamos como nota
     /^(registra|registrar|salva|salvar|anota|anotar)\s+(uma?\s+|um\s+)?(r\$\s*\d|\d+[.,]\d{2}\b|\d+\s*(reais|real)\b)/.test(m) ||
