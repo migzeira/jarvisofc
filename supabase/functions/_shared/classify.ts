@@ -320,6 +320,10 @@ export function classifyIntent(msg: string): Intent {
   //   "mandei 200 pra Maria"     → finance_record (saída)
   //   "dei 50 pro Pedro"         → finance_record (saída)
   //   "enviei 100 pra mãe"       → finance_record (saída)
+  //   "pix 50 reais pra Maria"   → finance_record (verbo curto)
+  //   "fiz pix de 100 pro João"  → finance_record (forma comum)
+  //   "manda 80 pra Cibele"      → finance_record (imperativo + número)
+  //   "transfere 200 pra mãe"    → finance_record (imperativo + número)
   // Exemplos RECEBIMENTO (dispara):
   //   "caiu 5000 na conta"       → finance_record (entrada — IA classifica)
   //   "entrou 2000 hoje"         → finance_record (entrada)
@@ -328,8 +332,9 @@ export function classifyIntent(msg: string): Intent {
   //   "mandei mensagem pra X"    → sem número, vai pra send_to_contact
   //   "dei oi pra Maria"         → sem número, vai pra ai_chat
   //   "caiu da escada hoje"      → sem número, vai pra ai_chat
+  //   "qual seu pix?"            → sem número, vai pra ai_chat
   if (
-    /^(mandei|enviei|dei|caiu|entrou|creditou|pingou|cai|cair)\s.{0,30}\d/.test(m)
+    /^(mandei|enviei|dei|caiu|entrou|creditou|pingou|cai|cair|pix|fiz pix|manda|transfere|transferir|envia|enviar|paga|pagar)\s.{0,30}\d/.test(m)
   )
     return "finance_record";
 
