@@ -302,9 +302,34 @@ export function classifyIntent(msg: string): Intent {
   )
     return "finance_record";
 
-  // Registro financeiro — expandido (formato com verbo)
+  // Registro financeiro — verbos NÃO AMBÍGUOS de gasto/receita (qualquer posição)
+  // Esses verbos quase sempre indicam contexto financeiro, mesmo sem número visível
+  // (a IA do extractTransactions extrai valor depois).
+  // Adicionado em 2026-05-06: transferi, emprestei, doei, pixei, depositei,
+  // saquei, retirei, sacou — todas formas comuns de saída de dinheiro no BR.
   if (
-    /gastei|comprei|paguei|recebi|ganhei|custou|vale |custa |despesa|despendi|gasei|gasto|gasta|sai|saiu|de quanto/.test(m)
+    /gastei|comprei|paguei|recebi|ganhei|custou|vale |custa |despesa|despendi|gasei|gasto|gasta|sai|saiu|de quanto|transferi|emprestei|emprestou|doei|pixei|pixou|depositei|saquei|retirei|cobrei/.test(m)
+  )
+    return "finance_record";
+
+  // Verbos AMBÍGUOS de transferência/recebimento — exigem contexto numérico próximo
+  // pra distinguir uso financeiro de não-financeiro. Padrão: verbo no início + número
+  // a até 30 chars de distância.
+  //
+  // Exemplos GASTO (dispara):
+  //   "mandei 200 pra Maria"     → finance_record (saída)
+  //   "dei 50 pro Pedro"         → finance_record (saída)
+  //   "enviei 100 pra mãe"       → finance_record (saída)
+  // Exemplos RECEBIMENTO (dispara):
+  //   "caiu 5000 na conta"       → finance_record (entrada — IA classifica)
+  //   "entrou 2000 hoje"         → finance_record (entrada)
+  //   "pingou 50 da freela"      → finance_record (entrada — gíria)
+  // Exemplos NÃO-finance (NÃO dispara):
+  //   "mandei mensagem pra X"    → sem número, vai pra send_to_contact
+  //   "dei oi pra Maria"         → sem número, vai pra ai_chat
+  //   "caiu da escada hoje"      → sem número, vai pra ai_chat
+  if (
+    /^(mandei|enviei|dei|caiu|entrou|creditou|pingou|cai|cair)\s.{0,30}\d/.test(m)
   )
     return "finance_record";
 
