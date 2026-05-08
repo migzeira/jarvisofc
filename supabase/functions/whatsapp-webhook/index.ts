@@ -7,6 +7,7 @@ import {
   chat,
   extractTransactions,
   extractTransactionsWithPass2,
+  classifyIntentHybrid,
   extractEvent,
   parseAgendaQuery,
   extractAgendaEdit,
@@ -4013,7 +4014,8 @@ serve(async (req) => {
   // ─── Modo Sombra: texto encaminhado ──────────────────────────────────────
   if (isForwarded && text.trim()) {
     // Se usuario encaminhou + digitou algo que classifyIntent reconhece → usa fluxo normal
-    const forwardedIntent = classifyIntent(text.trim());
+    const forwardedClassification = await classifyIntentHybrid(text.trim());
+    const forwardedIntent = forwardedClassification.intent;
     if (forwardedIntent !== "ai_chat" && forwardedIntent !== "greeting") {
       // Usuario deu comando explicito junto com o encaminhamento → fluxo normal
       const debugResult = await processMessage(replyTo, text.trim(), lid, messageId, pushName);
@@ -8082,7 +8084,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         // Verifica se a mensagem deve ser repassada à pizzaria ou se é outro fluxo:
         // 1. Novo comando (pedido, lembrete, agenda) → deixa passar pro classify
         // 2. Tem pending_action na sessão (order_confirm, etc) → a msg é pro fluxo pendente, não relay
-        const relayIntent = classifyIntent(text);
+        const relayClassification = await classifyIntentHybrid(text);
+        const relayIntent = relayClassification.intent;
         const isNewCommand = relayIntent !== "ai_chat" && relayIntent !== "greeting";
         const hasPendingFlow = !!session?.pending_action;
         if (isNewCommand || hasPendingFlow) {
@@ -8149,8 +8152,9 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
-    // 5. Classifica intenção
-    let intent: Intent = classifyIntent(text);
+    // 5. Classifica intenção (regex + IA fallback se ai_intent_classifier_enabled=true)
+    const classification = await classifyIntentHybrid(text);
+    let intent: Intent = classification.intent;
     currentIntent = intent;
 
     // Se há ação pendente e a mensagem parece ser uma resposta, mantém o contexto

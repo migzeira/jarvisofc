@@ -41,6 +41,8 @@ const ALLOWED_KEYS = [
   "ai_finance_provider",   // "claude" (default) | "openai" — Pass 1 da extração de transações
   "deepseek_api_key",      // mascarado — usado no Pass 2 (re-categorização)
   "ai_pass2_enabled",      // "true" | "false" (default false) — liga/desliga Pass 2
+  // Classificador de intent híbrido (regex + IA fallback)
+  "ai_intent_classifier_enabled", // "true" | "false" (default false)
 ];
 
 // Keys cuja value deve ser mascarada quando exibida no painel.

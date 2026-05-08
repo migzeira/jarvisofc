@@ -1099,6 +1099,10 @@ export default function AdminPanel() {
         if (!/^(true|false)$/i.test(v)) return "Use 'true' ou 'false'";
         return null;
       }
+      case "ai_intent_classifier_enabled": {
+        if (!/^(true|false)$/i.test(v)) return "Use 'true' ou 'false'";
+        return null;
+      }
       default:
         return null;
     }
@@ -1121,6 +1125,7 @@ export default function AdminPanel() {
     { key: "ai_chat_provider", label: "Provider de Chat (geral)", type: "text", hint: "'claude' (default, mais robusto) ou 'openai' (mais barato — GPT-4o-mini em chat geral, modo sombra e fallback de lembrete)." },
     { key: "ai_finance_provider", label: "Provider de Extração Financeira (Pass 1)", type: "text", hint: "'claude' (default — Haiku 4.5) ou 'openai' (GPT-4o-mini, ~85% mais barato). Controla SÓ o Pass 1 da extração de transações. Não afeta chat geral." },
     { key: "ai_pass2_enabled", label: "Pass 2 Categorização Ativo", type: "text", hint: "'true' ativa Pass 2: quando Pass 1 retorna 'outros' ou baixa confiança, DeepSeek (com fallback GPT-4o) re-categoriza usando histórico do user. 'false' (default) mantém só Pass 1." },
+    { key: "ai_intent_classifier_enabled", label: "IA Classifica Intent (regex + IA fallback)", type: "text", hint: "'true' ativa fallback de IA na classificação de intent: regex tenta primeiro, mas se mensagem for ambígua/longa OU regex cair em ai_chat, IA (GPT-4o-mini) reclassifica. Resolve bugs de regex tipo 'reuniao que tenho hoje' virar agenda_query por substring. 'false' (default) mantém só regex." },
   ];
 
   // Calcula erros por campo e se o form é submetível.
@@ -2035,7 +2040,7 @@ export default function AdminPanel() {
                 { title: "Google OAuth (Calendar + Sheets)", keys: ["google_client_id", "google_client_secret"] },
                 { title: "Notion OAuth", keys: ["notion_client_id", "notion_client_secret"] },
                 { title: "Renovação & Cobrança", keys: ["renewal_link_monthly", "renewal_link_annual", "renewal_reminders_enabled", "overdue_grace_days"] },
-                { title: "Inteligência Artificial", keys: ["ai_chat_provider", "ai_finance_provider", "ai_pass2_enabled", "openai_api_key", "deepseek_api_key"] },
+                { title: "Inteligência Artificial", keys: ["ai_chat_provider", "ai_finance_provider", "ai_pass2_enabled", "ai_intent_classifier_enabled", "openai_api_key", "deepseek_api_key"] },
               ];
               const renderField = (key: string) => {
                 const f = SETTINGS_FIELDS.find(x => x.key === key);
