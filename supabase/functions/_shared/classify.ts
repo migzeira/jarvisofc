@@ -79,6 +79,23 @@ export function classifyIntent(msg: string): Intent {
     return "greeting";
 
   // ─────────────────────────────────────────────────────────────────────────
+  // REMINDER EARLY-RETURN — quando a mensagem começa com "me lembra/lembre/
+  // avisa/notifica" + complemento natural ("da reunião", "de pagar", etc),
+  // retorna reminder_set IMEDIATAMENTE pra evitar que regex genéricos abaixo
+  // (tipo agenda_query "o que tenho hoje") capturem a substring por engano.
+  //
+  // Bug fix 2026-05-07: "Me lembre da reunião que tenho hoje as 9h30" estava
+  // virando agenda_query porque "reuniaO QUE TENHO HOJE" tinha substring
+  // "o que tenho hoje" no meio (sem word boundary no regex de agenda_query).
+  // Esse early-return resolve o caso por curto-circuito — toda forma natural
+  // de pedir lembrete começa com "me lembre/lembra/avisa".
+  // ─────────────────────────────────────────────────────────────────────────
+  if (
+    /^me\s+(lembra|lembre|avisa|avise|notifica|notifique)\b/.test(m)
+  )
+    return "reminder_set";
+
+  // ─────────────────────────────────────────────────────────────────────────
   // LISTAS — todos os intents exigem a palavra "lista" pra desambiguar
   // de notes/reminders/transações. Posicionados ANTES dos outros pra priorizar.
   // Ordem importa: deletar item / deletar lista / mostrar / criar / adicionar.
@@ -440,17 +457,21 @@ export function classifyIntent(msg: string): Intent {
     return "agenda_create";
 
   // Consultar agenda — expandido com "quais", "quantos", "primeiro", "próximo"
+  // BUG fix 2026-05-07: regex SEM word boundary pegavam substring de palavras maiores.
+  // Ex: "reuniao QUE TENHO HOJE" tinha substring "o que tenho hoje" (último 'o' de
+  // 'reuniao' + ' que tenho hoje') que disparava /o que (tenho|tem) hoje/.
+  // Solução: \b no início de regex que começam com palavras curtas ('o', 'tem', etc).
   if (
-    /o que (tenho|tem) (hoje|amanha|marcado|essa semana|semana|na agenda)/.test(m) ||
-    /minha agenda/.test(m) ||
-    /(proximos?|pr[oó]ximos?) (eventos?|compromissos?|reunioes?|consultas?)/.test(m) ||
-    /(agenda de|agenda do|agenda da|agenda dessa|agenda desta) (hoje|amanha|semana|mes)/.test(m) ||
-    /meus compromissos/.test(m) ||
-    /tem algo marcado/.test(m) ||
-    /compromissos de (hoje|amanha|semana)/.test(m) ||
-    /agenda dessa semana|compromissos da semana/.test(m) ||
-    /eventos? (de|da|do) (hoje|amanha|semana|mes)/.test(m) ||
-    /o que tenho marcado/.test(m) ||
+    /\bo que (tenho|tem) (hoje|amanha|marcado|essa semana|semana|na agenda)/.test(m) ||
+    /\bminha agenda\b/.test(m) ||
+    /\b(proximos?|pr[oó]ximos?) (eventos?|compromissos?|reunioes?|consultas?)\b/.test(m) ||
+    /\b(agenda de|agenda do|agenda da|agenda dessa|agenda desta) (hoje|amanha|semana|mes)\b/.test(m) ||
+    /\bmeus compromissos\b/.test(m) ||
+    /\btem algo marcado\b/.test(m) ||
+    /\bcompromissos de (hoje|amanha|semana)\b/.test(m) ||
+    /\b(agenda dessa semana|compromissos da semana)\b/.test(m) ||
+    /\beventos? (de|da|do) (hoje|amanha|semana|mes)\b/.test(m) ||
+    /\bo que tenho marcado\b/.test(m) ||
     // NOVO: "quais compromissos tenho amanhã?" / "quais eventos" / "quais reuniões"
     /\bquais\s+(s[ãa]o\s+)?(meus\s+)?(compromissos?|eventos?|reunioes?|consultas?|tarefas?)\b/.test(m) ||
     // "quantos compromissos tenho hoje?"
