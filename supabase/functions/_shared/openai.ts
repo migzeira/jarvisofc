@@ -545,14 +545,19 @@ Retorne APENAS este JSON (sem markdown, sem explicação):
  */
 export async function classifyIntentHybrid(text: string): Promise<IntentClassification> {
   const regexIntent = classifyIntent(text);
-  const cfg = await getAIConfig();
 
-  // Flag desligada → regex puro (mesmo comportamento de antes)
-  if (!cfg.intentClassifierEnabled) {
-    return { intent: regexIntent, confidence: 1.0, source: "regex" };
-  }
-
-  // Fast path: casos onde regex é altamente confiável
+  // ─────────────────────────────────────────────────────────────────────────
+  // FAST PATH — antes de qualquer I/O (zero overhead pra mensagens curtas).
+  //
+  // BUG fix 2026-05-08: a versão original chamava `await getAIConfig()` SEMPRE
+  // (antes do fast path), forçando uma round-trip ao Supabase mesmo pra
+  // mensagens triviais como "2", "sim", "cancela" — respostas a fluxos
+  // pendentes (waiting_reminder_answer, etc). Sob carga (várias mensagens
+  // em sequência rápida), múltiplas invocações da edge function ficavam
+  // travadas em I/O concorrente, causando timeouts e mensagens sem resposta.
+  // Movendo o fast path pra ANTES do await, mensagens curtas têm overhead
+  // ZERO — comportamento idêntico ao classifyIntent síncrono original.
+  // ─────────────────────────────────────────────────────────────────────────
   const trimmed = text.trim();
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
   const isFastPath =
@@ -564,6 +569,14 @@ export async function classifyIntentHybrid(text: string): Promise<IntentClassifi
 
   if (isFastPath) {
     return { intent: regexIntent, confidence: 1.0, source: "regex_fast_path" };
+  }
+
+  // Daqui em diante: mensagens médias/longas. Aí sim carrega config (com cache 60s).
+  const cfg = await getAIConfig();
+
+  // Flag desligada → regex puro (mesmo comportamento de antes)
+  if (!cfg.intentClassifierEnabled) {
+    return { intent: regexIntent, confidence: 1.0, source: "regex" };
   }
 
   // Caso ambíguo → IA decide
