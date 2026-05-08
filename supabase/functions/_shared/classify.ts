@@ -307,8 +307,21 @@ export function classifyIntent(msg: string): Intent {
   // (a IA do extractTransactions extrai valor depois).
   // Adicionado em 2026-05-06: transferi, emprestei, doei, pixei, depositei,
   // saquei, retirei, sacou — todas formas comuns de saída de dinheiro no BR.
+  //
+  // BUG fix 2026-05-07: regex original NÃO tinha word boundary, então palavras
+  // curtas pegavam substring de outras palavras causando classificação errada:
+  //   "sai" → batia "sair"/"saída"/"saímos"/"saindo"/"ensaiar"/"ensaio"
+  //   "gasto" → batia "engasto" (raro mas possível)
+  //   "vale" → batia "vale a pena"/"valeu" (não-financeiros)
+  //   "custa" → batia "custa caro"/"custar caro" (sem valor numérico)
+  // Solução: \b em todas, removido "sai" (ambíguo demais — usar "saiu"),
+  // "vale"/"custa" agora exigem dígito próximo pra confirmar contexto financeiro.
+  // Caso reportado: "Me lembre da reunião hoje 9h30, tenho que sair de casa"
+  //   classificava como finance_record por causa do "sair" → "sai".
   if (
-    /gastei|comprei|paguei|recebi|ganhei|custou|vale |custa |despesa|despendi|gasei|gasto|gasta|sai|saiu|de quanto|transferi|emprestei|emprestou|doei|pixei|pixou|depositei|saquei|retirei|cobrei/.test(m)
+    /\b(gastei|comprei|paguei|recebi|ganhei|custou|despesa|despendi|gasei|gasto|gasta|saiu|transferi|emprestei|emprestou|doei|pixei|pixou|depositei|saquei|retirei|cobrei)\b/.test(m) ||
+    /\b(vale|custa)\b\s+\S{0,15}\d/.test(m) ||
+    /\bde quanto\b/.test(m)
   )
     return "finance_record";
 
