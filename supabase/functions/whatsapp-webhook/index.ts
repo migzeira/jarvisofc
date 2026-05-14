@@ -8275,13 +8275,14 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
           await sendText(
             sendPhone || replyTo,
-            "⏰ *Seu período de teste gratuito expirou!*\n\n" +
+            "🚨 *Seu período de teste gratuito acabou!*\n\n" +
             "Foram 3 dias completos pra você experimentar tudo que o Jarvis pode fazer 🎯\n\n" +
-            "Pra continuar usando, escolha um plano:\n\n" +
-            "💎 *Mensal* — pague mês a mês\n" +
-            "💰 *Anual* — economia maior\n\n" +
-            "👉 Acesse: *heyjarvis.com.br/dashboard/meu-plano*\n\n" +
-            "Qualquer dúvida, tô aqui!"
+            "*Não perca a inteligência que você já criou!* Pra continuar usando agora, escolha:\n\n" +
+            "💎 *Plano Mensal* — flexível, pague mês a mês\n" +
+            "💰 *Plano Anual* — mais econômico, 2 meses de desconto\n\n" +
+            "👉 *Renove agora:*\n" +
+            "https://app.heyjarvis.com.br/dashboard/configuracoes\n\n" +
+            "_Após renovar o Jarvis volta a responder imediatamente._"
           );
           log.push("trial_expired");
           return log;
@@ -8304,12 +8305,13 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     if (profile.account_status === "pending") {
       await sendText(
         sendPhone || replyTo,
-        "⏳ *Sua conta ainda não tem plano ativo*\n\n" +
-        "Pra usar o Jarvis, escolha um dos planos:\n\n" +
-        "💎 *Mensal* — pague mês a mês\n" +
-        "💰 *Anual* — economia maior\n\n" +
-        "👉 Assine em: *heyjarvis.com.br/dashboard/meu-plano*\n\n" +
-        "Se já assinou ou foi liberado por admin, o Jarvis responde em instantes."
+        "🔒 *Sua conta não tem plano ativo*\n\n" +
+        "Pra liberar o Jarvis 24/7 no seu WhatsApp, escolha um plano:\n\n" +
+        "💎 *Plano Mensal* — flexível, pague mês a mês\n" +
+        "💰 *Plano Anual* — mais econômico, 2 meses de desconto\n\n" +
+        "👉 *Assine agora:*\n" +
+        "https://app.heyjarvis.com.br/dashboard/configuracoes\n\n" +
+        "_Se já assinou ou foi liberado por admin, o Jarvis responde em instantes._"
       );
       log.push("account_pending");
       return log;

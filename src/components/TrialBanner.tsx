@@ -69,7 +69,7 @@ export function TrialBanner() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <Link to="/dashboard/meu-plano">
+            <Link to="/dashboard/configuracoes?tab=perfil">
               <Button
                 size="sm"
                 variant="ghost"
@@ -111,7 +111,7 @@ export function TrialBanner() {
               </span>
             </div>
           </div>
-          <Link to="/dashboard/meu-plano">
+          <Link to="/dashboard/configuracoes?tab=perfil">
             <Button size="sm" className="h-7 text-xs gap-1">
               Ver planos <ArrowRight className="h-3 w-3" />
             </Button>

@@ -18,6 +18,8 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { PlanCTAButtons } from "@/components/PlanCTAButtons";
 import { buildPlanLabel } from "@/lib/plan";
+import { useUserAccessStatus } from "@/hooks/useUserAccessStatus";
+import { Sparkles, Timer } from "lucide-react";
 
 // ─────────────────────────────────────────────
 // Constants
@@ -128,6 +130,11 @@ function StatusBadge({ status }: { status: string | null }) {
       <CheckCircle className="h-3 w-3" /> Ativa
     </Badge>
   );
+  if (status === "trial") return (
+    <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 flex items-center gap-1">
+      <Sparkles className="h-3 w-3" /> Trial Gratuito
+    </Badge>
+  );
   if (status === "suspended") return (
     <Badge className="bg-red-500/20 text-red-300 border-red-500/30 flex items-center gap-1">
       <XCircle className="h-3 w-3" /> Suspensa
@@ -137,6 +144,164 @@ function StatusBadge({ status }: { status: string | null }) {
     <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/30 flex items-center gap-1">
       <Clock className="h-3 w-3" /> Aguardando ativação
     </Badge>
+  );
+}
+
+/**
+ * PlanCard — renderiza um dos 3 estados visuais do plano do user:
+ *  1. TRIAL ATIVO   → verde, countdown grande, planos prontos pra escolher
+ *  2. EXPIRADO/PENDING → vermelho COM ÊNFASE FORTE, paywall destacado,
+ *                       texto urgente ("Reative agora!"), planos em destaque
+ *  3. ATIVO          → violeta padrão, info de expiração se aplicável
+ */
+function PlanCard({
+  profile,
+  hasActivePlan,
+  planLabel,
+  accessUntilDate,
+  daysLeft,
+}: {
+  profile: any;
+  hasActivePlan: boolean;
+  planLabel: string;
+  accessUntilDate: Date | null;
+  daysLeft: number | null;
+}) {
+  const access = useUserAccessStatus();
+
+  const isTrial = access.status === "trial";
+  const isExpired = access.status === "expired";
+  const isPending = profile?.account_status === "pending" && !isTrial && !isExpired;
+  const isSuspended = profile?.account_status === "suspended";
+  const needsToPay = isExpired || isPending || isSuspended;
+  const trialDays = access.trialDaysRemaining ?? 0;
+  const isUrgentTrial = isTrial && trialDays <= 1;
+
+  // ─── TRIAL ATIVO — destaque verde ───
+  if (isTrial) {
+    return (
+      <Card className={`border-2 ${isUrgentTrial ? "border-amber-500/50 bg-amber-500/5" : "border-emerald-500/40 bg-emerald-500/5"}`}>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Sparkles className={`h-5 w-5 ${isUrgentTrial ? "text-amber-400" : "text-emerald-400"}`} />
+            Período de Teste Gratuito
+            <StatusBadge status="trial" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex-1 min-w-0">
+              <p className={`text-2xl font-bold ${isUrgentTrial ? "text-amber-100" : "text-emerald-100"}`}>
+                {trialDays > 1
+                  ? `${trialDays} dias restantes`
+                  : trialDays === 1
+                    ? "Último dia!"
+                    : "Expira hoje!"}
+              </p>
+              {access.trialEndsAt && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                  <Timer className="h-3 w-3" />
+                  Trial termina em {format(access.trialEndsAt, "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className={`p-3 rounded-lg ${isUrgentTrial ? "bg-amber-500/10 border border-amber-500/30" : "bg-background/40 border border-emerald-500/20"}`}>
+            <p className="text-sm font-semibold mb-2">
+              {isUrgentTrial
+                ? "⚡ Garanta seu plano antes que o trial expire:"
+                : "💡 Antes de acabar, escolha seu plano definitivo:"}
+            </p>
+            <PlanCTAButtons />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // ─── EXPIRADO / PENDING / SUSPENSO — destaque vermelho FORTE ───
+  if (needsToPay) {
+    const title = isExpired
+      ? "🚨 Seu teste gratuito acabou!"
+      : isSuspended
+        ? "🚫 Conta suspensa"
+        : "🔒 Sem plano ativo";
+    const desc = isExpired
+      ? "Não perca o que você já configurou. Reative agora e o Jarvis volta a responder imediatamente."
+      : isSuspended
+        ? "Sua conta foi suspensa. Pra reativar, escolha um plano abaixo."
+        : "Você ainda não tem plano ativo. Escolha um pra começar a usar o Jarvis no WhatsApp.";
+
+    return (
+      <Card className="border-2 border-red-500/60 bg-gradient-to-br from-red-500/10 via-rose-500/5 to-red-500/10 shadow-lg shadow-red-500/10">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg flex items-center gap-2 text-red-100">
+            <AlertTriangle className="h-5 w-5 text-red-400 animate-pulse" />
+            {title}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-red-200/90 leading-relaxed">{desc}</p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
+              <p className="text-xs uppercase tracking-wide text-violet-300 font-semibold mb-1">💎 Plano Mensal</p>
+              <p className="text-xs text-muted-foreground mb-2">Flexibilidade total — pague mês a mês.</p>
+              <p className="text-lg font-bold text-violet-100">R$ 39,90<span className="text-xs font-normal text-muted-foreground">/mês</span></p>
+            </div>
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 relative">
+              <span className="absolute -top-2 right-2 bg-emerald-500/30 text-emerald-200 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/50 font-bold">MAIS POPULAR</span>
+              <p className="text-xs uppercase tracking-wide text-emerald-300 font-semibold mb-1">💰 Plano Anual</p>
+              <p className="text-xs text-muted-foreground mb-2">2 meses grátis — economize 25%.</p>
+              <p className="text-lg font-bold text-emerald-100">R$ 29,90<span className="text-xs font-normal text-muted-foreground">/mês</span></p>
+            </div>
+          </div>
+
+          <PlanCTAButtons />
+
+          <p className="text-xs text-center text-muted-foreground">
+            Após pagar, o Jarvis volta a responder <span className="text-emerald-300 font-semibold">em segundos</span>.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // ─── ATIVO — card padrão violeta ───
+  return (
+    <Card className={`border-2 ${
+      hasActivePlan
+        ? "border-violet-500/40 bg-violet-500/5"
+        : "border-muted bg-muted/20"
+    }`}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Crown className={`h-5 w-5 ${hasActivePlan ? "text-violet-400" : "text-muted-foreground"}`} />
+          Seu plano
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <p className="text-lg font-bold">{planLabel}</p>
+            {hasActivePlan && accessUntilDate && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                <Calendar className="h-3 w-3" />
+                {daysLeft === 0 ? "Expira hoje" : `Expira em ${daysLeft} dia${daysLeft !== 1 ? "s" : ""}`}
+                {" — "}
+                {format(accessUntilDate, "dd/MM/yyyy", { locale: ptBR })}
+              </p>
+            )}
+            {hasActivePlan && !accessUntilDate && (
+              <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
+                <CheckCircle className="h-3 w-3" /> Assinatura ativa
+              </p>
+            )}
+          </div>
+          <StatusBadge status={profile.account_status} />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -455,48 +620,14 @@ export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean }
         </div>
       )}
 
-      {/* ── Seu plano ── */}
-      <Card className={`border-2 ${
-        hasActivePlan
-          ? "border-violet-500/40 bg-violet-500/5"
-          : "border-muted bg-muted/20"
-      }`}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Crown className={`h-5 w-5 ${hasActivePlan ? "text-violet-400" : "text-muted-foreground"}`} />
-            Seu plano
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div>
-              <p className="text-lg font-bold">{planLabel}</p>
-              {hasActivePlan && accessUntilDate && (
-                <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                  <Calendar className="h-3 w-3" />
-                  {daysLeft === 0 ? "Expira hoje" : `Expira em ${daysLeft} dia${daysLeft !== 1 ? "s" : ""}`}
-                  {" — "}
-                  {format(accessUntilDate, "dd/MM/yyyy", { locale: ptBR })}
-                </p>
-              )}
-              {hasActivePlan && !accessUntilDate && (
-                <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
-                  <CheckCircle className="h-3 w-3" /> Assinatura ativa
-                </p>
-              )}
-              {!hasActivePlan && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {profile.account_status === "suspended"
-                    ? "Acesso suspenso"
-                    : "Sem plano ativo — assine para usar o Jarvis"}
-                </p>
-              )}
-            </div>
-            <StatusBadge status={profile.account_status} />
-          </div>
-          {!hasActivePlan && <PlanCTAButtons className="pt-1" />}
-        </CardContent>
-      </Card>
+      {/* ── Seu plano ── varia por status: trial ativo / expirado-pending / ativo ── */}
+      <PlanCard
+        profile={profile}
+        hasActivePlan={hasActivePlan}
+        planLabel={planLabel}
+        accessUntilDate={accessUntilDate}
+        daysLeft={daysLeft}
+      />
 
       {/* ── Dados pessoais ── */}
       <Card className="bg-card border-border">
