@@ -61,8 +61,27 @@ serve(async (req) => {
   // Auth: só aceita chamada com service_role (cron ou admin)
   const authHeader = req.headers.get("Authorization") ?? "";
   const internalSecret = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+  // DEBUG TEMPORÁRIO (remover após bug 2026-05-14 ser resolvido):
+  // Loga prefixos sem expor keys completas pra debugar 401 do cron.
+  console.log(`[auth-debug] header_len=${authHeader.length} secret_len=${internalSecret.length}`);
+  console.log(`[auth-debug] header_prefix="${authHeader.slice(0, 20)}..." header_suffix="...${authHeader.slice(-10)}"`);
+  console.log(`[auth-debug] secret_prefix="${internalSecret.slice(0, 20)}..." secret_suffix="...${internalSecret.slice(-10)}"`);
+  console.log(`[auth-debug] includes_match=${authHeader.includes(internalSecret)}`);
+
   if (!authHeader.includes(internalSecret)) {
-    return new Response("Unauthorized", { status: 401 });
+    return new Response(JSON.stringify({
+      error: "Unauthorized",
+      debug: {
+        header_len: authHeader.length,
+        secret_len: internalSecret.length,
+        secret_prefix: internalSecret.slice(0, 12),
+        header_prefix: authHeader.slice(0, 20),
+      }
+    }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   const today = new Date().toISOString().split("T")[0];
