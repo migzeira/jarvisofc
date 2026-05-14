@@ -828,6 +828,199 @@ async function checkBudgetAlerts(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// RECURRING CONFIRM — User respondendo à pergunta de cobrança recorrente
+// ─────────────────────────────────────────────────────────────────────────
+// Fluxo:
+//   1. process-recurring (cron) pergunta "Você já pagou X (R$Y)?" e salva
+//      pending_action=recurring_confirm na sessão WhatsApp.
+//   2. User responde "sim" / "ainda não" / "pula" / etc.
+//   3. Este handler parseia a resposta e toma ação:
+//      • sim   → cria transaction + avança ciclo + budget check + responde OK
+//      • não   → mantém awaiting (cron re-pergunta em 2 dias)
+//      • pula  → avança ciclo SEM criar + responde OK
+//   4. Se não entender, repete as opções e mantém pending.
+
+/** Calcula próxima data de uma recurring. Cópia local do process-recurring
+ *  pra evitar import circular. Mantém comportamento idêntico. */
+function recCalcNextDate(currentDate: string, frequency: string, dayOfMonth: number | null = null): string {
+  const d = new Date(currentDate + "T12:00:00");
+  switch (frequency) {
+    case "daily":   d.setDate(d.getDate() + 1); break;
+    case "weekly":  d.setDate(d.getDate() + 7); break;
+    case "monthly": {
+      const target = dayOfMonth ?? d.getDate();
+      d.setDate(1);
+      d.setMonth(d.getMonth() + 1);
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(target, lastDay));
+      break;
+    }
+    case "yearly":  d.setFullYear(d.getFullYear() + 1); break;
+  }
+  return d.toISOString().split("T")[0];
+}
+
+function recFormatDate(dateStr: string): string {
+  return new Date(dateStr + "T12:00:00").toLocaleDateString("pt-BR", {
+    day: "numeric", month: "long",
+  });
+}
+
+async function handleRecurringConfirm(
+  userId: string,
+  phone: string,
+  text: string,
+  recurringId: string,
+  userTz: string,
+  senderPhone: string | null,
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  // Busca a recurring
+  const { data: rec } = await (supabase as any)
+    .from("recurring_transactions")
+    .select("*")
+    .eq("id", recurringId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!rec) {
+    return {
+      response: "Hmm, não encontrei essa cobrança recorrente. Talvez tenha sido apagada? 🤔",
+    };
+  }
+
+  if (rec.pending_status !== "awaiting") {
+    return {
+      response: `✅ A cobrança *${rec.description}* já foi tratada antes. Tá tudo certo!`,
+    };
+  }
+
+  // Parser de resposta — SKIP ANTES de YES (pra "já registrei" não virar "sim")
+  const m = text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+
+  const isSkip = /^(pula|pular|pulando|pode pular|ignora|ignorar|skip|deixa|esquece|esquecer|nao precisa|ja registrei|ja paguei manualmente|registrei manualmente|registrado|nao registra|nao registrar)\b/.test(m);
+  const isYes  = !isSkip && /^(sim|s|ok|okay|claro|paguei|paguei sim|sim paguei|confirma|confirmar|registra|registrar|salva|salvar|pode registrar|pode salvar|pode|yes|yep|isso|exato|com certeza|positivo|afirmativo)\b/.test(m);
+  const isNo   = !isSkip && !isYes && /^(ainda nao|ainda n[aã]o|ainda n|nao paguei|nao recebi|nao ainda|n[aã]o|n|nope|not yet|no)\b/.test(m);
+
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
+
+  if (isYes) {
+    // Cria transação + avança ciclo
+    const { error: txError } = await (supabase.from("transactions").insert({
+      user_id: userId,
+      description: rec.description,
+      amount: rec.amount,
+      type: rec.type,
+      category: rec.category,
+      transaction_date: today,
+      source: "recurring",
+      sent_by_phone: senderPhone,
+      needs_review: false,
+    } as any) as any);
+
+    if (txError) {
+      console.error(`[recurring-confirm] erro criando tx:`, txError);
+      return {
+        response: "⚠️ Tive um problema ao registrar. Tenta de novo?",
+        pendingAction: "recurring_confirm",
+        pendingContext: { recurring_id: recurringId },
+      };
+    }
+
+    // Avança ciclo
+    const next = recCalcNextDate(rec.next_date, rec.frequency, rec.day_of_month);
+    await (supabase as any)
+      .from("recurring_transactions")
+      .update({
+        next_date: next,
+        last_processed: today,
+        pending_status: "idle",
+        pending_first_asked_at: null,
+        pending_last_asked_at: null,
+        pending_ask_count: 0,
+      })
+      .eq("id", rec.id);
+
+    // Sync Google Sheets (fire-and-forget)
+    syncGoogleSheets(userId, {
+      date: today,
+      description: rec.description,
+      amount: Number(rec.amount),
+      type: rec.type,
+      category: rec.category,
+    }).catch(() => {});
+
+    // Budget alert (só pra gastos) — usa interface array do checkBudgetAlerts
+    if (rec.type === "expense") {
+      checkBudgetAlerts(userId, phone, [{
+        amount: Number(rec.amount),
+        type: "expense",
+        category: rec.category,
+      }]).catch((err) => console.error(`[budget-alert] erro:`, err));
+    }
+
+    const emoji = rec.type === "expense" ? "🔴" : "🟢";
+    const typeLabel = rec.type === "expense" ? "Gasto" : "Receita";
+    const amount = Number(rec.amount).toFixed(2).replace(".", ",");
+
+    return {
+      response:
+        `${emoji} *${typeLabel} recorrente registrado!*\n` +
+        `📝 ${rec.description}\n` +
+        `💰 R$ ${amount}\n\n` +
+        `🔁 Próxima: *${recFormatDate(next)}*`,
+    };
+  }
+
+  if (isSkip) {
+    // Avança ciclo SEM criar
+    const next = recCalcNextDate(rec.next_date, rec.frequency, rec.day_of_month);
+    await (supabase as any)
+      .from("recurring_transactions")
+      .update({
+        next_date: next,
+        pending_status: "idle",
+        pending_first_asked_at: null,
+        pending_last_asked_at: null,
+        pending_ask_count: 0,
+        // last_processed NÃO atualizado — só conta processamento real
+      })
+      .eq("id", rec.id);
+
+    const amount = Number(rec.amount).toFixed(2).replace(".", ",");
+    return {
+      response:
+        `👍 Pulei esse ciclo de *${rec.description}* (R$ ${amount}). Não registrei nada.\n\n` +
+        `🔁 Próxima: *${recFormatDate(next)}*`,
+    };
+  }
+
+  if (isNo) {
+    // Mantém pending — cron vai re-perguntar em 2 dias
+    const verb = rec.type === "expense" ? "pagar" : "receber";
+    return {
+      response:
+        `Beleza! Quando ${verb}, é só me responder *sim* aqui. Ou me chamar de novo quando lembrar. 👋\n\n` +
+        `_Te aviso de novo daqui 2 dias se você não me disser nada._`,
+      pendingAction: "recurring_confirm",
+      pendingContext: { recurring_id: recurringId },
+    };
+  }
+
+  // Não entendeu — repete as opções
+  const amount = Number(rec.amount).toFixed(2).replace(".", ",");
+  const verb = rec.type === "expense" ? "pagou" : "recebeu";
+  return {
+    response:
+      `Não entendi 😅 Sobre *${rec.description}* (R$ ${amount}), você já ${verb}?\n\n` +
+      `• *sim* — registro como ${rec.type === "expense" ? "gasto" : "receita"}\n` +
+      `• *ainda não* — silencio por 2 dias\n` +
+      `• *pula* — ignora esse ciclo`,
+    pendingAction: "recurring_confirm",
+    pendingContext: { recurring_id: recurringId },
+  };
+}
+
 async function handleFinanceRecord(
   userId: string,
   phone: string,
@@ -8713,6 +8906,30 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
       pendingAction = undefined;
       pendingContext = undefined;
+
+    } else if (intent === "recurring_confirm" || session?.pending_action === "recurring_confirm") {
+      // User respondendo à pergunta do cron sobre cobrança recorrente.
+      // Pending salvo pelo process-recurring quando perguntou "Você já pagou X?"
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const recurringId = ctx.recurring_id as string | undefined;
+
+      if (!recurringId) {
+        responseText  = "Hmm, não tô achando a recorrência que perguntei antes. Pode me dizer de novo o que você queria fazer? 🤔";
+        pendingAction  = undefined;
+        pendingContext = undefined;
+      } else {
+        const result = await handleRecurringConfirm(
+          profile.id,
+          sendPhone || replyTo,
+          text,
+          recurringId,
+          userTz,
+          partnerInfo?.partner_phone ?? null,
+        );
+        responseText   = result.response;
+        pendingAction  = result.pendingAction;
+        pendingContext = result.pendingContext;
+      }
 
     } else if (intent === "contact_save") {
       // Salvar contato digitado: "salva o contato João 11999999999"

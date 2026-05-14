@@ -60,6 +60,7 @@ export type Intent =
   | "list_complete_item"
   | "list_remove_item"
   | "list_delete"
+  | "recurring_confirm"
   | "ai_chat";
 
 export function classifyIntent(msg: string): Intent {
