@@ -444,7 +444,7 @@ const AI_KNOWN_INTENTS: ReadonlyArray<Intent> = [
   "agenda_create", "agenda_query", "agenda_lookup", "agenda_edit", "agenda_delete",
   "reminder_set", "reminder_list", "reminder_cancel", "reminder_edit", "reminder_snooze",
   "notes_save", "notes_list", "notes_delete",
-  "habit_create", "habit_checkin",
+  "habit_create", "habit_edit", "habit_delete", "habit_list", "habit_checkin",
   "contact_save", "send_to_contact", "order_on_behalf", "schedule_meeting",
   "list_create", "list_show", "list_show_all", "list_add_items",
   "budget_query", "budget_set",
@@ -535,7 +535,10 @@ NOTAS / ANOTAÇÕES (informação livre sem horário):
 
 HÁBITOS (rotinas recorrentes):
 - habit_create: criar hábito ("hábito de academia 6h", "rotina de meditar", "treino segunda quarta sexta")
-- habit_checkin: confirmar hábito ("fiz", "feito", "pronto", "completei", "✅")
+- habit_edit: editar hábito existente ("muda o horario do habito meditar pra 9h", "altera academia pra 7h", "muda meditar pra de manhã")
+- habit_delete: apagar/cancelar hábito ("apaga o habito meditar", "remove rotina academia", "para o habito X")
+- habit_list: listar hábitos ("meus hábitos", "quais hábitos tenho")
+- habit_checkin: confirmar hábito feito ("fiz", "feito", "pronto", "completei", "✅")
 
 CONTATOS:
 - contact_save: salvar contato ("salva contato Maria 11999", "guarda número da Cibele")

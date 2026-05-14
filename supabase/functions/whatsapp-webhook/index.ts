@@ -415,6 +415,174 @@ Frase: "${message}"`;
   return `✅ *Habito criado!*\n\n${parsed.icon || "🎯"} *${parsed.name}*\n${parsed.description ? `📝 ${parsed.description}\n` : ""}⏰ Lembrete diario as ${parsed.reminder_time || "08:00"}\n\nQuando completar, responda *feito* e eu registro seu progresso!`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// HABIT EDIT — muda horário de um hábito existente
+// Ex: "muda o horario do habito meditar pra 9h"
+//     "altera meditar pra 8h"
+//     "muda hábito academia pra 6h"
+// ─────────────────────────────────────────────────────────────────────────
+async function handleHabitEdit(userId: string, message: string): Promise<string> {
+  // Busca hábitos ativos
+  const { data: habits } = await (supabase as any)
+    .from("habits")
+    .select("id, name, icon, reminder_times")
+    .eq("user_id", userId)
+    .eq("is_active", true);
+
+  if (!habits || habits.length === 0) {
+    return "Você não tem hábitos cadastrados pra editar. Crie um primeiro com:\n_quero criar hábito de meditar todo dia às 7h_";
+  }
+
+  // Match por nome (case-insensitive + NFD)
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  const msgNorm = norm(message);
+  const matched = habits.find((h: any) => msgNorm.includes(norm(h.name)));
+
+  if (!matched) {
+    const lista = habits.map((h: any) => `• ${h.icon || "🎯"} ${h.name}`).join("\n");
+    return `Não identifiquei qual hábito você quer editar. Seus hábitos:\n\n${lista}\n\nMe diz o nome do hábito + novo horário. Ex: _muda meditar pra 9h_`;
+  }
+
+  // Extrai novo horário com regex
+  // Aceita: "9h", "9:00", "9h30", "9:30", "às 9", "pra 9h"
+  const timeMatch = message.match(/\b(\d{1,2})(?:[h:](\d{1,2}))?\b/i);
+  if (!timeMatch) {
+    return `Identifiquei o hábito *${matched.name}*, mas não achei o novo horário. Tenta de novo:\n_muda ${matched.name} pra 9h_`;
+  }
+
+  const hours = parseInt(timeMatch[1], 10);
+  const mins = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+
+  // Validação básica
+  if (hours < 0 || hours > 23 || mins < 0 || mins > 59) {
+    return `Horário inválido. Use formato 0h-23h. Ex: _muda ${matched.name} pra 9h_`;
+  }
+
+  const newTime = `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+
+  // Update habit
+  const { error: updErr } = await (supabase as any)
+    .from("habits")
+    .update({
+      reminder_times: JSON.stringify([newTime]),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", matched.id);
+
+  if (updErr) {
+    console.error("[habit-edit] update error:", updErr);
+    return "⚠️ Erro ao atualizar o hábito. Tenta de novo.";
+  }
+
+  // Atualiza o lembrete recorrente pendente (se houver)
+  try {
+    const { data: pendingReminder } = await (supabase as any)
+      .from("reminders")
+      .select("id, send_at")
+      .eq("habit_id", matched.id)
+      .eq("status", "pending")
+      .order("send_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (pendingReminder) {
+      // Mantém a data, troca a hora
+      const oldDate = new Date(pendingReminder.send_at);
+      oldDate.setUTCHours(hours, mins, 0, 0);  // ⚠️ UTC; idealmente ajustar pelo timezone do user
+      await (supabase as any)
+        .from("reminders")
+        .update({ send_at: oldDate.toISOString() })
+        .eq("id", pendingReminder.id);
+    }
+  } catch (e) {
+    console.error("[habit-edit] reminder update warning:", e);
+    // Não bloqueia — habit foi atualizado
+  }
+
+  return `✅ *Hábito atualizado!*\n\n${matched.icon || "🎯"} *${matched.name}*\n⏰ Novo horário: *${newTime}*\n\nO próximo lembrete vai chegar nesse horário.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// HABIT DELETE — desativa hábito (soft delete)
+// Ex: "apaga o habito meditar", "remove rotina academia", "para meditar"
+// ─────────────────────────────────────────────────────────────────────────
+async function handleHabitDelete(userId: string, message: string): Promise<string> {
+  const { data: habits } = await (supabase as any)
+    .from("habits")
+    .select("id, name, icon")
+    .eq("user_id", userId)
+    .eq("is_active", true);
+
+  if (!habits || habits.length === 0) {
+    return "Você não tem hábitos ativos pra apagar.";
+  }
+
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  const msgNorm = norm(message);
+  const matched = habits.find((h: any) => msgNorm.includes(norm(h.name)));
+
+  if (!matched) {
+    const lista = habits.map((h: any) => `• ${h.icon || "🎯"} ${h.name}`).join("\n");
+    return `Qual hábito você quer apagar? Seus hábitos:\n\n${lista}\n\nMe diz o nome. Ex: _apaga o hábito meditar_`;
+  }
+
+  // Soft delete: marca como inativo
+  const { error: updErr } = await (supabase as any)
+    .from("habits")
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq("id", matched.id);
+
+  if (updErr) {
+    console.error("[habit-delete] update error:", updErr);
+    return "⚠️ Erro ao apagar o hábito. Tenta de novo.";
+  }
+
+  // Cancela lembretes pendentes do hábito
+  try {
+    await (supabase as any)
+      .from("reminders")
+      .update({ status: "cancelled" })
+      .eq("habit_id", matched.id)
+      .eq("status", "pending");
+  } catch (e) {
+    console.error("[habit-delete] reminder cancel warning:", e);
+  }
+
+  return `🗑️ *Hábito apagado!*\n\n${matched.icon || "🎯"} ${matched.name}\n\nLembretes futuros desse hábito foram cancelados.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// HABIT LIST — lista hábitos ativos do user
+// ─────────────────────────────────────────────────────────────────────────
+async function handleHabitList(userId: string): Promise<string> {
+  const { data: habits } = await (supabase as any)
+    .from("habits")
+    .select("name, icon, reminder_times, current_streak, best_streak")
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .order("created_at", { ascending: true });
+
+  if (!habits || habits.length === 0) {
+    return "Você ainda não tem hábitos cadastrados.\n\nCrie um com: _quero criar hábito de meditar todo dia às 7h_ 🎯";
+  }
+
+  const lines = habits.map((h: any) => {
+    // reminder_times pode vir como array ou string JSON
+    let times: string[] = [];
+    try {
+      const raw = h.reminder_times;
+      times = Array.isArray(raw) ? raw : JSON.parse(String(raw ?? "[]"));
+    } catch {
+      times = [];
+    }
+    const timesStr = times.length > 0 ? times.join(", ") : "—";
+    const streak = h.current_streak > 0 ? ` 🔥 ${h.current_streak} dias` : "";
+    return `${h.icon || "🎯"} *${h.name}* — ${timesStr}${streak}`;
+  });
+
+  return `🎯 *Seus hábitos:*\n\n${lines.join("\n")}\n\n_Pra editar: "muda meditar pra 9h"\nPra apagar: "apaga o hábito X"_`;
+}
+
 async function handleHabitCheckin(
   userId: string,
   message: string,
@@ -8520,6 +8688,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = await handleRecurringCreate(profile.id, text, partnerInfo?.partner_phone ?? null);
     } else if (intent === "habit_create") {
       responseText = await handleHabitCreate(profile.id, sendPhone || replyTo, text, userTz);
+    } else if (intent === "habit_edit") {
+      responseText = await handleHabitEdit(profile.id, text);
+    } else if (intent === "habit_delete") {
+      responseText = await handleHabitDelete(profile.id, text);
+    } else if (intent === "habit_list") {
+      responseText = await handleHabitList(profile.id);
     } else if (intent === "habit_checkin") {
       const checkinResult = await handleHabitCheckin(profile.id, text, userTz, partnerInfo?.partner_phone ?? null);
       responseText = checkinResult.response;

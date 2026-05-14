@@ -17,6 +17,9 @@ export type Intent =
   | "budget_query"
   | "recurring_create"
   | "habit_create"
+  | "habit_edit"
+  | "habit_delete"
+  | "habit_list"
   | "habit_checkin"
   | "habit_checkin_choose"
   | "notes_list"
@@ -195,6 +198,35 @@ export function classifyIntent(msg: string): Intent {
     /orcamento.{0,15}(de |pra |para ).{0,20}\d/.test(m)
   )
     return "budget_set";
+
+  // Editar habito — ANTES de habit_create e agenda_edit pra prevalecer
+  // Ex: "muda o horario do habito meditar pra 9h", "altera meditar 8h",
+  //     "muda meditar pra 7h", "muda hábito de academia pra 6h"
+  // Bug fix 2026-05-14: antes, "muda horario do habito meditar pra 9h" caia
+  // em agenda_edit (regex pegava "muda horario") e tentava buscar evento "bit"
+  // (extracao ruim do nome).
+  if (
+    /\b(muda|mudar|altera|alterar|atualiza|atualizar|edita|editar|troca|trocar)\b.{0,30}\b(habito|rotina)\b/.test(m) ||
+    /\b(muda|mudar|altera|alterar|atualiza|atualizar|edita|editar|troca|trocar)\b.{0,15}\b(horario|hora|dia|dias|frequencia)\b.{0,30}\b(habito|rotina)\b/.test(m) ||
+    /\b(habito|rotina)\b.{0,40}\b(muda|altera|atualiza|edita|troca)\b/.test(m)
+  )
+    return "habit_edit";
+
+  // Deletar/cancelar habito — ANTES de habit_create pra prevalecer
+  // Ex: "apaga o habito meditar", "remove rotina academia", "deleta habito"
+  if (
+    /\b(apaga|apagar|deleta|deletar|remove|remover|exclui|excluir|cancela|cancelar|para|parar|desativa|desativar|pausa|pausar)\b.{0,30}\b(habito|rotina)\b/.test(m) ||
+    /\b(habito|rotina)\b.{0,30}\b(apaga|deleta|remove|exclui|cancela|desativa|pausa)\b/.test(m)
+  )
+    return "habit_delete";
+
+  // Listar habitos — ANTES de habit_create pra prevalecer
+  // Ex: "meus habitos", "quais habitos tenho", "lista habitos", "minhas rotinas"
+  if (
+    /\b(meus|minhas|quais|liste?|lista(r)?|mostra(r)?|ver|veja|mostre)\b.{0,15}\b(habitos|rotinas|costumes)\b/.test(m) ||
+    /^(habitos|rotinas|meus habitos|minhas rotinas)\s*\??$/.test(m)
+  )
+    return "habit_list";
 
   // Criar habito
   if (
