@@ -64,3 +64,15 @@ jobs:
         run: supabase functions deploy daily-briefing --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      # oauth-callback recebe redirect do Google/Notion sem auth Supabase → no-verify-jwt
+      - name: Deploy oauth-callback
+        run: supabase functions deploy oauth-callback --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      # oauth-init é chamado pelo frontend pra montar URL de autorização
+      - name: Deploy oauth-init
+        run: supabase functions deploy oauth-init --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
