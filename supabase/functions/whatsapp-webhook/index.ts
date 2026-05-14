@@ -7,7 +7,6 @@ import {
   chat,
   extractTransactions,
   extractTransactionsWithPass2,
-  classifyIntentHybrid,
   extractEvent,
   parseAgendaQuery,
   extractAgendaEdit,
@@ -4014,8 +4013,10 @@ serve(async (req) => {
   // ─── Modo Sombra: texto encaminhado ──────────────────────────────────────
   if (isForwarded && text.trim()) {
     // Se usuario encaminhou + digitou algo que classifyIntent reconhece → usa fluxo normal
-    const forwardedClassification = await classifyIntentHybrid(text.trim());
-    const forwardedIntent = forwardedClassification.intent;
+    // ROLLBACK 2026-05-08: voltou pra classifyIntent sync direto após bug onde
+    // mensagens em sequencia rapida (resposta a waiting_reminder_answer) ficavam
+    // sem resposta. classifyIntentHybrid mantida em _shared/openai.ts pra uso futuro.
+    const forwardedIntent = classifyIntent(text.trim());
     if (forwardedIntent !== "ai_chat" && forwardedIntent !== "greeting") {
       // Usuario deu comando explicito junto com o encaminhamento → fluxo normal
       const debugResult = await processMessage(replyTo, text.trim(), lid, messageId, pushName);
@@ -8084,8 +8085,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         // Verifica se a mensagem deve ser repassada à pizzaria ou se é outro fluxo:
         // 1. Novo comando (pedido, lembrete, agenda) → deixa passar pro classify
         // 2. Tem pending_action na sessão (order_confirm, etc) → a msg é pro fluxo pendente, não relay
-        const relayClassification = await classifyIntentHybrid(text);
-        const relayIntent = relayClassification.intent;
+        // ROLLBACK 2026-05-08: classifyIntent sync (ver comentario em outro local).
+        const relayIntent = classifyIntent(text);
         const isNewCommand = relayIntent !== "ai_chat" && relayIntent !== "greeting";
         const hasPendingFlow = !!session?.pending_action;
         if (isNewCommand || hasPendingFlow) {
@@ -8152,9 +8153,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
-    // 5. Classifica intenção (regex + IA fallback se ai_intent_classifier_enabled=true)
-    const classification = await classifyIntentHybrid(text);
-    let intent: Intent = classification.intent;
+    // 5. Classifica intenção (regex puro — comportamento original do projeto)
+    // ROLLBACK 2026-05-08: voltou pra classifyIntent sync apos bug com classifier hibrido.
+    // A camada hibrida (classifyIntentHybrid em _shared/openai.ts) permanece disponivel
+    // mas nao e mais chamada por padrao. Pra re-ativar com seguranca depois, precisamos
+    // investigar o comportamento sob carga concurrent + cold start de edge function.
+    let intent: Intent = classifyIntent(text);
     currentIntent = intent;
 
     // Se há ação pendente e a mensagem parece ser uma resposta, mantém o contexto
