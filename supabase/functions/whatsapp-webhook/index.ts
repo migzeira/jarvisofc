@@ -8252,10 +8252,64 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       return log;
     }
 
+    // 2a. Trial gratuito de 3 dias — verifica se ainda tá dentro do prazo
+    if (profile.account_status === "trial") {
+      // Buscar trial_ends_at do profile (fields completos)
+      const { data: trialData } = await supabase
+        .from("profiles")
+        .select("trial_ends_at, trial_started_at")
+        .eq("id", profile.id)
+        .maybeSingle();
+
+      const trialEndsAt = (trialData as any)?.trial_ends_at as string | null;
+      if (trialEndsAt) {
+        const trialEndsDate = new Date(trialEndsAt);
+        const now = new Date();
+
+        if (trialEndsDate <= now) {
+          // Trial expirou — volta pra pending automaticamente
+          await supabase
+            .from("profiles")
+            .update({ account_status: "pending" })
+            .eq("id", profile.id);
+
+          await sendText(
+            sendPhone || replyTo,
+            "⏰ *Seu período de teste gratuito expirou!*\n\n" +
+            "Foram 3 dias completos pra você experimentar tudo que o Jarvis pode fazer 🎯\n\n" +
+            "Pra continuar usando, escolha um plano:\n\n" +
+            "💎 *Mensal* — pague mês a mês\n" +
+            "💰 *Anual* — economia maior\n\n" +
+            "👉 Acesse: *heyjarvis.com.br/dashboard/meu-plano*\n\n" +
+            "Qualquer dúvida, tô aqui!"
+          );
+          log.push("trial_expired");
+          return log;
+        }
+
+        // Trial ainda ativo — calcula dias restantes
+        const daysRemaining = Math.max(0, Math.ceil((trialEndsDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)));
+
+        // Avisos sutis baseados em dias restantes (apenas em ai_chat / greeting, evita poluir fluxos)
+        // ⚠️ Lembrete só uma vez por dia pra não encher o saco. Usa app_settings_user pra rastrear,
+        // mas como não temos essa tabela ainda, o aviso é só no checagem inicial.
+
+        // Flag interna pra handlers customizarem mensagem se precisarem
+        // (não bloqueia uso, só informa)
+        log.push(`trial_active:days_remaining=${daysRemaining}`);
+        // Continua o fluxo normal — trial libera tudo
+      }
+    }
+
     if (profile.account_status === "pending") {
       await sendText(
         sendPhone || replyTo,
-        "⏳ *Sua conta ainda não tem plano ativo*\n\nPara usar o Jarvis, assine um plano no app:\n👉 *heyjarvis.com.br*\n\nSe já assinou ou um administrador liberou seu acesso, o Jarvis vai começar a responder em instantes."
+        "⏳ *Sua conta ainda não tem plano ativo*\n\n" +
+        "Pra usar o Jarvis, escolha um dos planos:\n\n" +
+        "💎 *Mensal* — pague mês a mês\n" +
+        "💰 *Anual* — economia maior\n\n" +
+        "👉 Assine em: *heyjarvis.com.br/dashboard/meu-plano*\n\n" +
+        "Se já assinou ou foi liberado por admin, o Jarvis responde em instantes."
       );
       log.push("account_pending");
       return log;
