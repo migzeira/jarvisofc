@@ -220,7 +220,12 @@ async function notifyUser(userId: string, message: string): Promise<void> {
 // Handlers de negócio
 // ─────────────────────────────────────────────────────────
 
-/** Ativa conta: compra aprovada / renovação */
+/** Ativa conta: compra aprovada / renovação.
+ *  Cobre 3 cenários:
+ *   1. User comprou direto sem passar por trial → ativa normal
+ *   2. User estava em trial e comprou antes de expirar → ativa + limpa trial_*
+ *   3. User trial expirou (account_status='pending'), depois comprou → reativa
+ *  Em TODOS os casos: account_status='active' + agent_configs.is_active=true. */
 async function handleActivate(
   userId: string,
   plan: string,
@@ -235,13 +240,17 @@ async function handleActivate(
     subscription_cancelled_at: null, // ativa = limpa qualquer cancelamento anterior
     renewal_reminder_sent_at: null,  // permite novo ciclo de lembretes
     suspension_notice_sent_at: null,
+    // Limpa campos de trial — user agora é pagante, não tem mais sentido manter
+    // (defensivo: evita estados zumbis se admin manualmente voltar status pra 'trial' depois)
+    trial_started_at: null,
+    trial_ends_at: null,
     ...(subscriptionId && { kirvano_subscription_id: subscriptionId }),
   } as any).eq("id", userId);
 
   // Garante agente ligado
   await supabase.from("agent_configs").update({ is_active: true }).eq("user_id", userId);
 
-  console.log(`[kirvano] ✅ Activated user ${userId} plan=${plan}`);
+  console.log(`[kirvano] ✅ Activated user ${userId} plan=${plan} (trial cleared if existed)`);
 }
 
 /** Cancela assinatura: mantém acesso até fim do ciclo */
