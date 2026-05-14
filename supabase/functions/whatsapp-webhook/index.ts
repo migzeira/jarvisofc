@@ -7,6 +7,7 @@ import {
   chat,
   extractTransactions,
   extractTransactionsWithPass2,
+  classifyIntentHybrid,
   extractEvent,
   parseAgendaQuery,
   extractAgendaEdit,
@@ -4206,11 +4207,12 @@ serve(async (req) => {
 
   // ─── Modo Sombra: texto encaminhado ──────────────────────────────────────
   if (isForwarded && text.trim()) {
-    // Se usuario encaminhou + digitou algo que classifyIntent reconhece → usa fluxo normal
-    // ROLLBACK 2026-05-08: voltou pra classifyIntent sync direto após bug onde
-    // mensagens em sequencia rapida (resposta a waiting_reminder_answer) ficavam
-    // sem resposta. classifyIntentHybrid mantida em _shared/openai.ts pra uso futuro.
-    const forwardedIntent = classifyIntent(text.trim());
+    // 2026-05-14: religado classifyIntentHybrid com defesa em profundidade.
+    // Fast path (msgs curtas, listas, snooze, recurring_confirm) tem ZERO I/O,
+    // então fast/safe path ainda é regex puro. Mensagens longas/ambiguas
+    // passam pela IA com timeout duro de 3s e cache LRU de 5min.
+    const forwardedClassification = await classifyIntentHybrid(text.trim());
+    const forwardedIntent = forwardedClassification.intent;
     if (forwardedIntent !== "ai_chat" && forwardedIntent !== "greeting") {
       // Usuario deu comando explicito junto com o encaminhamento → fluxo normal
       const debugResult = await processMessage(replyTo, text.trim(), lid, messageId, pushName);
@@ -8279,8 +8281,9 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         // Verifica se a mensagem deve ser repassada à pizzaria ou se é outro fluxo:
         // 1. Novo comando (pedido, lembrete, agenda) → deixa passar pro classify
         // 2. Tem pending_action na sessão (order_confirm, etc) → a msg é pro fluxo pendente, não relay
-        // ROLLBACK 2026-05-08: classifyIntent sync (ver comentario em outro local).
-        const relayIntent = classifyIntent(text);
+        // 2026-05-14: classifyIntentHybrid com fast path e timeout duro 3s.
+        const relayClassification = await classifyIntentHybrid(text);
+        const relayIntent = relayClassification.intent;
         const isNewCommand = relayIntent !== "ai_chat" && relayIntent !== "greeting";
         const hasPendingFlow = !!session?.pending_action;
         if (isNewCommand || hasPendingFlow) {
@@ -8347,12 +8350,23 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
-    // 5. Classifica intenção (regex puro — comportamento original do projeto)
-    // ROLLBACK 2026-05-08: voltou pra classifyIntent sync apos bug com classifier hibrido.
-    // A camada hibrida (classifyIntentHybrid em _shared/openai.ts) permanece disponivel
-    // mas nao e mais chamada por padrao. Pra re-ativar com seguranca depois, precisamos
-    // investigar o comportamento sob carga concurrent + cold start de edge function.
-    let intent: Intent = classifyIntent(text);
+    // 5. Classifica intenção — regex (rápido/grátis) + IA (preciso/contextual)
+    //
+    // 2026-05-14: religado classifyIntentHybrid com DEFESA EM PROFUNDIDADE
+    // (fast path SEM I/O, timeout duro 3s, cache LRU 5min, threshold de
+    // confidence 0.6, try/catch externo). Defaults garantem que mesmo se a IA
+    // falhar/timeout, sistema continua respondendo via fallback regex.
+    //
+    // Comportamento:
+    //   • Flag ai_intent_classifier_enabled = false (default) → regex puro
+    //   • Flag = true + msg curta/lista/snooze → fast path (regex, zero I/O)
+    //   • Flag = true + msg ambígua → IA com timeout 3s (fallback regex se falhar)
+    //
+    // Bug fix anterior (2026-05-08): mensagens curtas em sequência rápida
+    // travavam por I/O concorrente em getAIConfig(). Resolvido: fast path
+    // agora vem ANTES de qualquer await.
+    const classification = await classifyIntentHybrid(text);
+    let intent: Intent = classification.intent;
     currentIntent = intent;
 
     // Se há ação pendente e a mensagem parece ser uma resposta, mantém o contexto
