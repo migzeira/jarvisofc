@@ -421,12 +421,20 @@ async function chatPass2(
 // HYBRID INTENT CLASSIFIER — regex (rápido/grátis) + IA (preciso/contextual)
 // Resolve falsos positivos de regex em mensagens longas/ambíguas.
 // Gated por ai_intent_classifier_enabled no painel admin.
+//
+// DEFESA EM PROFUNDIDADE (2026-05-14):
+//   1. Fast path SEM I/O pra mensagens triviais (zero overhead)
+//   2. Cache LRU em memória (5 min TTL) — mesma msg não chama IA 2x
+//   3. Timeout duro de 3s no AbortController específico do classifier
+//   4. Threshold de confidence (< 0.6 = ignora IA, usa regex)
+//   5. Try/catch externo + interno — se algo der ruim, SEMPRE retorna intent válido
+//   6. Lista de intents válidos com fallback se IA retornar lixo
 // ─────────────────────────────────────────────────────────────────────────
 
 export interface IntentClassification {
   intent: Intent;
   confidence: number;
-  source: "regex" | "regex_fast_path" | "ai" | "ai_failed";
+  source: "regex" | "regex_fast_path" | "ai" | "ai_failed" | "ai_low_confidence" | "cache";
 }
 
 /** Subset de intents que a IA conhece — alinhado com o tipo Intent.
@@ -440,54 +448,123 @@ const AI_KNOWN_INTENTS: ReadonlyArray<Intent> = [
   "contact_save", "send_to_contact", "order_on_behalf", "schedule_meeting",
   "list_create", "list_show", "list_show_all", "list_add_items",
   "budget_query", "budget_set",
+  "recurring_confirm",
   "ai_chat",
 ];
 
+// ─────────────────────────────────────────────────────────────────────────
+// CACHE LRU em memória pra classificações de intent
+// Edge function tem cold start — cache local ajuda quando user manda várias
+// mensagens em sequência dentro da mesma instância warm.
+// ─────────────────────────────────────────────────────────────────────────
+const _intentCache = new Map<string, { value: IntentClassification; expiry: number }>();
+const INTENT_CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutos
+const INTENT_CACHE_MAX_SIZE = 500;          // limite pra não explodir memória
+
+function _normalizeForCache(text: string): string {
+  return text.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").slice(0, 200);
+}
+
+function _getCachedIntent(text: string): IntentClassification | null {
+  const key = _normalizeForCache(text);
+  const entry = _intentCache.get(key);
+  if (!entry) return null;
+  if (Date.now() >= entry.expiry) {
+    _intentCache.delete(key);
+    return null;
+  }
+  // LRU: re-insere pra ir pro fim (Map mantém ordem de inserção)
+  _intentCache.delete(key);
+  _intentCache.set(key, entry);
+  return { ...entry.value, source: "cache" as const };
+}
+
+function _setCachedIntent(text: string, value: IntentClassification): void {
+  // Não cacheia ai_failed (queremos retry da próxima vez)
+  if (value.source === "ai_failed") return;
+  const key = _normalizeForCache(text);
+  // Limita tamanho — remove o mais antigo se passar do limite
+  if (_intentCache.size >= INTENT_CACHE_MAX_SIZE) {
+    const firstKey = _intentCache.keys().next().value;
+    if (firstKey) _intentCache.delete(firstKey);
+  }
+  _intentCache.set(key, { value, expiry: Date.now() + INTENT_CACHE_TTL_MS });
+}
+
+const INTENT_AI_TIMEOUT_MS = 3000;       // timeout duro pra IA na classificação
+const INTENT_MIN_CONFIDENCE = 0.6;       // abaixo disso, usa regex (IA não tem certeza)
+
 /** Chama IA pra classificar intent quando regex tá ambíguo.
- *  Retorna intent + confidence. Se IA retornar lixo, throw → caller usa regex. */
+ *  Retorna intent + confidence. Se IA retornar lixo, throw → caller usa regex.
+ *  Tem timeout duro de INTENT_AI_TIMEOUT_MS (3s) via Promise.race. */
 async function classifyIntentWithAI(text: string, regexHint: Intent): Promise<{ intent: Intent; confidence: number }> {
   const system = `Você é um classificador de intent pra mensagens em português brasileiro chegando num assistente pessoal AI chamado Jarvis. Classifique a mensagem em UMA categoria e retorne APENAS JSON válido, sem markdown.`;
 
   const prompt = `Mensagem do usuário: "${text}"
 
-Hint do regex local: "${regexHint}" (pode estar errado, especialmente em frases longas com palavras que aparecem dentro de outras — tipo "reuniao QUE TENHO HOJE" disparar "agenda_query" por substring quando na verdade era "reminder_set").
+Hint do regex local: "${regexHint}" (pode estar errado, especialmente em frases longas com palavras que aparecem dentro de outras, mensagens com erros de digitação ou variações regionais).
 
 CATEGORIAS POSSÍVEIS:
-- finance_record: registrar gasto/recebimento ("gastei 50 no almoço", "transferi 200 pro João", "salário 5000")
-- finance_report: consultar gastos/saldo ("quanto gastei?", "meu saldo", "extrato")
-- finance_delete: apagar transação ("apaga o último gasto")
-- agenda_create: criar evento/compromisso ("reunião com João amanhã 14h", "marca consulta sexta")
-- agenda_query: consultar agenda ("o que tenho hoje?", "quais compromissos?")
-- agenda_lookup: buscar evento específico ("qual minha reunião com João?")
-- agenda_edit: editar evento ("muda a reunião pra 15h", "remarca")
-- agenda_delete: cancelar evento ("cancela a reunião de amanhã")
-- reminder_set: criar lembrete com horário ("me lembra de pagar conta às 14h", "me lembre da reunião que tenho hoje", "me avisa amanhã")
-- reminder_list: listar lembretes ("meus lembretes")
+
+FINANÇAS:
+- finance_record: registrar gasto/recebimento ("gastei 50 no almoço", "transferi 200 pro João", "salário 5000", "pix 30 pra Cibele", "saiu 850 da conta", "caiu 5000 hoje")
+- finance_report: consultar gastos/saldo ("quanto gastei?", "meu saldo", "extrato", "quantos reais sobraram")
+- finance_delete: apagar transação ("apaga o último gasto", "remove aquela despesa")
+- budget_query: consultar orçamento ("meus orçamentos", "tenho limite ainda?")
+- budget_set: definir orçamento ("orçamento 500 pra alimentação")
+
+AGENDA / EVENTOS:
+- agenda_create: criar evento/compromisso ("reunião com João amanhã 14h", "marca consulta sexta", "tenho dentista quarta")
+- agenda_query: consultar agenda ("o que tenho hoje?", "quais compromissos?", "minha agenda dessa semana")
+- agenda_lookup: buscar evento específico ("qual minha reunião com João?", "quando é minha consulta?")
+- agenda_edit: editar evento ("muda a reunião pra 15h", "remarca o jantar", "mudei de dia")
+- agenda_delete: cancelar evento ("cancela a reunião de amanhã", "desmarca a consulta")
+- schedule_meeting: marcar reunião com Google Meet + contato salvo ("marca call com Cibele amanhã 10h")
+
+LEMBRETES (com horário/disparo):
+- reminder_set: criar lembrete com horário ("me lembra de pagar conta às 14h", "me lembre da reunião hoje", "me avisa daqui 30min")
+- reminder_list: listar lembretes ("meus lembretes", "tenho algum lembrete?")
 - reminder_cancel: cancelar lembrete ("cancela o lembrete de pagar")
 - reminder_edit: editar lembrete ("muda o lembrete pra 15h")
-- reminder_snooze: adiar lembrete ("me lembra daqui 30 min de novo")
-- notes_save: salvar anotação livre ("anota que preciso comprar pão")
-- notes_list: listar anotações ("minhas anotações")
-- notes_delete: apagar anotação ("apaga a última anotação")
-- habit_create: criar hábito ("hábito de academia 6h")
-- habit_checkin: confirmar hábito ("fiz", "feito")
-- contact_save: salvar contato ("salva contato Maria 11999")
-- send_to_contact: enviar mensagem pra contato ("manda mensagem pro João dizendo X")
-- order_on_behalf: pedir comida em estabelecimento ("pede uma pizza na Maia")
-- schedule_meeting: marcar reunião com Google Meet ("marca call com Cibele amanhã")
-- list_create: criar lista ("cria lista de compras")
-- list_show: ver itens de uma lista ("minha lista de compras")
-- list_show_all: listar todas as listas ("minhas listas")
-- list_add_items: adicionar item à lista ("adiciona leite na lista")
-- budget_query: consultar orçamento ("meus orçamentos")
-- budget_set: definir orçamento ("orçamento 500 alimentação")
-- ai_chat: conversa geral, dúvida, ou nada acima encaixa
+- reminder_snooze: adiar lembrete que já disparou ("me lembra de novo daqui 30 min")
 
-REGRAS DE DESEMPATE:
-1. Se a mensagem começar com "me lembre"/"me lembra"/"me avisa"/"me notifica" + complemento natural → reminder_set, mesmo que tenha palavras como "reunião", "compromisso", "hoje".
-2. Pergunta direta ("o que tenho hoje?", "quais compromissos?") → agenda_query.
-3. Valor monetário + verbo de transação ("gastei", "paguei", "transferi", "pix") → finance_record.
-4. Foque no SENTIDO, não em palavras isoladas.
+NOTAS / ANOTAÇÕES (informação livre sem horário):
+- notes_save: salvar anotação ("anota que preciso comprar pão", "salva isso aí", "registra essa ideia")
+- notes_list: listar anotações ("minhas anotações", "o que anotei?")
+- notes_delete: apagar anotação ("apaga a última anotação")
+
+HÁBITOS (rotinas recorrentes):
+- habit_create: criar hábito ("hábito de academia 6h", "rotina de meditar", "treino segunda quarta sexta")
+- habit_checkin: confirmar hábito ("fiz", "feito", "pronto", "completei", "✅")
+
+CONTATOS:
+- contact_save: salvar contato ("salva contato Maria 11999", "guarda número da Cibele")
+- send_to_contact: enviar mensagem pra contato salvo ("manda mensagem pro João dizendo X", "fala pra Maria que...")
+- order_on_behalf: pedir comida em estabelecimento ("pede uma pizza na Maia")
+
+LISTAS DE TAREFAS / COMPRAS:
+- list_create: criar lista ("cria lista de compras", "nova lista chamada Mercado")
+- list_show: ver itens de uma lista específica ("minha lista de compras")
+- list_show_all: listar todas as listas ("minhas listas")
+- list_add_items: adicionar item à lista existente ("adiciona leite na lista")
+
+CONFIRMAÇÃO DE COBRANÇA RECORRENTE:
+- recurring_confirm: resposta SIM/NÃO/PULA depois do Jarvis perguntar sobre cobrança recorrente ("você pagou o aluguel?")
+
+CONVERSA / OUTROS:
+- ai_chat: conversa geral, dúvida sobre o Jarvis, saudação longa, ou nada acima encaixa
+
+REGRAS DE DESEMPATE (importantes — siga essas em ordem):
+1. Se a mensagem começa com "me lembre"/"me lembra"/"me avisa"/"me notifica" + complemento natural → reminder_set, mesmo que tenha palavras como "reunião", "compromisso", "hoje".
+2. Pergunta direta sobre o que tem ("o que tenho hoje?", "quais compromissos?") → agenda_query.
+3. Valor monetário (R$, reais, paus, conto) + verbo de transação (gastei, paguei, transferi, pix, salário, recebi, caiu) → finance_record.
+4. "Anota", "registra ideia", "salva isso" SEM horário/data específica → notes_save.
+5. "Anota X às 10h" / "anota reunião amanhã" → tem horário, vai pra agenda_create OU reminder_set (depende se é compromisso ou aviso).
+6. Pra hábito, exige palavra-chave clara: "hábito de", "rotina de", "todo dia X horário", "treino segunda...".
+7. Mensagens curtas e ambíguas ("ok", "sim", "fiz", "pronto") sem contexto → ai_chat ou habit_checkin (ai_chat é mais seguro).
+8. Mensagens com erros de digitação CONTAM como o intent correto: "lembar" = lembrar = reminder_set; "gasrei" = gastei = finance_record.
+9. Foque no SENTIDO, não em palavras isoladas. Se a frase claramente expressa uma intenção, mesmo com typos, classifique.
+10. Se não tem certeza, prefira ai_chat com confidence baixa (< 0.5) ao invés de chutar.
 
 Retorne APENAS este JSON (sem markdown, sem explicação):
 {
@@ -495,12 +572,20 @@ Retorne APENAS este JSON (sem markdown, sem explicação):
   "confidence": 0.95
 }`;
 
-  const result = await chatWithProvider(
+  // Timeout duro de 3s — usa Promise.race contra a chamada da IA
+  // Sem isso, classify pode segurar a edge function por 25s (timeout do chatWithProvider)
+  const aiPromise = chatWithProvider(
     [{ role: "user", content: prompt }],
     system,
     true, // jsonMode
     "classifyIntentHybrid"
   );
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(`classifyIntentWithAI timeout after ${INTENT_AI_TIMEOUT_MS}ms`)), INTENT_AI_TIMEOUT_MS);
+  });
+
+  const result = await Promise.race([aiPromise, timeoutPromise]);
 
   // Parse defensivo
   let parsed: { intent?: string; confidence?: number };
@@ -547,16 +632,17 @@ export async function classifyIntentHybrid(text: string): Promise<IntentClassifi
   const regexIntent = classifyIntent(text);
 
   // ─────────────────────────────────────────────────────────────────────────
-  // FAST PATH — antes de qualquer I/O (zero overhead pra mensagens curtas).
+  // FAST PATH — antes de qualquer I/O (zero overhead pra mensagens triviais).
   //
-  // BUG fix 2026-05-08: a versão original chamava `await getAIConfig()` SEMPRE
-  // (antes do fast path), forçando uma round-trip ao Supabase mesmo pra
-  // mensagens triviais como "2", "sim", "cancela" — respostas a fluxos
-  // pendentes (waiting_reminder_answer, etc). Sob carga (várias mensagens
-  // em sequência rápida), múltiplas invocações da edge function ficavam
-  // travadas em I/O concorrente, causando timeouts e mensagens sem resposta.
-  // Movendo o fast path pra ANTES do await, mensagens curtas têm overhead
-  // ZERO — comportamento idêntico ao classifyIntent síncrono original.
+  // Casos onde regex é altamente confiável e IA seria desperdício de custo:
+  //   - Saudações ("oi", "bom dia")
+  //   - Mensagens muito curtas (≤ 3 palavras) — pending action ou intent óbvio
+  //   - Comandos de lista (list_*) — regex é robusto pra esses
+  //   - Habit checkin / reminder snooze — padrões muito específicos
+  //   - Saudações com até 5 palavras ("bom dia, tudo bem com você?")
+  //
+  // BUG fix 2026-05-08: fast path movido pra ANTES de `await getAIConfig()`
+  // pra evitar I/O concorrente sob carga.
   // ─────────────────────────────────────────────────────────────────────────
   const trimmed = text.trim();
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
@@ -565,43 +651,89 @@ export async function classifyIntentHybrid(text: string): Promise<IntentClassifi
     wordCount <= 3 ||
     regexIntent.startsWith("list_") ||
     regexIntent === "habit_checkin" ||
-    regexIntent === "reminder_snooze";
+    regexIntent === "reminder_snooze" ||
+    regexIntent === "recurring_confirm";  // resposta a pergunta de cobrança = pending
 
   if (isFastPath) {
     return { intent: regexIntent, confidence: 1.0, source: "regex_fast_path" };
   }
 
-  // Daqui em diante: mensagens médias/longas. Aí sim carrega config (com cache 60s).
-  const cfg = await getAIConfig();
+  // ─────────────────────────────────────────────────────────────────────────
+  // CACHE LRU — mensagem repetida não chama IA de novo (5 min TTL)
+  // ─────────────────────────────────────────────────────────────────────────
+  const cached = _getCachedIntent(trimmed);
+  if (cached) return cached;
+
+  // Daqui em diante: mensagens médias/longas SEM cache hit.
+  // Carrega config (com cache 60s no DB query).
+  let cfg: AIConfig;
+  try {
+    cfg = await getAIConfig();
+  } catch (e) {
+    // Se config falhar, fallback pro regex — não bloqueia user
+    console.error(`[intent-classifier] getAIConfig falhou:`, e instanceof Error ? e.message : String(e));
+    return { intent: regexIntent, confidence: 0.7, source: "ai_failed" };
+  }
 
   // Flag desligada → regex puro (mesmo comportamento de antes)
   if (!cfg.intentClassifierEnabled) {
     return { intent: regexIntent, confidence: 1.0, source: "regex" };
   }
 
-  // Caso ambíguo → IA decide
+  // Sem API key configurada → regex (não dá pra chamar IA)
+  const hasAnyProvider = (cfg.provider === "openai" && cfg.openaiKey.length > 0) ||
+                         (cfg.provider === "claude" && Deno.env.get("ANTHROPIC_API_KEY"));
+  if (!hasAnyProvider) {
+    console.warn(`[intent-classifier] Flag ON mas sem provider key — usando regex`);
+    return { intent: regexIntent, confidence: 1.0, source: "regex" };
+  }
+
+  // Caso ambíguo → IA decide com timeout duro
   const start = Date.now();
   try {
     const aiResult = await classifyIntentWithAI(trimmed, regexIntent);
+    const durationMs = Date.now() - start;
+
     logAIUsage({
       provider: cfg.provider,
       functionName: "classifyIntentHybrid",
       model: cfg.provider === "openai"
         ? Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini"
         : Deno.env.get("CLAUDE_MODEL") ?? "claude-haiku-4-5-20251001",
-      durationMs: Date.now() - start,
+      durationMs,
       confidence: aiResult.confidence,
     });
-    return { intent: aiResult.intent, confidence: aiResult.confidence, source: "ai" };
+
+    // ── THRESHOLD: se IA tá insegura, prefere regex (que é determinístico) ──
+    // Evita IA "chutando" com baixa confidence quando regex já decidiu algo.
+    // Especialmente útil quando regex bateu intent específico (não ai_chat).
+    if (aiResult.confidence < INTENT_MIN_CONFIDENCE && regexIntent !== "ai_chat") {
+      const result: IntentClassification = {
+        intent: regexIntent,
+        confidence: aiResult.confidence,
+        source: "ai_low_confidence",
+      };
+      _setCachedIntent(trimmed, result);
+      return result;
+    }
+
+    const result: IntentClassification = {
+      intent: aiResult.intent,
+      confidence: aiResult.confidence,
+      source: "ai",
+    };
+    _setCachedIntent(trimmed, result);
+    return result;
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
-    console.error(`[intent-classifier] IA falhou, fallback regex: ${errMsg}`);
+    console.error(`[intent-classifier] IA falhou (${Date.now() - start}ms), fallback regex: ${errMsg}`);
     logAIUsage({
       provider: cfg.provider,
       functionName: "classifyIntentHybrid",
       errorMessage: errMsg,
       durationMs: Date.now() - start,
     });
+    // NÃO cacheia ai_failed (queremos retry da próxima vez)
     return { intent: regexIntent, confidence: 0.7, source: "ai_failed" };
   }
 }
