@@ -57,6 +57,9 @@ export default function Signup() {
           </div>
           <CardTitle className="text-xl">Criar sua conta</CardTitle>
           <CardDescription>Comece a usar seu assistente de IA no WhatsApp</CardDescription>
+          <div className="mt-3 mx-auto inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+            🎁 3 dias grátis pra testar tudo
+          </div>
         </CardHeader>
         <form onSubmit={handleSignup}>
           <CardContent className="space-y-4">

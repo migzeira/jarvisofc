@@ -1,0 +1,125 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { Sparkles, X, ArrowRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useUserAccessStatus } from "@/hooks/useUserAccessStatus";
+
+const DISMISS_STORAGE_KEY = "heyjarvis_trial_banner_dismissed_at";
+const DISMISS_DURATION_MS = 6 * 60 * 60 * 1000; // 6 horas — depois reaparece
+
+/**
+ * Banner sutil que aparece no topo do dashboard quando user tá em trial.
+ * Mostra dias restantes + CTA pra ver planos.
+ *
+ * Comportamento:
+ *   - Status 'trial' + dias > 0 → mostra banner verde com countdown
+ *   - Status 'expired' ou 'pending' → mostra banner âmbar mais agressivo
+ *   - Status 'active' / 'suspended' / 'loading' → não renderiza nada
+ *   - User pode dispensar (X) — esconde por 6h, depois reaparece
+ *
+ * NÃO bloqueia uso do dashboard. Só informa. Bloqueio é via webhook
+ * (WhatsApp não responde) e via MeuPlano (mostra paywall).
+ */
+export function TrialBanner() {
+  const { status, trialDaysRemaining, needsToPay, loading } = useUserAccessStatus();
+  const [dismissed, setDismissed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const raw = localStorage.getItem(DISMISS_STORAGE_KEY);
+    if (!raw) return false;
+    const ts = parseInt(raw, 10);
+    if (Number.isNaN(ts)) return false;
+    return Date.now() - ts < DISMISS_DURATION_MS;
+  });
+
+  if (loading || dismissed) return null;
+  if (status !== "trial" && status !== "expired" && status !== "pending") return null;
+
+  const handleDismiss = () => {
+    localStorage.setItem(DISMISS_STORAGE_KEY, String(Date.now()));
+    setDismissed(true);
+  };
+
+  // ── Variante TRIAL ATIVO ──
+  if (status === "trial") {
+    const days = trialDaysRemaining ?? 0;
+    const isUrgent = days <= 1;
+
+    return (
+      <div
+        className={
+          isUrgent
+            ? "bg-gradient-to-r from-amber-500/15 via-orange-500/15 to-amber-500/15 border-b border-amber-500/30"
+            : "bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-emerald-500/10 border-b border-emerald-500/20"
+        }
+      >
+        <div className="px-4 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+            <Sparkles className={isUrgent ? "h-4 w-4 text-amber-400 shrink-0" : "h-4 w-4 text-emerald-400 shrink-0"} />
+            <div className="text-sm min-w-0">
+              <span className={isUrgent ? "font-semibold text-amber-200" : "font-semibold text-emerald-200"}>
+                {days > 1
+                  ? `${days} dias grátis restantes`
+                  : days === 1
+                    ? "Último dia do trial!"
+                    : "Trial expira hoje!"}
+              </span>
+              <span className="hidden sm:inline text-muted-foreground ml-2">
+                {isUrgent ? "Garante seu plano antes que expire" : "Aproveite tudo que o Jarvis pode fazer"}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Link to="/dashboard/meu-plano">
+              <Button
+                size="sm"
+                variant="ghost"
+                className={
+                  isUrgent
+                    ? "h-7 text-xs gap-1 text-amber-200 hover:bg-amber-500/15"
+                    : "h-7 text-xs gap-1 text-emerald-200 hover:bg-emerald-500/15"
+                }
+              >
+                Ver planos <ArrowRight className="h-3 w-3" />
+              </Button>
+            </Link>
+            <button
+              onClick={handleDismiss}
+              aria-label="Dispensar aviso"
+              className="text-muted-foreground hover:text-foreground transition-colors p-1"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Variante EXPIRADO / PENDING ──
+  if (needsToPay) {
+    return (
+      <div className="bg-gradient-to-r from-red-500/15 via-rose-500/15 to-red-500/15 border-b border-red-500/30">
+        <div className="px-4 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+            <Sparkles className="h-4 w-4 text-red-400 shrink-0" />
+            <div className="text-sm min-w-0">
+              <span className="font-semibold text-red-200">
+                {status === "expired" ? "Seu período de teste expirou" : "Sem plano ativo"}
+              </span>
+              <span className="hidden sm:inline text-muted-foreground ml-2">
+                Escolha um plano pra continuar usando o Jarvis no WhatsApp
+              </span>
+            </div>
+          </div>
+          <Link to="/dashboard/meu-plano">
+            <Button size="sm" className="h-7 text-xs gap-1">
+              Ver planos <ArrowRight className="h-3 w-3" />
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
