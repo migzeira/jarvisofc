@@ -85,45 +85,35 @@ create extension if not exists pg_net;
 -- 3. Cron job: process-recurring rodando todo dia às 9h Brasília
 -- ──────────────────────────────────────────────────────────────────────────
 -- IMPORTANTE: pg_cron usa horário UTC. Brasília é UTC-3, então 9h BR = 12h UTC.
--- Em DST (raro no Brasil agora) pode variar 1h — aceitável pra essa feature.
 --
--- Idempotente: dropa o job se existir, depois recria.
-
--- Remove versão antiga caso exista (de runs anteriores ou da migration antiga)
-do $$
-begin
-  perform cron.unschedule('process-recurring-daily');
-exception when others then
-  -- Não existia — tudo certo
-  null;
-end $$;
-
--- Também remove versões antigas com outros nomes (defensivo)
-do $$
-begin
-  perform cron.unschedule('process-recurring');
-exception when others then null;
-end $$;
-
--- Cria o job
-select cron.schedule(
-  'process-recurring-daily',
-  '0 12 * * *',  -- 12:00 UTC = 09:00 Brasília
-  $$
-  select net.http_post(
-    url := current_setting('app.supabase_url') || '/functions/v1/process-recurring',
-    headers := jsonb_build_object(
-      'Authorization', 'Bearer ' || current_setting('app.service_role_key'),
-      'Content-Type', 'application/json'
-    ),
-    body := '{}'::jsonb,
-    timeout_milliseconds := 60000
-  );
-  $$
-);
-
--- NOTA: pra cron funcionar, os GUCs `app.supabase_url` e `app.service_role_key`
--- precisam estar configurados no Supabase. Geralmente já estão por default em
--- projetos managed. Se não estiverem, rodar uma vez no SQL Editor:
---   alter database postgres set app.supabase_url = 'https://fnilyapvhhygfzcdxqjm.supabase.co';
---   alter database postgres set app.service_role_key = '<service_role_key>';
+-- ⚠️ MANUAL STEP REQUIRED: o cron precisa de URL+KEY hardcoded no body porque
+-- Supabase Managed NÃO permite `alter database postgres set` (permission denied
+-- 42501 — só superuser pode). Por isso esta parte da migration ESTÁ COMENTADA.
+--
+-- Pra ativar o cron, rodar MANUALMENTE no SQL Editor o template abaixo,
+-- substituindo <SERVICE_ROLE_KEY> pela key real (Settings → API → service_role):
+--
+-- /*
+--   do $$ begin perform cron.unschedule('process-recurring-daily');
+--     exception when others then null; end $$;
+--
+--   select cron.schedule(
+--     'process-recurring-daily',
+--     '0 12 * * *',
+--     $$
+--     select net.http_post(
+--       url := 'https://fnilyapvhhygfzcdxqjm.supabase.co/functions/v1/process-recurring',
+--       headers := jsonb_build_object(
+--         'Authorization', 'Bearer <SERVICE_ROLE_KEY>',
+--         'Content-Type', 'application/json'
+--       ),
+--       body := '{}'::jsonb,
+--       timeout_milliseconds := 60000
+--     );
+--     $$
+--   );
+-- */
+--
+-- Pra confirmar que o cron foi criado:
+--   select jobid, jobname, schedule, active from cron.job
+--    where jobname = 'process-recurring-daily';
