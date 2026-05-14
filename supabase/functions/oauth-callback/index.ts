@@ -14,8 +14,12 @@ const supabase = createClient(
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const CALLBACK_URL = `${SUPABASE_URL}/functions/v1/oauth-callback`;
 
-// URL fixa de redirect — no futuro, para app nativo: heyjarvis://integracoes
-const DASHBOARD_URL = "https://heyjarvis.com.br/dashboard/integracoes";
+// Default de redirect — bug fix 2026-05-14: era 'heyjarvis.com.br' (site WP)
+// mas o app React mora em 'app.heyjarvis.com.br'. Resultado: callback do
+// Google levava o user a uma '404 Página não encontrada' do site WordPress.
+// Agora lê de app_settings.dashboard_url (configurável no painel admin) com
+// fallback pro subdomínio do app. Futuro: pra app nativo usar heyjarvis://integracoes.
+const DEFAULT_DASHBOARD_URL = "https://app.heyjarvis.com.br/dashboard/integracoes";
 
 async function getSetting(key: string): Promise<string> {
   const { data } = await supabase
@@ -26,25 +30,46 @@ async function getSetting(key: string): Promise<string> {
   return data?.value ?? Deno.env.get(key.toUpperCase()) ?? "";
 }
 
+/** Resolve a URL final de redirect pós-OAuth. Aceita:
+ *   - app_settings.dashboard_url contendo URL completa (ex: https://app.x.com)
+ *   - ou caminho parcial (https://app.x.com/dashboard)
+ *   - ou URL inválida → fallback hardcoded
+ * Sempre retorna {origin}/dashboard/integracoes (origin = scheme+host+port). */
+async function getDashboardUrl(): Promise<string> {
+  const customUrl = await getSetting("dashboard_url");
+  if (customUrl) {
+    try {
+      const u = new URL(customUrl);
+      return `${u.origin}/dashboard/integracoes`;
+    } catch {
+      // URL malformada no DB — usa default
+    }
+  }
+  return DEFAULT_DASHBOARD_URL;
+}
+
 serve(async (req) => {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const stateRaw = url.searchParams.get("state");
   const error = url.searchParams.get("error");
 
+  // Resolve dashboard URL UMA vez por callback (cache local em escopo de request).
+  const dashboardUrl = await getDashboardUrl();
+
   if (error) {
-    return Response.redirect(`${DASHBOARD_URL}?error=${error}`);
+    return Response.redirect(`${dashboardUrl}?error=${error}`);
   }
 
   if (!code || !stateRaw) {
-    return Response.redirect(`${DASHBOARD_URL}?error=missing_params`);
+    return Response.redirect(`${dashboardUrl}?error=missing_params`);
   }
 
   let state: { provider: string; userId: string };
   try {
     state = JSON.parse(atob(stateRaw));
   } catch {
-    return Response.redirect(`${DASHBOARD_URL}?error=invalid_state`);
+    return Response.redirect(`${dashboardUrl}?error=invalid_state`);
   }
 
   const { provider, userId } = state;
@@ -133,9 +158,9 @@ serve(async (req) => {
       }, { onConflict: "user_id,provider" });
     }
 
-    return Response.redirect(`${DASHBOARD_URL}?success=${provider}`);
+    return Response.redirect(`${dashboardUrl}?success=${provider}`);
   } catch (err) {
     console.error("oauth-callback error:", err);
-    return Response.redirect(`${DASHBOARD_URL}?error=token_exchange_failed`);
+    return Response.redirect(`${dashboardUrl}?error=token_exchange_failed`);
   }
 });
