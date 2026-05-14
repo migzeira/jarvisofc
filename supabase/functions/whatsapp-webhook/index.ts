@@ -1909,7 +1909,7 @@ async function handleAgendaCreate(
     if (agendaButtonMap[msgLowRem] !== undefined) {
       const mins = agendaButtonMap[msgLowRem];
       const finalDataBtn = { ...partial, reminder_minutes: mins } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalDataBtn, recurrenceFromCtx, language, userNickname, userTz);
+      return await createEventAndConfirm(userId, phone, finalDataBtn, recurrenceFromCtx, language, userNickname, userTz, senderPhone);
     }
 
     // Parser unificado (regex) — captura intenção + tempo na mesma passada
@@ -1930,15 +1930,15 @@ async function handleAgendaCreate(
     // Aplica decisão final
     if (answer.kind === "accept_with_time") {
       const finalData = { ...partial, reminder_minutes: answer.minutes } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz, senderPhone);
     }
     if (answer.kind === "at_time") {
       const finalData = { ...partial, reminder_minutes: 0 } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz, senderPhone);
     }
     if (answer.kind === "decline") {
       const finalData = { ...partial, reminder_minutes: null } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtx, language, userNickname, userTz, senderPhone);
     }
     if (answer.kind === "accept_no_time") {
       // Aceitou mas não disse quanto tempo — pergunta abertamente, sem botão fake
@@ -1972,13 +1972,13 @@ async function handleAgendaCreate(
     if (btnMin !== undefined) {
       const recurrenceFromCtxMin2 = context._recurrence ? { type: context._recurrence as string, weekday: context._recurrence_weekday as number | undefined } : undefined;
       const finalDataBtn2 = { ...partial, reminder_minutes: btnMin } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalDataBtn2, recurrenceFromCtxMin2, language, userNickname, userTz);
+      return await createEventAndConfirm(userId, phone, finalDataBtn2, recurrenceFromCtxMin2, language, userNickname, userTz, senderPhone);
     }
     const minutes = parseMinutes(message);
     if (minutes !== null) {
       const recurrenceFromCtxMin = context._recurrence ? { type: context._recurrence as string, weekday: context._recurrence_weekday as number | undefined } : undefined;
       const finalData = { ...partial, reminder_minutes: minutes } as unknown as ExtractedEvent;
-      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtxMin, language, userNickname, userTz);
+      return await createEventAndConfirm(userId, phone, finalData, recurrenceFromCtxMin, language, userNickname, userTz, senderPhone);
     }
     // Não entendeu — reenvia botões
     sendButtons(
@@ -2036,7 +2036,7 @@ async function handleAgendaCreate(
         pendingContext: { partial: dataWithTitle, step: "conflict_resolution" },
       };
     }
-    return await createEventAndConfirm(userId, phone, dataWithTitle, recurrenceFromCtxTitle, language, userNickname, userTz);
+    return await createEventAndConfirm(userId, phone, dataWithTitle, recurrenceFromCtxTitle, language, userNickname, userTz, senderPhone);
   }
 
   // ─── STEP: conflict_resolution ───
@@ -2068,7 +2068,7 @@ async function handleAgendaCreate(
           pendingContext: { partial: savedPartial, step: "waiting_reminder_answer" },
         };
       }
-      return await createEventAndConfirm(userId, phone, savedPartial, undefined, language, userNickname, userTz);
+      return await createEventAndConfirm(userId, phone, savedPartial, undefined, language, userNickname, userTz, senderPhone);
     }
 
     // Opção 2: Mudar horário
@@ -2123,7 +2123,7 @@ async function handleAgendaCreate(
           pendingContext: { partial: newData, step: "waiting_reminder_answer" },
         };
       }
-      return await createEventAndConfirm(userId, phone, newData, undefined, language, userNickname, userTz);
+      return await createEventAndConfirm(userId, phone, newData, undefined, language, userNickname, userTz, senderPhone);
     }
 
     // Resposta ambígua
@@ -2218,7 +2218,7 @@ async function handleAgendaCreate(
   }
 
   // Tudo preenchido — criar evento
-  return await createEventAndConfirm(userId, phone, extracted, recurrence ?? undefined, language, userNickname, userTz);
+  return await createEventAndConfirm(userId, phone, extracted, recurrence ?? undefined, language, userNickname, userTz, senderPhone);
 }
 
 /** Cria o evento no banco e retorna a confirmação formatada */
@@ -2229,7 +2229,8 @@ async function createEventAndConfirm(
   recurrence?: { type: string; weekday?: number },
   lang = "pt-BR",
   userNickname: string | null = null,
-  userTz = "America/Sao_Paulo"
+  userTz = "America/Sao_Paulo",
+  senderPhone: string | null = null  // Plano casal: phone do partner (null = master). Bug fix 2026-05-08: parametro estava faltando, causava ReferenceError no INSERT.
 ): Promise<{ response: string }> {
   const tzOffset = getTzOffset(userTz);
   const color = EVENT_TYPE_COLORS[extracted.event_type] ?? "#3b82f6";
