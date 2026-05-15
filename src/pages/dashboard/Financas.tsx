@@ -34,7 +34,7 @@ import {
 } from "recharts";
 import {
   format, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay,
-  startOfWeek, endOfWeek, differenceInDays, getDaysInMonth,
+  startOfWeek, endOfWeek, differenceInDays, getDaysInMonth, subDays,
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -138,12 +138,18 @@ function exportCSV(data: any[], filename: string) {
 }
 
 const TOOLTIP_STYLE = {
-  backgroundColor: "hsl(240 12% 7%)",
-  border: "1px solid hsl(240 10% 18%)",
+  backgroundColor: "hsl(240 12% 12%)",  // levemente mais claro (era 7% — quase preto puro)
+  border: "1px solid hsl(240 10% 25%)",
   borderRadius: "8px",
   color: "#fff",
   fontSize: "12px",
+  padding: "8px 12px",
 };
+
+// Recharts Tooltip aplica cores padrão (escuras) nos itens e labels.
+// Forçamos branco aqui pra não conflitar com fundo escuro do TOOLTIP_STYLE.
+const TOOLTIP_ITEM_STYLE = { color: "#fff" };
+const TOOLTIP_LABEL_STYLE = { color: "rgba(255,255,255,0.7)", marginBottom: "4px" };
 
 // ─────────────────────────────────────────────
 // SavingsRing — mini SVG donut for savings rate
@@ -182,6 +188,7 @@ export default function Financas() {
 
   // ── UI state ──
   const [period, setPeriod]           = useState<Period>("mes");
+  const [chartRange, setChartRange]   = useState<"7d" | "1m" | "6m" | "1a">("6m");
   const [activeTab, setActiveTab]     = useState("visao-geral");
   const [filterType, setFilterType]   = useState("all");
   const [filterCat, setFilterCat]     = useState("all");
@@ -535,31 +542,98 @@ export default function Financas() {
   const expenseChange = prevExpenses > 0 ? ((totalExpenses - prevExpenses) / prevExpenses * 100) : 0;
   const incomeChange  = prevIncome   > 0 ? ((totalIncome  - prevIncome)   / prevIncome   * 100) : 0;
 
-  // Category breakdown
-  const expensesByCategory = periodTx
-    .filter(t => t.type === "expense")
-    .reduce((acc: Record<string, number>, t) => {
-      acc[t.category] = (acc[t.category] || 0) + Number(t.amount);
-      return acc;
-    }, {});
+  // Category breakdown — agrupa por categoria NORMALIZADA pra evitar duplicatas
+  // tipo "Cibele" + "cibele" + "Cybele" virarem 3 linhas no ranking. Bug fix 2026-05-14:
+  // antes o key era `t.category` direto, então qualquer diferença de case/acento/typo
+  // ramificava em entries separadas. Agora agrupa por norm e mantém a primeira label
+  // como display (preserva capitalização original).
+  const categoryAgg: Record<string, { total: number; displayName: string }> = {};
+  for (const t of periodTx) {
+    if (t.type !== "expense") continue;
+    const rawName = String(t.category ?? "outros");
+    const key = normCat(rawName);
+    if (!categoryAgg[key]) {
+      categoryAgg[key] = { total: 0, displayName: rawName };
+    }
+    categoryAgg[key].total += Number(t.amount);
+  }
 
-  const pieData = Object.entries(expensesByCategory)
-    .map(([name, value]) => ({ name, value: value as number }))
+  const pieData = Object.values(categoryAgg)
+    .map(({ total, displayName }) => ({ name: displayName, value: total }))
     .sort((a, b) => b.value - a.value);
+
+  // Pra retrocompat com código que ainda usa expensesByCategory (raro)
+  const expensesByCategory: Record<string, number> = Object.fromEntries(
+    pieData.map((p) => [p.name, p.value]),
+  );
 
   const topCategory = pieData[0] ?? null;
 
-  // Monthly chart (6 months) — bars + balance line
+  // Chart data — varia conforme chartRange selecionado (7d / 1m / 6m / 1a)
+  // 7d → 7 pontos por dia. 1m → 30 pontos por dia. 6m → 6 pontos por mês. 1a → 12 pontos por mês.
   const now = new Date();
-  const monthlyData = Array.from({ length: 6 }, (_, i) => {
-    const m  = subMonths(now, 5 - i);
-    const ms = startOfMonth(m);
-    const me = endOfMonth(m);
-    const txs = transactions.filter(t => { const d = new Date(t.transaction_date + "T12:00:00"); return d >= ms && d <= me; });
-    const gastos   = txs.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
-    const receitas = txs.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
-    return { month: format(m, "MMM", { locale: ptBR }), gastos, receitas, saldo: receitas - gastos };
-  });
+  const monthlyData = (() => {
+    if (chartRange === "7d") {
+      return Array.from({ length: 7 }, (_, i) => {
+        const d = subDays(now, 6 - i);
+        const ds = startOfDay(d);
+        const de = endOfDay(d);
+        const txs = transactions.filter(t => {
+          const dt = new Date(t.transaction_date + "T12:00:00");
+          return dt >= ds && dt <= de;
+        });
+        const gastos = txs.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+        const receitas = txs.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+        return { month: format(d, "dd/MM", { locale: ptBR }), gastos, receitas, saldo: receitas - gastos };
+      });
+    }
+    if (chartRange === "1m") {
+      return Array.from({ length: 30 }, (_, i) => {
+        const d = subDays(now, 29 - i);
+        const ds = startOfDay(d);
+        const de = endOfDay(d);
+        const txs = transactions.filter(t => {
+          const dt = new Date(t.transaction_date + "T12:00:00");
+          return dt >= ds && dt <= de;
+        });
+        const gastos = txs.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+        const receitas = txs.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+        return { month: format(d, "dd/MM", { locale: ptBR }), gastos, receitas, saldo: receitas - gastos };
+      });
+    }
+    if (chartRange === "1a") {
+      return Array.from({ length: 12 }, (_, i) => {
+        const m = subMonths(now, 11 - i);
+        const ms = startOfMonth(m);
+        const me = endOfMonth(m);
+        const txs = transactions.filter(t => {
+          const d = new Date(t.transaction_date + "T12:00:00");
+          return d >= ms && d <= me;
+        });
+        const gastos = txs.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+        const receitas = txs.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+        return { month: format(m, "MMM/yy", { locale: ptBR }), gastos, receitas, saldo: receitas - gastos };
+      });
+    }
+    // default: 6m
+    return Array.from({ length: 6 }, (_, i) => {
+      const m  = subMonths(now, 5 - i);
+      const ms = startOfMonth(m);
+      const me = endOfMonth(m);
+      const txs = transactions.filter(t => { const d = new Date(t.transaction_date + "T12:00:00"); return d >= ms && d <= me; });
+      const gastos   = txs.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+      const receitas = txs.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+      return { month: format(m, "MMM", { locale: ptBR }), gastos, receitas, saldo: receitas - gastos };
+    });
+  })();
+
+  // Labels do seletor de período pra usar no título do card
+  const CHART_RANGE_LABEL: Record<typeof chartRange, string> = {
+    "7d": "7 dias",
+    "1m": "30 dias",
+    "6m": "6 meses",
+    "1a": "1 ano",
+  };
 
   // Budget alerts
   const currentMonthStart = format(startOfMonth(new Date()), "yyyy-MM-dd");
@@ -933,7 +1007,24 @@ export default function Financas() {
             {/* Monthly evolution — ComposedChart */}
             <Card className="bg-card border-border lg:col-span-3">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Evolução 6 meses</CardTitle>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <CardTitle className="text-base">Evolução — {CHART_RANGE_LABEL[chartRange]}</CardTitle>
+                  <div className="flex items-center gap-0.5 bg-muted/40 rounded-md p-0.5">
+                    {(["7d", "1m", "6m", "1a"] as const).map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => setChartRange(r)}
+                        className={`px-2.5 py-1 text-[11px] rounded transition-colors ${
+                          chartRange === r
+                            ? "bg-violet-500/30 text-violet-100"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {r === "7d" ? "7 dias" : r === "1m" ? "1 mês" : r === "6m" ? "6 meses" : "1 ano"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={220}>
@@ -944,6 +1035,8 @@ export default function Financas() {
                     <Tooltip
                       formatter={(v: number, name: string) => [`R$ ${brl(v)}`, name === "gastos" ? "Gastos" : name === "receitas" ? "Receitas" : "Saldo"]}
                       contentStyle={TOOLTIP_STYLE}
+                      itemStyle={TOOLTIP_ITEM_STYLE}
+                      labelStyle={TOOLTIP_LABEL_STYLE}
                     />
                     <Legend formatter={v => v === "gastos" ? "Gastos" : v === "receitas" ? "Receitas" : "Saldo"} />
                     <Bar dataKey="receitas" fill="#10b981" radius={[3, 3, 0, 0]} opacity={0.85} maxBarSize={22} />
@@ -976,6 +1069,8 @@ export default function Financas() {
                             props.payload.name,
                           ]}
                           contentStyle={TOOLTIP_STYLE}
+                          itemStyle={TOOLTIP_ITEM_STYLE}
+                          labelStyle={TOOLTIP_LABEL_STYLE}
                         />
                       </PieChart>
                     </ResponsiveContainer>
@@ -1121,6 +1216,9 @@ export default function Financas() {
                           <p className="text-[11px] text-muted-foreground">
                             {format(new Date(t.transaction_date + "T12:00:00"), "dd/MM", { locale: ptBR })} · {t.category}
                             {t.source === "whatsapp" && <span className="text-green-500/70 ml-1">● WhatsApp</span>}
+                            {t.source === "manual" && <span className="text-blue-400/70 ml-1">● Manual</span>}
+                            {t.source === "recurring" && <span className="text-violet-400/70 ml-1">● Recorrente</span>}
+                            {t.source === "whatsapp_forward" && <span className="text-green-500/70 ml-1">● Encaminhado</span>}
                           </p>
                           <SenderBadge sentByPhone={t.sent_by_phone} size="xs" />
                         </div>
@@ -1310,6 +1408,15 @@ export default function Financas() {
                                     <span className="text-[11px] text-muted-foreground capitalize">{t.category}</span>
                                     {t.source === "whatsapp" && (
                                       <span className="text-[10px] text-green-500/70 font-medium">● WhatsApp</span>
+                                    )}
+                                    {t.source === "manual" && (
+                                      <span className="text-[10px] text-blue-400/70 font-medium">● Manual</span>
+                                    )}
+                                    {t.source === "recurring" && (
+                                      <span className="text-[10px] text-violet-400/70 font-medium">● Recorrente</span>
+                                    )}
+                                    {t.source === "whatsapp_forward" && (
+                                      <span className="text-[10px] text-green-500/70 font-medium">● Encaminhado</span>
                                     )}
                                     <SenderBadge sentByPhone={t.sent_by_phone} size="xs" />
                                   </div>

@@ -300,9 +300,40 @@ export default function Lembretes() {
   };
 
   const handleDelete = async (id: string) => {
+    // Bug fix 2026-05-14: antes só deletava reminder, mas se ele tinha event_id
+    // (lembrete de evento tipo "Aniversário da mãe"), o evento ficava órfão e
+    // continuava aparecendo em "Próximos" do dashboard. Agora deleta ambos.
+    const { data: reminder } = await supabase
+      .from("reminders")
+      .select("event_id")
+      .eq("id", id)
+      .maybeSingle();
+
+    const eventId = (reminder as any)?.event_id as string | null | undefined;
+
     const { error } = await supabase.from("reminders").delete().eq("id", id);
-    if (error) toast.error("Erro ao excluir");
-    else { toast.success("Lembrete excluído"); load(); }
+    if (error) {
+      toast.error("Erro ao excluir");
+      return;
+    }
+
+    // Se o lembrete estava vinculado a um evento, remove o evento também
+    let alsoDeletedEvent = false;
+    if (eventId) {
+      const { error: evErr } = await supabase.from("events").delete().eq("id", eventId);
+      if (!evErr) {
+        alsoDeletedEvent = true;
+      } else {
+        console.error("[reminder-delete] erro deletando evento associado:", evErr);
+      }
+    }
+
+    toast.success(
+      alsoDeletedEvent
+        ? "Lembrete e evento associado excluídos"
+        : "Lembrete excluído"
+    );
+    load();
   };
 
   const handleRetry = async (id: string, currentStatus?: string) => {

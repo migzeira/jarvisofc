@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
 import {
   Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2,
@@ -205,7 +206,7 @@ export default function DashboardHome() {
       // Próximos eventos — busca 10 e filtra eventos do dia cuja hora já passou
       supabase.from("events").select("*").eq("user_id", user!.id).gte("event_date", format(now, "yyyy-MM-dd")).order("event_date").order("event_time").limit(10),
       // Pending reminders — exclui habits (que têm card próprio) e followups de evento (duplicam "Próximos")
-      supabase.from("reminders").select("id, title, send_at, message, source, event_id, habit_id").eq("user_id", user!.id).eq("status", "pending").gte("send_at", nowIso).neq("source", "habit").is("habit_id", null).order("send_at").limit(10),
+      supabase.from("reminders").select("id, title, send_at, message, source, event_id, habit_id, recurrence").eq("user_id", user!.id).eq("status", "pending").gte("send_at", nowIso).neq("source", "habit").is("habit_id", null).order("send_at").limit(10),
       // Recent notes (last 3)
       supabase.from("notes").select("id, title, content, created_at, source").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(3),
       // For activity feed
@@ -780,17 +781,32 @@ export default function DashboardHome() {
           <CardContent>
             {pendingReminders.length > 0 ? (
               <div className="space-y-2">
-                {pendingReminders.map(r => (
-                  <div key={r.id} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-accent/30">
-                    <div className="h-7 w-7 rounded-md bg-violet-500/10 flex items-center justify-center shrink-0 mt-0.5">
-                      <Clock className="h-3.5 w-3.5 text-violet-400" />
+                {pendingReminders.map(r => {
+                  const isRecurring = r.recurrence && r.recurrence !== "none";
+                  return (
+                    <div key={r.id} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-accent/30">
+                      <div className="h-7 w-7 rounded-md bg-violet-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                        <Clock className="h-3.5 w-3.5 text-violet-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-sm font-medium truncate">{r.title}</p>
+                          {isRecurring && (
+                            <Badge className="text-[9px] bg-violet-500/20 text-violet-300 border-violet-500/30 px-1.5 py-0 shrink-0">
+                              🔁 Recorrente
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-violet-400 mt-0.5">
+                          {formatReminderTime(r.send_at)}
+                          <span className="text-muted-foreground ml-1">
+                            · {isRecurring ? "Lembrete recorrente" : "Lembrete"}
+                          </span>
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{r.title}</p>
-                      <p className="text-xs text-violet-400 mt-0.5">{formatReminderTime(r.send_at)}</p>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
@@ -871,25 +887,7 @@ export default function DashboardHome() {
         </Card>
       </div>
 
-      {/* ── Quick actions ── */}
-      <div>
-        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Acesso rápido</p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {QUICK_ACTIONS.map(action => (
-            <Link key={action.to} to={action.to}>
-              <Card className={`bg-card border-border hover:border-current/30 transition-all hover:-translate-y-0.5 cursor-pointer h-full ${action.border}`}>
-                <CardContent className="pt-4 pb-4">
-                  <div className={`h-9 w-9 rounded-lg ${action.bg} flex items-center justify-center mb-3`}>
-                    <action.icon className={`h-5 w-5 ${action.color}`} />
-                  </div>
-                  <p className="text-sm font-semibold">{action.label}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{action.desc}</p>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      </div>
+      {/* "Acesso rápido" removido 2026-05-14 — era duplicação do menu lateral */}
 
     </div>
   );
