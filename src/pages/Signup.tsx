@@ -6,66 +6,48 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Loader2, ArrowLeft, Eye, EyeOff, MessageCircle } from "lucide-react";
 import logoEscrita from "@/assets/logo_escrita.webp";
-
-// ─────────────────────────────────────────────────────────────────────────
-// Helpers de telefone — formatação e validação Brasil-first
-// ─────────────────────────────────────────────────────────────────────────
-
-/** Extrai só dígitos do input */
-function digitsOnly(s: string): string {
-  return s.replace(/\D/g, "");
-}
-
-/** Formata visualmente como (XX) XXXXX-XXXX enquanto user digita */
-function formatBRPhone(value: string): string {
-  const d = digitsOnly(value).slice(0, 11); // máximo 11 dígitos (DDD + celular 9d)
-  if (d.length === 0) return "";
-  if (d.length <= 2) return `(${d}`;
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
-
-/** Valida que telefone tem 10 ou 11 dígitos brasileiros + DDD válido (11-99) */
-function isValidBRPhone(value: string): boolean {
-  const d = digitsOnly(value);
-  if (d.length !== 10 && d.length !== 11) return false;
-  const ddd = parseInt(d.slice(0, 2), 10);
-  if (ddd < 11 || ddd > 99) return false;
-  return true;
-}
-
-/** Retorna phone normalizado pro backend: prefixo 55 + DDD + número (só dígitos) */
-function normalizePhoneForBackend(value: string): string {
-  const d = digitsOnly(value);
-  if (d.length === 10 || d.length === 11) return `55${d}`;
-  return d;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────
+import { FlagImg } from "@/components/FlagImg";
+import {
+  COUNTRIES,
+  findCountry,
+  formatLocalByCountry,
+  isValidLocalForCountry,
+  buildFullPhone,
+} from "@/lib/phone";
 
 export default function Signup() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [phone, setPhone] = useState("");          // formatado pra display
+
+  // Telefone: DDI separado do número local pra evitar ambiguidade
+  const [ddi, setDdi] = useState("55");                    // Brasil default
+  const [localPhone, setLocalPhone] = useState("");        // só a parte local, sem DDI
+
   const [showPassword, setShowPassword] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const phoneValid = isValidBRPhone(phone);
-  // Phone touched: já tem pelo menos algum dígito digitado
-  const phoneTouched = digitsOnly(phone).length > 0;
-  const phoneError = phoneTouched && !phoneValid ? "Digite seu WhatsApp com DDD" : null;
+  const selectedCountry = findCountry(ddi);
+  const localTouched = localPhone.replace(/\D/g, "").length > 0;
+  const localValid = isValidLocalForCountry(localPhone, selectedCountry);
+  const localError = localTouched && !localValid
+    ? `Digite seu WhatsApp completo (mínimo ${selectedCountry.minLen} dígitos)`
+    : null;
 
-  const handlePhoneChange = (raw: string) => {
-    setPhone(formatBRPhone(raw));
+  const handleLocalChange = (raw: string) => {
+    setLocalPhone(formatLocalByCountry(raw, selectedCountry));
+  };
+
+  const handleDDIChange = (newDdi: string) => {
+    setDdi(newDdi);
+    // Re-formata o número local conforme o novo país
+    setLocalPhone(formatLocalByCountry(localPhone, findCountry(newDdi)));
   };
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -76,14 +58,15 @@ export default function Signup() {
       return;
     }
 
-    if (!phoneValid) {
-      toast.error("Digite um WhatsApp válido com DDD. Ex: (11) 99999-9999");
+    if (!localValid) {
+      toast.error(`Digite um WhatsApp válido pra ${selectedCountry.name}. Ex: ${selectedCountry.placeholder}`);
       return;
     }
 
     setLoading(true);
 
-    const normalizedPhone = normalizePhoneForBackend(phone);
+    // Monta phone completo: DDI + número local (só dígitos)
+    const fullPhone = buildFullPhone(ddi, localPhone);
 
     const { error } = await supabase.auth.signUp({
       email,
@@ -92,13 +75,12 @@ export default function Signup() {
         emailRedirectTo: `${window.location.origin}/email-confirmado`,
         data: {
           display_name: displayName,
-          phone_number: normalizedPhone,
+          phone_number: fullPhone,
         },
       },
     });
 
     if (error) {
-      // Tratamento de erro contextual
       const msg = error.message?.toLowerCase() ?? "";
       if (msg.includes("phone") && (msg.includes("unique") || msg.includes("duplicate") || msg.includes("já"))) {
         toast.error("Esse WhatsApp já está cadastrado em outra conta. Use outro número ou faça login.");
@@ -116,7 +98,7 @@ export default function Signup() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-4">
+    <main className="flex min-h-screen items-center justify-center bg-background px-4 py-6">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="text-center">
           <div className="flex justify-start mb-2">
@@ -163,24 +145,49 @@ export default function Signup() {
                 <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
                 WhatsApp
               </Label>
-              <Input
-                id="phone"
-                type="tel"
-                inputMode="tel"
-                autoComplete="tel"
-                placeholder="(11) 99999-9999"
-                value={phone}
-                onChange={e => handlePhoneChange(e.target.value)}
-                required
-                aria-invalid={phoneError ? "true" : "false"}
-                className={phoneError ? "border-red-500/50 focus-visible:ring-red-500/50" : ""}
-              />
-              {phoneError ? (
-                <p className="text-xs text-red-400">{phoneError}</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  O Jarvis vai responder nesse número. Você pode trocar depois nas configurações.
-                </p>
+              <div className="flex gap-2">
+                {/* DDI Select com bandeira */}
+                <Select value={ddi} onValueChange={handleDDIChange}>
+                  <SelectTrigger
+                    className="w-[120px] shrink-0"
+                    aria-label="Selecionar país"
+                  >
+                    <SelectValue>
+                      <div className="flex items-center gap-2">
+                        <FlagImg code={selectedCountry.code} />
+                        <span className="text-sm">+{selectedCountry.ddi}</span>
+                      </div>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {COUNTRIES.map((c) => (
+                      <SelectItem key={c.code} value={c.ddi}>
+                        <div className="flex items-center gap-2">
+                          <FlagImg code={c.code} />
+                          <span className="text-sm">+{c.ddi}</span>
+                          <span className="text-xs text-muted-foreground">{c.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {/* Input do número local */}
+                <Input
+                  id="phone"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  placeholder={selectedCountry.placeholder}
+                  value={localPhone}
+                  onChange={e => handleLocalChange(e.target.value)}
+                  required
+                  aria-invalid={localError ? "true" : "false"}
+                  className={localError ? "border-red-500/50 focus-visible:ring-red-500/50 flex-1" : "flex-1"}
+                />
+              </div>
+              {localError && (
+                <p className="text-xs text-red-400">{localError}</p>
               )}
             </div>
 
@@ -222,7 +229,7 @@ export default function Signup() {
             <Button
               type="submit"
               className="w-full"
-              disabled={loading || !acceptedTerms || !phoneValid}
+              disabled={loading || !acceptedTerms || !localValid}
             >
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Criar conta

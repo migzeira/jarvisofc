@@ -11,14 +11,19 @@
 -- ──────────────────────────────────────────────────────────────────────────
 -- 1. Função de normalização de telefone (idempotente, IMMUTABLE)
 -- ──────────────────────────────────────────────────────────────────────────
--- Aceita formatos variados e retorna sempre só dígitos com prefixo 55.
+-- Filosofia: frontend ENVIA o phone já com DDI (CountrySelect garante isso).
+-- Backend NÃO assume nada — só valida formato (8-15 dígitos, E.164) e retorna
+-- limpo. Isso permite suportar Brasil, EUA, Espanha, Argentina, etc sem hack.
+--
 -- Exemplos:
---   "(11) 99999-9999"  → "5511999999999"
---   "+55 11 99999-9999" → "5511999999999"
---   "11999999999"       → "5511999999999"
---   "5511999999999"     → "5511999999999"
---   "9999999999"        → NULL (sem DDD válido, melhor recusar)
---   ""                  → NULL
+--   "5511999999999"      → "5511999999999"  (Brasil)
+--   "+55 11 99999-9999"  → "5511999999999"
+--   "34612345678"        → "34612345678"    (Espanha)
+--   "+1 (555) 555-5555"  → "15555555555"    (EUA)
+--   "5491112345678"      → "5491112345678"  (Argentina)
+--   ""                   → NULL
+--   "999"                → NULL (muito curto)
+--   "1234567890123456"   → NULL (muito longo, > 15 dígitos E.164)
 create or replace function public.normalize_phone(p text)
 returns text
 language plpgsql
@@ -31,31 +36,22 @@ begin
     return null;
   end if;
 
-  -- Remove tudo que não é dígito
+  -- Remove tudo que não é dígito (espaços, parênteses, hífens, '+')
   digits := regexp_replace(p, '[^0-9]', '', 'g');
 
-  -- Casos válidos:
-  --   10 dígitos: DDD + número fixo 8d → adiciona 55
-  --   11 dígitos: DDD + celular 9d → adiciona 55
-  --   12 dígitos: 55 + DDD + fixo 8d → mantém
-  --   13 dígitos: 55 + DDD + celular 9d → mantém
-  if length(digits) = 10 or length(digits) = 11 then
-    return '55' || digits;
-  elsif length(digits) = 12 or length(digits) = 13 then
-    if left(digits, 2) = '55' then
-      return digits;
-    end if;
-    -- Não começa com 55 mas tem 12-13 dígitos: pode ser DDI estrangeiro
-    return digits;
+  -- E.164: phones globais têm entre 8 e 15 dígitos
+  -- 8 mínimo: phones locais sem DDI/DDD (raro mas aceito como fallback)
+  -- 15 máximo: limite ITU-T E.164
+  if length(digits) < 8 or length(digits) > 15 then
+    return null;
   end if;
 
-  -- Outros tamanhos: invalido
-  return null;
+  return digits;
 end;
 $$;
 
 comment on function public.normalize_phone(text) is
-  'Normaliza telefone pra formato 55DDDNumero (só dígitos). Retorna NULL se inválido.';
+  'Normaliza telefone removendo formatação. Aceita 8-15 dígitos (E.164). Retorna NULL se inválido. Frontend deve enviar DDI já incluído.';
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- 2. UNIQUE parcial em profiles.phone_number
