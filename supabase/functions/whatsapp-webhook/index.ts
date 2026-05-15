@@ -1165,14 +1165,27 @@ async function handleRecurringConfirm(
   }
 
   if (isNo) {
-    // Mantém pending — cron vai re-perguntar em 2 dias
+    // BUG fix 2026-05-15: ANTES o pending_action ficava em "recurring_confirm"
+    // após "ainda não" — aí qualquer "ok"/"sim" subsequente caía no parser
+    // de YES e criava transação errada. Caso reportado pelo user: "Ainda não"
+    // → "Ok" (casual) → Jarvis registrou aluguel sem ele ter pago.
+    //
+    // Correção: LIMPA pending_action da sessão. O cron continua re-perguntando
+    // (depende de recurring_transactions.pending_status, não da session).
+    // User confirma pagamento depois via "paguei o aluguel" / "ja paguei"
+    // que vão pelo fluxo normal de finance_record.
+    await (supabase as any)
+      .from("recurring_transactions")
+      .update({ pending_last_asked_at: new Date().toISOString() })
+      .eq("id", recurringId);
+
     const verb = rec.type === "expense" ? "pagar" : "receber";
+    const verbPast = rec.type === "expense" ? "paguei" : "recebi";
     return {
       response:
-        `Beleza! Quando ${verb}, é só me responder *sim* aqui. Ou me chamar de novo quando lembrar. 👋\n\n` +
+        `Beleza! Quando ${verb}, me manda *"${verbPast} o ${rec.description.toLowerCase()}"* que eu registro. 👋\n\n` +
         `_Te aviso de novo daqui 2 dias se você não me disser nada._`,
-      pendingAction: "recurring_confirm",
-      pendingContext: { recurring_id: recurringId },
+      // pendingAction NÃO retornado → sessão limpa, sem mais YES falso
     };
   }
 

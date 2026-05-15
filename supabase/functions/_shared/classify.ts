@@ -662,7 +662,18 @@ export function classifyIntent(msg: string): Intent {
     /\bme avisa (às|as|quando|amanha|hoje|dia \d|todo|toda|todos|todas|cada|sempre|daqui|de|que|do|da|sobre)\b/.test(m) ||
     // Formas indiretas: "voce me lembra", "quero que voce me lembra/lembre"
     /\b(voce|você) me (lembra|lembre|avisa|avise)\b/.test(m) ||
-    /(quero que|pode|preciso que).*(me lembra|me lembre|me avisa)\b/.test(m)
+    /(quero que|pode|preciso que).*(me lembra|me lembre|me avisa)\b/.test(m) ||
+    // ── Padrões NATURAIS reportados pelo user (15/05/2026) ──
+    // "me avisa X minutos/horas antes" — captura intenção de aviso prévio
+    // sem importar onde está na frase ("Amanha 12:30 tenho barbeiro, me avisa
+    // 45 minutos antes" caía em ai_chat antes desta regra)
+    /\bme avisa\b.{0,40}\b\d+\s*(min|minuto|minutos|hora|horas|h)\b.{0,20}\bantes\b/.test(m) ||
+    /\bme lembra\b.{0,40}\b\d+\s*(min|minuto|minutos|hora|horas|h)\b.{0,20}\bantes\b/.test(m) ||
+    // "data/hora + me avisa/lembra" — ex: "amanha 12:30 ... me avisa 45 min antes"
+    // O dia da semana ou "amanha/hoje" + hora numerica + me avisa/lembra em qq lugar
+    /\b(amanha|hoje|segunda|terca|terça|quarta|quinta|sexta|sabado|sábado|domingo)\b.{0,50}\b\d{1,2}\s*[h:]\d{0,2}\b.{0,100}\b(me avisa|me lembra|me notifica|me lembre|me avise)\b/.test(m) ||
+    // "hora + me avisa/lembra" mesma frase: "14h me avisa" (sem dia explicito)
+    /\b\d{1,2}\s*[h:]\d{0,2}\b.{0,60}\b(me avisa|me lembra|me notifica)\b.{0,40}\bantes\b/.test(m)
   ) return "reminder_set";
 
   // Buscar evento específico
