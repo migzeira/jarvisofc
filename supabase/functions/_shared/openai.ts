@@ -1361,6 +1361,17 @@ REGRAS DE CLASSIFICAÇÃO:
 - event_type: "reuniao" para meetings/reuniões, "consulta" para médico/dentista/profissional, "tarefa" para tarefas/to-dos, "evento" para festas/shows/conferências, "compromisso" para o resto.
 - priority: "alta" para reuniões de trabalho/médico/urgente, "media" para compromissos normais, "baixa" para tarefas/lembretes simples.
 
+REGRAS DE EXTRAÇÃO DE HORÁRIO (CRÍTICO — USUÁRIOS BR ESCREVEM TORTO):
+- Reconheça TODOS os formatos: "7h", "7hr", "7hrs", "7hs", "7horas", "7 horas",
+  "às 7", "as 7", "7:30", "7h30", "meio dia", "meia noite", "tarde", "noite".
+- Se houver RANGE de horário (plantão/turno/expediente): use a HORA INICIAL em time
+  e a HORA FINAL em end_time.
+    Exemplo: "Plantão amanhã 7 as 19hrs" → time="07:00", end_time="19:00"
+    Exemplo: "Trabalho das 14 às 22" → time="14:00", end_time="22:00"
+    Exemplo: "Reunião sexta de 10 até 12" → time="10:00", end_time="12:00"
+- Padrões de range: "A as B", "A às B", "A até B", "das A às B", "de A a B", "A-B".
+- "meio dia" = 12:00, "meio dia e meio" = 12:30, "meia noite" = 00:00.
+
 REGRAS DE CLARIFICAÇÃO (ordem de prioridade):
 1. Se faltar título → needs_clarification: "Qual o nome ou motivo desse compromisso? 📝", clarification_type: "title"
 2. Se faltar horário (time é null) → needs_clarification: "Qual horário? 🕐", clarification_type: "time"
@@ -2001,6 +2012,26 @@ não mencionar uma hora explícita. Isso é um bug grave.
 - Períodos do dia: "manhã" = 09:00, "tarde" = 14:00, "noite" = 20:00, "madrugada" = 05:00
   Exemplo: "me lembre amanhã de manhã de levar pet" → próximo dia 09:00
   Exemplo: "me lembra à tarde de ligar pra mãe" → hoje 14:00 (ou amanhã se já passou)
+
+📍 REGRA #4 — FORMATOS INFORMAIS DE HORA (USUÁRIO BR ESCREVE TORTO):
+Reconheça TODOS estes formatos como hora válida:
+- "7h", "7hr", "7hrs", "7hs", "7horas", "7 horas" → 07:00
+- "às 7", "as 7", "as sete" → 07:00 (com ou sem 'h')
+- "7:30", "7h30", "7 e meia" → 07:30
+- "meio dia e meio", "meio-dia e meia" → 12:30
+- "uma e meia da tarde" → 13:30
+- "umas 8 da noite" → 20:00 (aproximadamente, mas use a hora exata)
+
+🕐 REGRA #5 — RANGE DE HORÁRIO (PLANTÃO/TURNO/EXPEDIENTE):
+Quando o usuário menciona um RANGE de horas (ex: "plantão das 7 às 19", "trabalho
+7 as 19hrs", "evento de 14 até 18"), o lembrete deve ser na HORA INICIAL do range
+(quando começa). NÃO escolha a hora final, NÃO escolha um meio termo.
+- Exemplo: "Plantão amanhã 7 as 19hrs" → AMANHÃ 07:00 (início do plantão)
+- Exemplo: "Trabalho hoje das 14 às 22" → HOJE 14:00 (início do turno)
+- Exemplo: "Reunião sexta de 10 até 12" → próxima sexta 10:00 (início)
+- Exemplo: "Curso amanhã 19h às 22h" → AMANHÃ 19:00 (início)
+Padrões pra reconhecer range: "A as B", "A até B", "A à B", "das A às B",
+"de A a B", "entre A e B", "A-B".
 
 Regras para recurrence (analise CUIDADOSAMENTE — é muito importante detectar corretamente):
 

@@ -5122,9 +5122,18 @@ async function handleReminderSet(
   // prefixo "em"/"daqui"). User precisava escrever "Daqui 5 minutos" pra
   // funcionar. Fix: relaxa "em \d" pra qualquer dígito após "em ", e
   // adiciona padrão genérico "\d+ min/hora" sem precisar de prefixo.
+  //
+  // BUG REPORTADO 15/05: "Plantão amanhã 7 as 19hrs" caiu no fallback 09h porque
+  // a regex `\d{1,2}\s*[:h]\s*\d{0,2}\b` quebrava em "19hrs" (após o 'h' vem 'rs'
+  // que são word chars → `\b` falha). E "às 7" sozinho também não pegava.
+  // Fix: adiciona patterns pra formatos informais comuns (7hrs, 7hs, 7horas,
+  // "às 7", "7 às 19" como range).
   const _msgNorm = message.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const hasExplicitTime =
     /\b\d{1,2}\s*[:h]\s*\d{0,2}\b/.test(_msgNorm) ||                     // 14:30, 9h, 18h30
+    /\b\d{1,2}\s*h(?:r?s?|ora?s?)?\b/.test(_msgNorm) ||                  // 7h, 7hs, 7hr, 7hrs, 7hora, 7horas (incl. 19hrs)
+    /\bas\s+\d{1,2}(?:h|hr|hrs|horas?|hs|:\d{2}|\s+(?:da|de|em\s+ponto|hora))\b/.test(_msgNorm) || // "às 7h", "às 14h", "às 8 da manhã", "às 7 horas" — exige sufixo de tempo pra evitar falso positivo em "as 3 crianças".
+    /\b\d{1,2}\s+(?:as|ate)\s+\d{1,2}\b/.test(_msgNorm) ||               // "7 às 19", "7 até 19" (range de plantão/turno)
     /\b(manha|tarde|noite|madrugada)\b/.test(_msgNorm) ||                // períodos
     /\bmeio\s*dia\b|\bmeia\s*noite\b/.test(_msgNorm) ||
     /\bdaqui\s+\d/.test(_msgNorm) ||                                     // "daqui 5 min"
