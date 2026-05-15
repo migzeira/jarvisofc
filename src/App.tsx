@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { RequireActivePlan } from "@/components/RequireActivePlan";
 import { lazy, Suspense } from "react";
 import logoIcon from "@/assets/logo_icon.webp";
 
@@ -70,19 +71,25 @@ const App = () => (
               <Route path="/obrigado" element={<Obrigado />} />
               <Route path="/bem-vindo" element={<BemVindo />} />
               <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
+                {/* Home (Início) e Configurações ficam sempre acessíveis — user precisa
+                    poder entrar pra ver status do plano e renovar. */}
                 <Route index element={<DashboardHome />} />
-                <Route path="financas" element={<Financas />} />
-                <Route path="agenda" element={<Agenda />} />
-                <Route path="anotacoes" element={<Anotacoes />} />
-                <Route path="lembretes" element={<Lembretes />} />
-                <Route path="habitos" element={<Habitos />} />
-                <Route path="integracoes" element={<Integracoes />} />
                 <Route path="configuracoes" element={<Configuracoes />} />
+
+                {/* Páginas restritas — bloqueadas se trial expirou ou conta pending/suspended.
+                    Quem está em trial ativo OU plano ativo continua acessando normal. */}
+                <Route path="financas" element={<RequireActivePlan><Financas /></RequireActivePlan>} />
+                <Route path="agenda" element={<RequireActivePlan><Agenda /></RequireActivePlan>} />
+                <Route path="anotacoes" element={<RequireActivePlan><Anotacoes /></RequireActivePlan>} />
+                <Route path="lembretes" element={<RequireActivePlan><Lembretes /></RequireActivePlan>} />
+                <Route path="habitos" element={<RequireActivePlan><Habitos /></RequireActivePlan>} />
+                <Route path="contatos" element={<RequireActivePlan><Contatos /></RequireActivePlan>} />
+                <Route path="analytics" element={<RequireActivePlan><Analytics /></RequireActivePlan>} />
+                <Route path="integracoes" element={<RequireActivePlan><Integracoes /></RequireActivePlan>} />
+
                 {/* Old routes redirect to the unified Configurações page with the right tab pre-selected — keeps existing links working */}
                 <Route path="agente" element={<Navigate to="/dashboard/configuracoes?tab=agente" replace />} />
                 <Route path="perfil" element={<Navigate to="/dashboard/configuracoes?tab=perfil" replace />} />
-                <Route path="analytics" element={<Analytics />} />
-                <Route path="contatos" element={<Contatos />} />
               </Route>
               <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />

@@ -95,29 +95,30 @@ export function TrialBanner() {
     );
   }
 
-  // ── Variante EXPIRADO / PENDING ──
+  // ── Variante EXPIRADO / PENDING — banner informativo, sem botão ──
+  // (botão removido pq o paywall já aparece quando user tenta entrar nas
+  //  páginas restritas, ou em Configurações > Perfil & Plano)
   if (needsToPay) {
     return (
-      <div className="bg-gradient-to-r from-red-500/15 via-rose-500/15 to-red-500/15 border-b border-red-500/30">
-        <div className="px-4 py-2.5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+      <Link
+        to="/dashboard/configuracoes?tab=perfil"
+        className="block hover:opacity-90 transition-opacity"
+      >
+        <div className="bg-gradient-to-r from-red-500/15 via-rose-500/15 to-red-500/15 border-b border-red-500/30">
+          <div className="px-4 py-2.5 flex items-center gap-3">
             <Sparkles className="h-4 w-4 text-red-400 shrink-0" />
-            <div className="text-sm min-w-0">
+            <div className="text-sm min-w-0 flex-1">
               <span className="font-semibold text-red-200">
                 {status === "expired" ? "Seu período de teste expirou" : "Sem plano ativo"}
               </span>
               <span className="hidden sm:inline text-muted-foreground ml-2">
-                Escolha um plano pra continuar usando o Jarvis no WhatsApp
+                — clique aqui pra ver os planos e renovar
               </span>
             </div>
+            <ArrowRight className="h-4 w-4 text-red-300 shrink-0" />
           </div>
-          <Link to="/dashboard/configuracoes?tab=perfil">
-            <Button size="sm" className="h-7 text-xs gap-1">
-              Ver planos <ArrowRight className="h-3 w-3" />
-            </Button>
-          </Link>
         </div>
-      </div>
+      </Link>
     );
   }
 
