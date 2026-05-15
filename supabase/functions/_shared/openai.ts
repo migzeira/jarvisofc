@@ -1967,17 +1967,27 @@ Analise o pedido de lembrete e retorne JSON com EXATAMENTE esta estrutura:
 }
 
 Regras para remind_at:
-- "daqui X minutos" / "em X minutos" / "daqui X horas" / "em X horas" → adicione esse tempo à hora atual
-  - Exemplo: se agora é 14:00 e pediu "daqui 2 minutos" → agende para 14:02
-  - Exemplo: se agora é 14:00 e pediu "daqui 1 hora" → agende para 15:00
-- ATENÇÃO: compare CUIDADOSAMENTE a hora atual com a hora mencionada. Se a hora mencionada ainda NÃO passou hoje, agende para HOJE mesmo.
-- Exemplo: se agora é 01:36 e o usuário disse "1h50", a hora 01:50 ainda não passou → agende para HOJE (não amanhã).
-- Exemplo: se agora é 14:00 e o usuário disse "10h", a hora 10:00 já passou → agende para amanhã.
-- Se hora mencionada já passou hoje → agendar para amanhã
-- Se não mencionou data → assume hoje (ou amanhã se hora passou)
-- "amanhã" → próximo dia
-- "sexta" / "segunda" → próximo dia da semana mencionado
+
+🔴 REGRA CRÍTICA #1 — PALAVRAS EXPLÍCITAS DE DATA TÊM PRIORIDADE ABSOLUTA:
+Se o usuário disse "amanhã", "depois de amanhã", um dia da semana ("sexta", "segunda"), ou "semana que vem", USE ESSA DATA EXATAMENTE como ele disse. NÃO mude a data baseado em "se a hora ainda não passou hoje".
+- Exemplo: agora é 11:35, user disse "amanhã meio dia e meio" → AMANHÃ 12:30 (NÃO hoje 12:30, mesmo que 12:30 ainda não passou)
+- Exemplo: agora é 09:00, user disse "amanhã 14h" → AMANHÃ 14:00 (NÃO hoje 14:00)
+- Exemplo: agora é segunda, user disse "sexta 10h" → próxima sexta 10:00 (NÃO hoje 10:00)
+- Exemplo: agora é 15:00 de uma quinta, user disse "amanhã" sem hora → AMANHÃ 09:00 (próxima sexta 09:00)
+
+🟡 REGRA #2 — Se NÃO houver palavra de data explícita:
+- "daqui X minutos" / "em X minutos" / "daqui X horas" / "em X horas" → adicione à hora atual
+- Se usuário só mencionou HORA (sem data): use HOJE se hora ainda não passou, senão AMANHÃ
+- Exemplo: agora 01:36, user disse "1h50" (sem "amanhã") → HOJE 01:50
+- Exemplo: agora 14:00, user disse "10h" (sem "amanhã") → AMANHÃ 10:00 (já passou)
+- Exemplo: agora 14:00, user disse "16h" (sem "amanhã") → HOJE 16:00
+
+🟢 REGRA #3 — Palavras-chave de data:
+- "amanhã" → +1 dia (use a data calculada — NÃO importa se a hora já passou ou não)
+- "depois de amanhã" → +2 dias
+- "sexta" / "segunda" / etc → próximo dia da semana mencionado a partir de HOJE (se hoje é segunda e user diz "segunda", é a próxima segunda = +7 dias)
 - "semana que vem" → +7 dias
+- "no domingo" / "domingo" → próximo domingo
 
 🚨 REGRA CRÍTICA — DEFAULTS QUANDO FALTA HORA:
 NUNCA, EM NENHUMA HIPÓTESE, use a HORA ATUAL como default quando o usuário
@@ -2085,28 +2095,45 @@ Pedido: "${message}"`;
 
     // Guarda de segurança: se a IA agendou para amanhã mas o horário ainda não passou hoje,
     // corrige para hoje. Isso evita erros com horários de madrugada como "1h50".
+    //
+    // ⚠️ EXCEÇÃO CRÍTICA: NÃO aplica esse guard se o usuário disse explicitamente "amanhã",
+    // "depois de amanhã", dia da semana, ou "semana que vem". Senão a gente reverte a
+    // interpretação correta da IA e o lembrete cai pra hoje quando o user queria amanhã.
+    // Bug histórico: user disse "amanhã meio dia e meio" às 11:35, IA acertou amanhã 12:30,
+    // guard "corrigiu" pra hoje 12:30 porque 12:30 ainda não tinha passado.
     if (parsed.recurrence === "none") {
-      const now = new Date(nowIso);
-      const remindAt = new Date(parsed.remind_at);
-      const diffMs = remindAt.getTime() - now.getTime();
-      const diffHours = diffMs / (1000 * 60 * 60);
+      const lowMsg = (message || "").toLowerCase();
+      const hasExplicitDate =
+        /\bamanh[ãa]\b/.test(lowMsg) ||
+        /\bdepois de amanh[ãa]\b/.test(lowMsg) ||
+        /\b(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)(-feira)?\b/.test(lowMsg) ||
+        /\bsemana que vem\b/.test(lowMsg) ||
+        /\bpr[óo]xim[ao]\s+(semana|m[êe]s|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|dia)\b/.test(lowMsg) ||
+        /\bdaqui\s+a?\s*\d+\s*(dias?|semanas?|m[êe]s|meses)\b/.test(lowMsg);
 
-      // Se a IA agendou para mais de 20h à frente, verifica se o mesmo horário ainda existe hoje
-      // A janela é > 20h e < 28h para cobrir qualquer fuso UTC-12 a UTC+12
-      if (diffHours > 20 && diffHours < 28) {
-        const todayVersion = new Date(remindAt);
-        todayVersion.setDate(todayVersion.getDate() - 1);
-        // Se a versão de hoje ainda não passou (tem pelo menos 1 min de margem), usa ela
-        if (todayVersion.getTime() > now.getTime() + 60000) {
-          // Usa o mesmo offset que o nowIso tem
-          const tzOffset = offsetMatch ? offsetMatch[1] : "-03:00";
-          // userTz é parâmetro da função (default America/Sao_Paulo).
-          // BUG HISTÓRICO: este bloco usava userTz sem ter como parâmetro,
-          // causando ReferenceError silencioso no catch e falsos negativos
-          // tipo "Não entendi o lembrete" pra inputs perfeitamente claros.
-          const y = todayVersion.toLocaleString("sv-SE", { timeZone: userTz }).slice(0, 10);
-          const t = todayVersion.toLocaleString("sv-SE", { timeZone: userTz }).slice(11, 19);
-          parsed.remind_at = `${y}T${t}${tzOffset}`;
+      if (!hasExplicitDate) {
+        const now = new Date(nowIso);
+        const remindAt = new Date(parsed.remind_at);
+        const diffMs = remindAt.getTime() - now.getTime();
+        const diffHours = diffMs / (1000 * 60 * 60);
+
+        // Se a IA agendou para mais de 20h à frente, verifica se o mesmo horário ainda existe hoje
+        // A janela é > 20h e < 28h para cobrir qualquer fuso UTC-12 a UTC+12
+        if (diffHours > 20 && diffHours < 28) {
+          const todayVersion = new Date(remindAt);
+          todayVersion.setDate(todayVersion.getDate() - 1);
+          // Se a versão de hoje ainda não passou (tem pelo menos 1 min de margem), usa ela
+          if (todayVersion.getTime() > now.getTime() + 60000) {
+            // Usa o mesmo offset que o nowIso tem
+            const tzOffset = offsetMatch ? offsetMatch[1] : "-03:00";
+            // userTz é parâmetro da função (default America/Sao_Paulo).
+            // BUG HISTÓRICO: este bloco usava userTz sem ter como parâmetro,
+            // causando ReferenceError silencioso no catch e falsos negativos
+            // tipo "Não entendi o lembrete" pra inputs perfeitamente claros.
+            const y = todayVersion.toLocaleString("sv-SE", { timeZone: userTz }).slice(0, 10);
+            const t = todayVersion.toLocaleString("sv-SE", { timeZone: userTz }).slice(11, 19);
+            parsed.remind_at = `${y}T${t}${tzOffset}`;
+          }
         }
       }
     }

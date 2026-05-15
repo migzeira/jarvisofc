@@ -2754,6 +2754,41 @@ async function createEventAndConfirm(
         sent_by_phone: senderPhone,
       } as any);
     }
+
+    // ─── DOUBLE REMINDER (agenda): aviso NO horário exato do evento ───
+    //
+    // Se o user pediu antecedência (reminder_minutes > 0), além do aviso
+    // antecipado também salva um segundo lembrete NA HORA exata do evento.
+    // Espelha o comportamento do saveReminder (lembretes manuais) — agora
+    // agenda + lembrete têm o mesmo padrão "avisa antes + avisa na hora".
+    //
+    // Skip cases:
+    //   - reminder_minutes === 0 → único aviso já é "na hora", evita duplicação
+    //   - eventDateTime no passado → nada a agendar
+    if (extracted.reminder_minutes > 0 && eventDateTime > new Date()) {
+      const atTimeMsgPt = `🔔 *Agora!*\n${emoji} ${extracted.title} começa agora${extracted.location ? ` em ${extracted.location}` : ''}.`;
+      const atTimeMsgEn = `🔔 *Now!*\n${emoji} ${extracted.title} starts now${extracted.location ? ` at ${extracted.location}` : ''}.`;
+      const atTimeMsgEs = `🔔 *¡Ahora!*\n${emoji} ${extracted.title} comienza ahora${extracted.location ? ` en ${extracted.location}` : ''}.`;
+      const atTimeMsg = lang === "en" ? atTimeMsgEn : lang === "es" ? atTimeMsgEs : atTimeMsgPt;
+
+      const { error: atTimeErr } = await supabase.from("reminders").insert({
+        user_id: userId,
+        event_id: event.id,
+        whatsapp_number: phone,
+        title: extracted.title,
+        message: atTimeMsg,
+        send_at: eventDateTime.toISOString(),
+        recurrence: "none",
+        source: "whatsapp_at_time",
+        status: "pending",
+        sent_by_phone: senderPhone,
+      } as any);
+
+      if (atTimeErr) {
+        // Não falha — usuário já tem aviso antecedente, segundo lembrete é bonus
+        console.warn("[createEventAndConfirm] failed to insert at-time reminder:", atTimeErr.message);
+      }
+    }
   }
 
   // ─── Cria ocorrências futuras se evento for recorrente ───
@@ -2832,7 +2867,8 @@ async function createEventAndConfirm(
     const reminderLabel = mins >= 60
       ? `${mins / 60 === Math.floor(mins / 60) ? mins / 60 + " hora" + (mins / 60 > 1 ? "s" : "") : mins + " min"}`
       : `${mins} min`;
-    response += `\n🔔 Te lembro ${reminderLabel} antes`;
+    // Double reminder: avisa antes + na hora exata
+    response += `\n🔔 Te lembro ${reminderLabel} antes + na hora exata`;
   }
 
   if (recurrence) {
@@ -5274,6 +5310,27 @@ async function saveReminder(
   // Sobrescreve a referência local pra confirmação mostrar o mesmo HH:MM salvo
   remindAt = sendAt;
 
+  // ─── DOUBLE REMINDER: avisa antes E no horário exato do evento ───
+  //
+  // Quando user pede "me avisa X antes", a expectativa real é receber DOIS
+  // lembretes:
+  //   1) X minutos antes ("Daqui 1h você tem reunião com Caio")
+  //   2) NO horário do evento ("Sua reunião com Caio começa agora!")
+  //
+  // Antes: salvávamos só o aviso antecipado (X min antes). O lembrete no
+  // horário exato sumia, então user chegava na hora e não tinha aviso.
+  //
+  // Regras:
+  //   - Só dobra se advanceMin > 0 (com antecedência explícita)
+  //   - Só dobra pra recurrence="none" (pra recorrente, cada ocorrência
+  //     vai gerar seu próprio par via send-reminder na hora certa)
+  //   - O segundo lembrete tem source="whatsapp_at_time" pra distinguir
+  //     em logs/analytics e evitar dedup com o primeiro
+  const isDoubleEligible = advanceMin > 0 && parsed.recurrence === "none";
+  const eventExactTime = isDoubleEligible
+    ? new Date(sendAt.getTime() + advanceMin * 60 * 1000)
+    : null;
+
   const { error } = await supabase.from("reminders").insert({
     user_id: userId,
     whatsapp_number: phone,
@@ -5288,6 +5345,34 @@ async function saveReminder(
   } as any);
 
   if (error) throw error;
+
+  // Segundo lembrete: no horário EXATO do evento
+  if (eventExactTime && eventExactTime.getTime() > Date.now()) {
+    const titleStr = String(parsed.title ?? "Lembrete");
+    const atTimeMsgPt = `🔔 *Agora!*\n${titleStr} começa agora.`;
+    const atTimeMsgEn = `🔔 *Now!*\n${titleStr} starts now.`;
+    const atTimeMsgEs = `🔔 *¡Ahora!*\n${titleStr} comienza ahora.`;
+    const atTimeMsg = lang === "en" ? atTimeMsgEn : lang === "es" ? atTimeMsgEs : atTimeMsgPt;
+
+    const atTimeAligned = alignSendAtToMinute(eventExactTime);
+    const { error: atTimeErr } = await supabase.from("reminders").insert({
+      user_id: userId,
+      whatsapp_number: phone,
+      title: titleStr,
+      message: atTimeMsg,
+      send_at: atTimeAligned.toISOString(),
+      recurrence: "none",
+      recurrence_value: null,
+      source: "whatsapp_at_time",
+      status: "pending",
+      sent_by_phone: senderPhone,
+    } as any);
+
+    if (atTimeErr) {
+      // Não falha o fluxo — o user já tem o aviso antecipado. Loga e segue.
+      console.warn("[saveReminder] failed to insert at-time second reminder:", atTimeErr.message);
+    }
+  }
 
   const locale = langToLocale(lang);
   const dateRaw = remindAt.toLocaleDateString(locale, {
@@ -5324,12 +5409,13 @@ async function saveReminder(
     day_of_month: `\n🔁 *Recorrente:* todo dia ${rv ?? ""} do mês`,
   };
 
+  // Quando double reminder ativo, mostra os DOIS avisos pro user saber o que esperar
   const advanceNote = advanceMin > 0
     ? (lang === "en"
-        ? `\n🔔 Alert ${fmtAdvanceLabel(advanceMin, lang)} before`
+        ? `\n🔔 Alert ${fmtAdvanceLabel(advanceMin, lang)} before + at the exact time`
         : lang === "es"
-        ? `\n🔔 Aviso ${fmtAdvanceLabel(advanceMin, lang)} antes`
-        : `\n🔔 Aviso ${fmtAdvanceLabel(advanceMin, lang)} antes`)
+        ? `\n🔔 Aviso ${fmtAdvanceLabel(advanceMin, lang)} antes + en el horario exacto`
+        : `\n🔔 Aviso ${fmtAdvanceLabel(advanceMin, lang)} antes + na hora exata`)
     : (lang === "en" ? "\n🔔 Alert at reminder time" : lang === "es" ? "\n🔔 Aviso en el horario" : "\n🔔 Aviso na hora");
 
   const nameGreetReminder = userNickname ? `, ${userNickname}` : "";
