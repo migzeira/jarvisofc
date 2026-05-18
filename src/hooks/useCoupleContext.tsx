@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { isCouplePlan } from "@/lib/plan";
 
 /**
@@ -80,6 +80,7 @@ const COLOR_BY_SLOT: Record<string, { bg: string; text: string; border: string }
 };
 
 export function CoupleContextProvider({ children }: { children: ReactNode }) {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<{
@@ -116,7 +117,7 @@ export function CoupleContextProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, supabase]);
 
   useEffect(() => {
     load();
@@ -154,7 +155,7 @@ export function CoupleContextProvider({ children }: { children: ReactNode }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, load]);
+  }, [user, load, supabase]);
 
   const couplePlan = isCouplePlan(profile?.plan ?? null);
   const masterPhone = useMemo(() => normalize(profile?.phone_number), [profile?.phone_number]);

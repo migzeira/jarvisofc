@@ -1,16 +1,20 @@
 import { useEffect, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 
 /**
  * Subscribes to Supabase Realtime postgres_changes for the given tables.
  * Calls onUpdate() whenever INSERT, UPDATE, or DELETE happens on any table.
  * Stable across re-renders via useRef for the callback.
+ *
+ * Migrado pra useSupabase() na Fase 2 da feature view-as: usa o cliente do
+ * Context (default em rotas normais, impersonationClient em /admin/view-as/*).
  */
 export function useRealtimeSync(
   tables: string[],
   userId: string | undefined,
   onUpdate: () => void
 ): void {
+  const supabase = useSupabase();
   const callbackRef = useRef(onUpdate);
   callbackRef.current = onUpdate;
 
@@ -42,5 +46,7 @@ export function useRealtimeSync(
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [tableKey, userId]);
+    // supabase no dep array pra forçar re-subscribe se Context trocar de cliente
+    // (ex: entrar/sair de /admin/view-as/*). Re-subscribe via cleanup → setup.
+  }, [tableKey, userId, supabase]);
 }

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 
 export type AccountStatus = "pending" | "active" | "suspended" | null;
 
 export function useAccountStatus() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [status, setStatus] = useState<AccountStatus>(null);
   const [loading, setLoading] = useState(true);
@@ -20,7 +21,7 @@ export function useAccountStatus() {
         setStatus((data?.account_status as AccountStatus) ?? "pending");
         setLoading(false);
       });
-  }, [user]);
+  }, [user, supabase]);
 
   return { status, loading };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 
 export type AccessStatus =
   | "loading"
@@ -34,6 +34,7 @@ export interface UserAccessStatus {
  *   if (needsToPay) return <PaywallScreen />;
  */
 export function useUserAccessStatus(): UserAccessStatus {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [data, setData] = useState<{
     account_status: string | null;
@@ -57,7 +58,7 @@ export function useUserAccessStatus(): UserAccessStatus {
       .maybeSingle();
     setData(profile as any);
     setLoading(false);
-  }, [user]);
+  }, [user, supabase]);
 
   useEffect(() => {
     load();
