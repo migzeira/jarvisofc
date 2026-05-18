@@ -162,6 +162,10 @@ export default function AdminPanel() {
   const [broadcastHistory, setBroadcastHistory] = useState<any[]>([]);
   const [scheduledList, setScheduledList] = useState<any[]>([]);
 
+  // Audit log (admin_audit_log) — historico de impersonations e outras acoes admin
+  const [auditLog, setAuditLog] = useState<any[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+
   // Sparkline data
   const [dailyUsers, setDailyUsers] = useState<number[]>([]);
 
@@ -908,6 +912,49 @@ export default function AdminPanel() {
     else { toast.success("Agendamento cancelado"); loadBroadcastHistory(); }
   };
 
+  // Audit log: lista as ultimas 100 acoes admin (geracao de tokens de
+  // impersonation, mudancas de plano, suspensoes etc).
+  //
+  // Faz JOIN client-side por user_id pra mostrar nome do admin e do target.
+  // RLS garante que so admins veem essa tabela.
+  const loadAuditLog = async () => {
+    setAuditLoading(true);
+    try {
+      const { data, error } = await (supabase.from("admin_audit_log" as any) as any)
+        .select("id, admin_user_id, target_user_id, action, metadata, ip_address, user_agent, created_at")
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) {
+        console.error("[loadAuditLog]", error);
+        toast.error("Erro ao carregar auditoria");
+        setAuditLog([]);
+        return;
+      }
+      const rows = (data ?? []) as any[];
+      // Coleta IDs unicos pra um lookup unico em profiles
+      const ids = new Set<string>();
+      rows.forEach((r) => { if (r.admin_user_id) ids.add(r.admin_user_id); if (r.target_user_id) ids.add(r.target_user_id); });
+      let namesById: Record<string, string> = {};
+      if (ids.size > 0) {
+        const { data: profilesData } = await supabase
+          .from("profiles")
+          .select("id, display_name, phone_number")
+          .in("id", Array.from(ids));
+        for (const p of (profilesData ?? []) as any[]) {
+          namesById[p.id] = p.display_name || p.phone_number || p.id.slice(0, 8);
+        }
+      }
+      // Enriquece cada row com admin_name e target_name
+      setAuditLog(rows.map((r) => ({
+        ...r,
+        admin_name: r.admin_user_id ? (namesById[r.admin_user_id] || r.admin_user_id.slice(0, 8)) : "—",
+        target_name: r.target_user_id ? (namesById[r.target_user_id] || r.target_user_id.slice(0, 8)) : "—",
+      })));
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
   // Antes esse filtro rodava client-side sobre `profiles`, mas como `profiles`
   // é paginado em 25, a busca nunca encontrava usuários de outras páginas.
   // Agora o filtro é aplicado server-side no loadProfiles (ilike em nome e
@@ -1232,6 +1279,7 @@ export default function AdminPanel() {
               </TabsTrigger>
               <TabsTrigger value="settings" onClick={() => setKirvanoLiveRefresh(false)}><Settings className="h-4 w-4 mr-1" />Config</TabsTrigger>
               <TabsTrigger value="broadcast" onClick={() => { setKirvanoLiveRefresh(false); loadBroadcastUsers(); loadBroadcastHistory(); }}><Send className="h-4 w-4 mr-1" />Mensagem</TabsTrigger>
+              <TabsTrigger value="audit" onClick={() => { setKirvanoLiveRefresh(false); loadAuditLog(); }}><Shield className="h-4 w-4 mr-1" />Auditoria</TabsTrigger>
             </TabsList>
           </div>
 
@@ -2343,6 +2391,80 @@ export default function AdminPanel() {
                 </CardContent>
               </Card>
             )}
+          </TabsContent>
+
+          {/* AUDIT LOG — historico de acoes admin (impersonations, suspensoes, etc) */}
+          <TabsContent value="audit">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-3">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    Auditoria de ações administrativas
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Últimas 100 ações admin. Cada acesso a "Ver painel do cliente" fica registrado aqui.
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={loadAuditLog} disabled={auditLoading} className="gap-1.5">
+                  <RefreshCw className={`h-3.5 w-3.5 ${auditLoading ? "animate-spin" : ""}`} />
+                  Atualizar
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {auditLoading ? (
+                  <div className="space-y-2">
+                    {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+                  </div>
+                ) : auditLog.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-6">Nenhuma ação registrada ainda.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Quando</TableHead>
+                          <TableHead className="text-xs">Admin</TableHead>
+                          <TableHead className="text-xs">Ação</TableHead>
+                          <TableHead className="text-xs">Alvo</TableHead>
+                          <TableHead className="text-xs">Detalhes</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {auditLog.map((log) => {
+                          const actionLabels: Record<string, string> = {
+                            impersonate_token_generated: "👁️ Ver painel",
+                            impersonate_denied_not_admin: "❌ Tentativa negada (não-admin)",
+                            plan_activated: "💎 Plano ativado",
+                            account_suspended: "🚫 Conta suspensa",
+                            account_reactivated: "✅ Conta reativada",
+                          };
+                          const meta = log.metadata as Record<string, any> | null;
+                          return (
+                            <TableRow key={log.id}>
+                              <TableCell className="text-xs whitespace-nowrap">
+                                {format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR })}
+                              </TableCell>
+                              <TableCell className="text-xs">{log.admin_name}</TableCell>
+                              <TableCell className="text-xs">
+                                <Badge variant="outline" className="text-[10px]">
+                                  {actionLabels[log.action] || log.action}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-xs">{log.target_name}</TableCell>
+                              <TableCell className="text-xs text-muted-foreground max-w-md">
+                                {meta?.target_email && <div>{meta.target_email}</div>}
+                                {log.ip_address && <div className="text-[10px] opacity-60">IP: {log.ip_address}</div>}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
