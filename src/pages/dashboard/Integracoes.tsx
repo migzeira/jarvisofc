@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useIsViewAs } from "@/hooks/useDashboardBasePath";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +25,7 @@ interface Integration {
 export default function Integracoes() {
   const supabase = useSupabase();
   const { user, session } = useAuth();
+  const isViewAs = useIsViewAs();
   const [integration, setIntegration] = useState<Integration | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
@@ -108,6 +110,13 @@ export default function Integracoes() {
   };
 
   const handleConnect = async () => {
+    // Guard view-as: admin nao pode iniciar OAuth no nome do user-alvo —
+    // o callback do Google vai gravar tokens de uma conta Google QUALQUER
+    // que o admin selecionar, potencialmente sequestrando a integracao do user.
+    if (isViewAs) {
+      toast.error("Em modo view-as: o usuário precisa conectar o Google Calendar pelo painel dele.");
+      return;
+    }
     if (!session?.access_token) { toast.error("Sessão expirada. Faça login novamente."); return; }
     setConnecting(true);
     try {
@@ -129,6 +138,16 @@ export default function Integracoes() {
   };
 
   const handleDisconnect = async () => {
+    // Guard view-as: admin nao deve poder desconectar integracao do user-alvo
+    // sem confirmar explicitamente (acao destrutiva). Mostra confirm extra.
+    if (isViewAs) {
+      const ok = confirm(
+        "Você está em modo view-as.\n\n" +
+        "Desconectar o Google Calendar deste usuário vai PARAR a sincronização " +
+        "de eventos dele. Tem certeza?"
+      );
+      if (!ok) return;
+    }
     const { error } = await supabase
       .from("integrations")
       .update({ is_connected: false, access_token: null, refresh_token: null, connected_at: null } as any)

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useIsViewAs } from "@/hooks/useDashboardBasePath";
 import { toast } from "sonner";
 import logoIcon from "@/assets/logo_icon.webp";
 
@@ -26,6 +27,7 @@ interface InsightResponse {
  */
 export function FinancialInsightCard() {
   const supabase = useSupabase();
+  const isViewAs = useIsViewAs();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [insight, setInsight] = useState<string | null>(null);
@@ -93,23 +95,27 @@ export function FinancialInsightCard() {
               <p className="text-xs uppercase tracking-wider text-violet-300/80 font-medium">
                 Resumo do Jarvis
               </p>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => fetchInsight(true)}
-                disabled={loading || refreshing}
-                className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                title={lastUpdate ? `Atualizado em ${lastUpdate}` : "Atualizar resumo"}
-              >
-                {refreshing ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5" />
-                )}
-                <span className="ml-1.5 hidden sm:inline">
-                  {refreshing ? "Atualizando..." : "Atualizar"}
-                </span>
-              </Button>
+              {/* Em view-as, esconde botao 'Atualizar' — gera insight via IA e
+                  consumiria creditos no nome do user-alvo sem necessidade. */}
+              {!isViewAs && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => fetchInsight(true)}
+                  disabled={loading || refreshing}
+                  className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                  title={lastUpdate ? `Atualizado em ${lastUpdate}` : "Atualizar resumo"}
+                >
+                  {refreshing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  )}
+                  <span className="ml-1.5 hidden sm:inline">
+                    {refreshing ? "Atualizando..." : "Atualizar"}
+                  </span>
+                </Button>
+              )}
             </div>
             {loading ? (
               <div className="space-y-1.5">

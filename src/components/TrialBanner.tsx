@@ -3,8 +3,12 @@ import { Link } from "react-router-dom";
 import { Sparkles, X, ArrowRight } from "lucide-react";
 import { useUserAccessStatus } from "@/hooks/useUserAccessStatus";
 import { useDashboardBasePath, useIsViewAs } from "@/hooks/useDashboardBasePath";
+import { useAuth } from "@/hooks/useAuth";
 
-const DISMISS_STORAGE_KEY = "heyjarvis_trial_banner_dismissed_at";
+// Escopa a key por user.id pra evitar que admin (em modo view-as) dismiss
+// o banner do user-alvo e isso fique salvo na sessão admin tb (localStorage
+// é compartilhado entre admin e impersonation).
+const DISMISS_STORAGE_KEY_PREFIX = "heyjarvis_trial_banner_dismissed_at";
 const DISMISS_DURATION_MS = 6 * 60 * 60 * 1000; // 6 horas — depois reaparece
 
 /**
@@ -24,9 +28,12 @@ export function TrialBanner() {
   const { status, trialDaysRemaining, needsToPay, loading } = useUserAccessStatus();
   const basePath = useDashboardBasePath();
   const isViewAs = useIsViewAs();
+  const { user } = useAuth();
+  // Key escopada por user.id pra evitar vazamento entre admin e impersonation
+  const dismissKey = user?.id ? `${DISMISS_STORAGE_KEY_PREFIX}_${user.id}` : DISMISS_STORAGE_KEY_PREFIX;
   const [dismissed, setDismissed] = useState(() => {
     if (typeof window === "undefined") return false;
-    const raw = localStorage.getItem(DISMISS_STORAGE_KEY);
+    const raw = localStorage.getItem(dismissKey);
     if (!raw) return false;
     const ts = parseInt(raw, 10);
     if (Number.isNaN(ts)) return false;
@@ -37,7 +44,7 @@ export function TrialBanner() {
   if (status !== "trial" && status !== "expired" && status !== "pending") return null;
 
   const handleDismiss = () => {
-    localStorage.setItem(DISMISS_STORAGE_KEY, String(Date.now()));
+    localStorage.setItem(dismissKey, String(Date.now()));
     setDismissed(true);
   };
 

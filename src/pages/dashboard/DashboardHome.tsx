@@ -124,11 +124,16 @@ export default function DashboardHome() {
   const dismissBanner = (key: string) => setDismissedBanners(prev => new Set([...prev, key]));
 
   // Onboarding widget dismissal (persist em localStorage)
+  // Key escopada por user.id pra evitar vazamento entre admin e impersonation
+  // (localStorage e compartilhado entre as duas sessoes no mesmo browser).
+  const onboardingKey = user?.id
+    ? `jarvis_onboarding_dismissed_v1_${user.id}`
+    : "jarvis_onboarding_dismissed_v1";
   const [onboardingDismissed, setOnboardingDismissed] = useState<boolean>(
-    () => typeof window !== "undefined" && !!localStorage.getItem("jarvis_onboarding_dismissed_v1")
+    () => typeof window !== "undefined" && !!localStorage.getItem(onboardingKey)
   );
   const dismissOnboarding = () => {
-    localStorage.setItem("jarvis_onboarding_dismissed_v1", "1");
+    localStorage.setItem(onboardingKey, "1");
     setOnboardingDismissed(true);
   };
 
@@ -181,13 +186,14 @@ export default function DashboardHome() {
 
   // Sincroniza adminBannerDismissed com localStorage sempre que o access_until muda.
   // access_until vem do profile carregado em loadData — por isso depende de [profile].
+  // Key escopada por user.id pra evitar vazamento entre admin e impersonation.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const au = profile?.access_until;
-    if (!au) { setAdminBannerDismissed(false); return; }
-    const key = `jarvis_admin_banner_dismissed_v1:${new Date(au).toISOString()}`;
+    if (!au || !user?.id) { setAdminBannerDismissed(false); return; }
+    const key = `jarvis_admin_banner_dismissed_v1:${user.id}:${new Date(au).toISOString()}`;
     setAdminBannerDismissed(!!localStorage.getItem(key));
-  }, [profile?.access_until]);
+  }, [profile?.access_until, user?.id]);
 
   const loadData = async () => {
     const now = new Date();
@@ -351,10 +357,13 @@ export default function DashboardHome() {
   const daysLeft = accessUntil ? Math.max(0, Math.ceil((accessUntil.getTime() - Date.now()) / 86400000)) : null;
 
   // Dismiss persistente do banner "Liberado pelo admin" — chave inclui access_until
-  // para que um novo período/renovação reapresente o banner.
+  // E user.id para que: (a) um novo período/renovação reapresente o banner;
+  // (b) localStorage não vaze entre admin e impersonation (que compartilham browser).
   // NOTA: o useState/useEffect deste banner está declarado no TOPO do componente
   // (antes do early return do loading) pra não violar Rules of Hooks.
-  const adminBannerKey = accessUntil ? `jarvis_admin_banner_dismissed_v1:${accessUntil.toISOString()}` : null;
+  const adminBannerKey = accessUntil && user?.id
+    ? `jarvis_admin_banner_dismissed_v1:${user.id}:${accessUntil.toISOString()}`
+    : null;
   const dismissAdminBanner = () => {
     if (adminBannerKey) {
       localStorage.setItem(adminBannerKey, "1");
