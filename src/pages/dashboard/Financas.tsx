@@ -4,6 +4,7 @@ import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useViewAsConfirm } from "@/hooks/useViewAsConfirm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -179,6 +180,7 @@ function SavingsRing({ pct }: { pct: number }) {
 export default function Financas() {
   const supabase = useSupabase();
   const { user } = useAuth();
+  const confirmIfViewAs = useViewAsConfirm();
 
   // ── Data state ──
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -360,6 +362,7 @@ export default function Financas() {
   };
 
   const handleDeleteTransaction = (id: string) => {
+    if (!confirmIfViewAs("excluir essa transação")) return;
     // Optimistic remove
     const snapshot = transactions;
     setTransactions(prev => prev.filter(t => t.id !== id));

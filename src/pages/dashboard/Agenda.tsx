@@ -4,6 +4,7 @@ import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useViewAsConfirm } from "@/hooks/useViewAsConfirm";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -375,6 +376,7 @@ function HourGrid({
 export default function Agenda() {
   const supabase = useSupabase();
   const { user, session } = useAuth();
+  const confirmIfViewAs = useViewAsConfirm();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [googleEvents, setGoogleEvents] = useState<CalendarEvent[]>([]);
   const [googleConnected, setGoogleConnected] = useState(false);
@@ -708,6 +710,7 @@ export default function Agenda() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!confirmIfViewAs("excluir esse evento da agenda (será removido também do Google Calendar se sincronizado)")) return;
     // Busca google_event_id antes de deletar
     const eventToDelete = events.find(e => e.id === id);
     const { error } = await supabase.from("events").delete().eq("id", id);

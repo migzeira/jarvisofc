@@ -1,4 +1,5 @@
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, ShieldAlert } from "lucide-react";
+import { useIsViewAs } from "@/hooks/useDashboardBasePath";
 
 const KIRVANO_MENSAL = "https://pay.kirvano.com/4a308234-3702-4233-9d2a-4dce73bf0d2b";
 const KIRVANO_ANUAL = "https://pay.kirvano.com/59bde07b-9a4a-41a6-9009-48bb1e37c364";
@@ -54,6 +55,22 @@ export function PlanCTAButtons({
   size?: "sm" | "md";
   className?: string;
 }) {
+  const isViewAs = useIsViewAs();
+
+  // CRITICO: em modo view-as, ESCONDE os botoes de pagamento.
+  // Causa: admin em view-as poderia clicar 'Assinar' e processar o checkout
+  // do usuario-alvo (Kirvano links vao pro Pay.kirvano que pega o IP do clicador
+  // e provavelmente o cartao dele tambem se ja tiver salvo no navegador).
+  // Mostra placeholder dizendo que pagamento e auto-servico do user.
+  if (isViewAs) {
+    return (
+      <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-200 text-xs ${className}`}>
+        <ShieldAlert className="h-4 w-4 shrink-0" />
+        <span>Pagamento indisponível em view-as — usuário deve pagar pelo painel dele.</span>
+      </div>
+    );
+  }
+
   return (
     <div className={`flex flex-row items-stretch gap-2 sm:gap-3 w-full sm:w-auto ${className}`}>
       <PlanButton

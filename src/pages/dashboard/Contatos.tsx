@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useViewAsConfirm } from "@/hooks/useViewAsConfirm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +45,7 @@ const BUSINESS_CATEGORIES = [
 export default function Contatos() {
   const supabase = useSupabase();
   const { user } = useAuth();
+  const confirmIfViewAs = useViewAsConfirm();
   const couple = useCoupleContext();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
@@ -181,6 +183,7 @@ export default function Contatos() {
   };
 
   const handleDelete = async (id: string, name: string) => {
+    if (!confirmIfViewAs(`excluir o contato "${name}"`)) return;
     const { error } = await supabase.from("contacts").delete().eq("id", id);
     if (error) toast.error("Erro ao remover");
     else {

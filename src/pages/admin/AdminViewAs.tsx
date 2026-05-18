@@ -48,24 +48,37 @@ interface TargetUser {
 
 function ViewAsBanner({ targetUser, onExit }: { targetUser: TargetUser; onExit: () => void }) {
   const name = targetUser.display_name || targetUser.email || "este usuário";
+  // Banner com listras animadas + cor mais agressiva (laranja em vez de
+  // violeta sutil) pra deixar OBVIO pro admin que ele NAO esta no proprio
+  // painel. Risco: deletar/editar coisa do user-alvo achando que e o proprio.
   return (
-    <div className="sticky top-0 z-[60] bg-violet-600/95 backdrop-blur text-white px-4 py-2.5 shadow-lg border-b border-violet-400/30 flex items-center justify-between gap-3">
+    <div
+      className="sticky top-0 z-[60] backdrop-blur text-white px-4 py-2.5 shadow-lg border-b border-amber-400/40 flex items-center justify-between gap-3"
+      style={{
+        backgroundImage:
+          "repeating-linear-gradient(45deg, rgba(245, 158, 11, 0.95) 0 12px, rgba(217, 119, 6, 0.95) 12px 24px)",
+      }}
+    >
       <div className="flex items-center gap-2.5 text-sm font-medium min-w-0">
         <Eye className="w-4 h-4 shrink-0" />
         <span className="truncate">
-          Vendo o painel de <strong>{name}</strong>
+          <strong className="uppercase tracking-wide text-amber-50">[Admin view-as]</strong> Vendo painel de{" "}
+          <strong>{name}</strong>
           {targetUser.email && (
-            <span className="ml-2 text-violet-200 text-xs font-normal">({targetUser.email})</span>
+            <span className="ml-2 text-amber-100 text-xs font-normal">({targetUser.email})</span>
           )}
+          <span className="hidden md:inline ml-2 text-amber-100/80 text-xs font-normal">
+            — Ações são registradas no audit log
+          </span>
         </span>
       </div>
       <Button
         size="sm"
         variant="ghost"
         onClick={onExit}
-        className="text-white hover:bg-white/10 h-8 gap-1.5 shrink-0"
+        className="text-white hover:bg-white/15 h-8 gap-1.5 shrink-0 font-semibold"
       >
-        <X className="w-3.5 h-3.5" /> Sair desse modo
+        <X className="w-3.5 h-3.5" /> Sair
       </Button>
     </div>
   );

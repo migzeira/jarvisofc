@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useViewAsConfirm } from "@/hooks/useViewAsConfirm";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,6 +19,7 @@ import { ptBR } from "date-fns/locale";
 export default function Conversas() {
   const supabase = useSupabase();
   const { user } = useAuth();
+  const confirmIfViewAs = useViewAsConfirm();
   const [conversations, setConversations] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   const [selectedConvo, setSelectedConvo] = useState<any>(null);
@@ -41,6 +43,7 @@ export default function Conversas() {
 
   const deleteConversation = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!confirmIfViewAs("excluir essa conversa do histórico (todas as mensagens são removidas)")) return;
     // Deleta mensagens primeiro, depois a conversa
     await supabase.from("messages").delete().eq("conversation_id", id);
     const { error } = await supabase.from("conversations").delete().eq("id", id);

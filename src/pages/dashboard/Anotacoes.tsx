@@ -4,6 +4,7 @@ import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useViewAsConfirm } from "@/hooks/useViewAsConfirm";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -144,6 +145,7 @@ function NoteCard({
 export default function Anotacoes() {
   const supabase = useSupabase();
   const { user } = useAuth();
+  const confirmIfViewAs = useViewAsConfirm();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -312,6 +314,7 @@ export default function Anotacoes() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!confirmIfViewAs("excluir essa anotação")) return;
     if (!window.confirm("Excluir esta anotação?")) return;
     const { error } = await supabase.from("notes").delete().eq("id", id);
     if (error) toast.error("Erro ao deletar");

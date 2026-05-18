@@ -4,6 +4,7 @@ import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useViewAsConfirm } from "@/hooks/useViewAsConfirm";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -144,6 +145,7 @@ type MessageSub = "all" | "pending" | "sent";
 export default function Lembretes() {
   const supabase = useSupabase();
   const { user } = useAuth();
+  const confirmIfViewAs = useViewAsConfirm();
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -323,6 +325,7 @@ export default function Lembretes() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!confirmIfViewAs("excluir esse lembrete")) return;
     // Bug fix 2026-05-14: antes só deletava reminder, mas se ele tinha event_id
     // (lembrete de evento tipo "Aniversário da mãe"), o evento ficava órfão e
     // continuava aparecendo em "Próximos" do dashboard. Agora deleta ambos.
@@ -372,6 +375,7 @@ export default function Lembretes() {
   // Jarvis enviou 15+ horas seguidas e ele nao tinha como parar pelo dashboard
   // (deletar um só recriava no próximo ciclo).
   const handleCancelSeries = async (r: Reminder) => {
+    if (!confirmIfViewAs(`cancelar TODA a série "${r.title}"`)) return;
     if (!confirm(`Cancelar TODA a série "${r.title}"?\n\nIsso vai parar todas as próximas ocorrências desse lembrete recorrente.`)) {
       return;
     }

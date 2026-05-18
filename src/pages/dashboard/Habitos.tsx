@@ -4,6 +4,7 @@ import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useViewAsConfirm } from "@/hooks/useViewAsConfirm";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -478,6 +479,7 @@ export default function Habitos() {
   const supabase = useSupabase();
   const { user } = useAuth();
   const couple = useCoupleContext();
+  const confirmIfViewAs = useViewAsConfirm();
   const [habits, setHabits] = useState<Habit[]>([]);
   const [logs, setLogs] = useState<HabitLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -601,6 +603,7 @@ export default function Habitos() {
   }
 
   const deactivateHabit = async (habitId: string) => {
+    if (!confirmIfViewAs("desativar esse hábito (e remover lembretes pendentes dele)")) return;
     // Deactivate the habit
     await (supabase.from("habits" as any).update({ is_active: false } as any).eq("id", habitId) as any);
     // Delete pending habit reminders (no "cancelled" status exists — just delete them)

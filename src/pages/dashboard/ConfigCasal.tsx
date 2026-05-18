@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { useViewAsConfirm } from "@/hooks/useViewAsConfirm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -78,6 +79,7 @@ function formatPhone(raw: string): string {
 export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean } = {}) {
   const supabase = useSupabase();
   const { user } = useAuth();
+  const confirmIfViewAs = useViewAsConfirm();
   const [loading, setLoading] = useState(true);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [draft, setDraft] = useState<Partner | null>(null);
@@ -244,6 +246,7 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
 
   const handleDelete = async (p: Partner) => {
     if (!user || !p.id) return;
+    if (!confirmIfViewAs(`remover o parceiro(a) "${p.partner_name}" do plano casal`)) return;
     if (!window.confirm(`Remover ${p.partner_name} do plano casal?`)) return;
 
     // Soft delete preserva sent_by_phone nos registros antigos
