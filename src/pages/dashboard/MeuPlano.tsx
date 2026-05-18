@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ const FEATURES = [
 ];
 
 export default function MeuPlano() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +31,8 @@ export default function MeuPlano() {
 
   useEffect(() => {
     if (user) loadData();
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, supabase]);
 
   const loadData = async () => {
     const { data } = await supabase

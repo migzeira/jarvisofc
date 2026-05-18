@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,7 @@ interface Integration {
 }
 
 export default function Integracoes() {
+  const supabase = useSupabase();
   const { user, session } = useAuth();
   const [integration, setIntegration] = useState<Integration | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,8 +37,8 @@ export default function Integracoes() {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co";
   const callbackUrl = `${supabaseUrl}/functions/v1/oauth-callback`;
 
-  useEffect(() => { if (session?.access_token) loadCredentials(); }, [session]);
-  useEffect(() => { if (user) loadData(); }, [user]);
+  useEffect(() => { if (session?.access_token) loadCredentials(); }, [session, supabase]);
+  useEffect(() => { if (user) loadData(); }, [user, supabase]);
 
   // Detect OAuth return params
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -310,6 +310,7 @@ function PlanCard({
 // ─────────────────────────────────────────────
 
 export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean } = {}) {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -332,7 +333,7 @@ export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean }
   const [selectedDdi, setSelectedDdi] = useState("55");
   const [localNumber, setLocalNumber] = useState("");
 
-  useEffect(() => { if (user) loadData(); }, [user]);
+  useEffect(() => { if (user) loadData(); }, [user, supabase]);
 
   const loadData = async () => {
     const { data } = await supabase.from("profiles").select("*").eq("id", user!.id).single();

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,6 +16,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 export default function Conversas() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [conversations, setConversations] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
@@ -23,7 +24,7 @@ export default function Conversas() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  useEffect(() => { if (user) loadConversations(); }, [user]);
+  useEffect(() => { if (user) loadConversations(); }, [user, supabase]);
 
   const loadConversations = async () => {
     // Limita a 100 conversas mais recentes. Cliente típico tem poucas (5-20),

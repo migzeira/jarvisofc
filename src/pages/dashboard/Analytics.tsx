@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -82,6 +82,7 @@ function KpiCard({ title, value, loading }: { title: string; value: string; load
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Analytics() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [kpis, setKpis] = useState<KPIs>({ totalMessages: 0, avgResponseMs: null, successRate: null, distinctIntents: 0 });
@@ -94,7 +95,7 @@ export default function Analytics() {
     if (!user) return;
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user, supabase]);
 
   async function loadData() {
     setLoading(true);
