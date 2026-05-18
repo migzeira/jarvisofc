@@ -260,6 +260,28 @@ export default function Lembretes() {
     if (!title.trim() || !message.trim() || !sendAt) {
       toast.error("Preencha título, mensagem e data/hora"); return;
     }
+
+    // ── Validação extra: hourly precisa de intervalo explícito ────────
+    // Bug reportado 18/05: cliente criou hourly sem preencher o intervalo →
+    // recurrence_value=null → backend interpreta como "a cada 1 hora" → spam
+    // de 24 mensagens/dia. Agora exige valor numérico válido (1-23) E
+    // confirmação extra antes de criar.
+    if (recurrence === "hourly") {
+      const hours = parseInt(recurrenceValue);
+      if (!recurrenceValue || isNaN(hours) || hours < 1 || hours > 23) {
+        toast.error("Pra lembretes 'A cada X horas', preencha o intervalo (1 a 23 horas).");
+        return;
+      }
+      const msgsPerDay = Math.floor(24 / hours);
+      const intervalLabel = hours === 1 ? "a cada 1 hora" : `a cada ${hours} horas`;
+      const ok = confirm(
+        `Confirma criar lembrete RECORRENTE ${intervalLabel}?\n\n` +
+        `Isso vai enviar ~${msgsPerDay} mensagens por dia no seu WhatsApp, todos os dias, até você cancelar a série.\n\n` +
+        `Clique OK pra criar, ou Cancelar pra ajustar.`
+      );
+      if (!ok) return;
+    }
+
     setSaving(true);
     const { data: profile } = await supabase.from("profiles").select("phone_number").eq("id", user!.id).single();
     const phone = profile?.phone_number ?? "";
