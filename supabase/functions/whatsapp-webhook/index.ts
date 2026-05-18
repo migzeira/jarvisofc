@@ -4883,6 +4883,50 @@ async function handleReminderSet(
   const ctx = (session?.pending_context as Record<string, unknown>) ?? {};
   const step = (ctx.step as string) ?? null;
 
+  // ─── STEP: hourly_confirm ───
+  // User está respondendo ao prompt de confirmação de hourly recurring.
+  // Bloqueio extra contra criação acidental de spam recorrente.
+  if (step === "hourly_confirm") {
+    const parsed = ctx.parsed as Record<string, unknown>;
+    const msgLow = message.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+
+    const wantsYes =
+      msgLow === "button:hourly_confirm_yes" ||
+      msgLow === "1" ||
+      /^(sim|s|ok|confirma|confirmar|pode|claro|yes|yep|isso|quero|criar|cria)\b/.test(msgLow);
+
+    const wantsNo =
+      msgLow === "button:hourly_confirm_no" ||
+      msgLow === "2" ||
+      /^(nao|n|cancela|cancelar|esquece|deixa|aborta|abortar|nope|nada)\b/.test(msgLow);
+
+    if (wantsNo) {
+      return { response: "❌ Beleza, não criei o lembrete recorrente.\n\n_Manda de novo se quiser ajustar pra outro intervalo._" };
+    }
+
+    if (wantsYes) {
+      // Confirmado — segue o fluxo normal. Como é recorrente, vai direto pro saveReminder
+      // (pulamos o prompt de antecedência pq não faz sentido pra hourly).
+      const remindAt = new Date(parsed.remind_at as string);
+      // Safety net: empurra pro futuro se ficou no passado
+      let _pushed = 0;
+      const _nowMs = Date.now();
+      while (remindAt.getTime() <= _nowMs && _pushed < 7) {
+        remindAt.setDate(remindAt.getDate() + 1);
+        _pushed++;
+      }
+      if (_pushed > 0) parsed.remind_at = remindAt.toISOString();
+      return await saveReminder(userId, phone, parsed, remindAt, 0, lang, userNickname, userTz, senderPhone);
+    }
+
+    // Resposta ambígua — pergunta de novo
+    return {
+      response: `🤔 Não entendi. *"${parsed.title}"* a cada hora — confirma?\n\n*1.* Sim, pode criar\n*2.* Cancela`,
+      pendingAction: "reminder_set",
+      pendingContext: { step: "hourly_confirm", parsed },
+    };
+  }
+
   // ─── STEP: reminder_confirm_default_time ───
   // User respondendo ao prompt "te lembro às 9h, beleza?". Possíveis respostas:
   //   - Cancelamento explícito → não salva nada
@@ -5209,6 +5253,36 @@ async function handleReminderSet(
   if (regexRecurrence && parsed.recurrence === "none") {
     parsed.recurrence = regexRecurrence.recurrence as typeof parsed.recurrence;
     parsed.recurrence_value = regexRecurrence.recurrence_value;
+  }
+
+  // ─── CONFIRMAÇÃO EXTRA: hourly recurring ───
+  //
+  // BUG REPORTADO 15/05: user criou "me lembra de testando a cada hora",
+  // Jarvis criou hourly recurring, ficou enviando "Testando" por 15+ horas
+  // até alguém perceber. Hourly é a recorrência mais perigosa que existe —
+  // até 24 mensagens/dia indefinidamente.
+  //
+  // Agora: antes de salvar hourly recurring, EXIGE confirmação via botão.
+  // Defesa contra criação acidental — user precisa clicar SIM explicitamente
+  // pra autorizar 24+ mensagens/dia.
+  if (parsed.recurrence === "hourly") {
+    const interval = (parsed.recurrence_value as number) || 1;
+    const intervalStr = interval === 1 ? "a cada hora" : `a cada ${interval} horas`;
+    const msgsPerDay = Math.floor(24 / interval);
+    sendButtons(
+      phone,
+      "⚠️ Lembrete frequente — confirma?",
+      `Vou te avisar *${intervalStr}* sobre "${parsed.title}".\n\nIsso é ~${msgsPerDay} mensagens por dia, todos os dias. Tem certeza?`,
+      [
+        { id: "hourly_confirm_yes", text: "✅ Sim, pode criar" },
+        { id: "hourly_confirm_no",  text: "❌ Cancela" },
+      ]
+    ).catch(() => {});
+    return {
+      response: "",
+      pendingAction: "reminder_set",
+      pendingContext: { step: "hourly_confirm", parsed },
+    };
   }
 
   // ── Pergunta com quanto tempo de antecedência ──

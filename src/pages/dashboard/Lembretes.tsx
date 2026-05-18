@@ -20,7 +20,7 @@ import { SenderSelector, resolveSenderTargets, type SenderSelectorValue } from "
 import { useCoupleContext } from "@/hooks/useCoupleContext";
 import {
   Bell, Plus, Trash2, Clock, RefreshCw, CheckCircle2, XCircle,
-  Pencil, Calendar, CalendarCheck, MessageSquare, Search, User,
+  Pencil, Calendar, CalendarCheck, MessageSquare, Search, User, Ban,
 } from "lucide-react";
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
@@ -336,6 +336,44 @@ export default function Lembretes() {
     load();
   };
 
+  // Cancela uma SÉRIE inteira de lembretes recorrentes (todos pendentes da cadeia).
+  // Identifica a cadeia por title + recurrence (escopado pelo RLS por user).
+  //
+  // Por que essa função existe:
+  // O handleDelete só remove UMA row. Pra recorrentes, isso só pausa até o próximo
+  // disparo — quando o send-reminder cria a próxima ocorrência. Esse handler
+  // cancela todas as ocorrências pending da mesma série, garantindo que a cadeia
+  // realmente pare.
+  //
+  // Bug histórico que motivou: user criou "me lembra de testando a cada hora",
+  // Jarvis enviou 15+ horas seguidas e ele nao tinha como parar pelo dashboard
+  // (deletar um só recriava no próximo ciclo).
+  const handleCancelSeries = async (r: Reminder) => {
+    if (!confirm(`Cancelar TODA a série "${r.title}"?\n\nIsso vai parar todas as próximas ocorrências desse lembrete recorrente.`)) {
+      return;
+    }
+
+    if (!r.title) {
+      toast.error("Lembrete sem título — use o botão Excluir.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("reminders")
+      .update({ status: "cancelled" } as any)
+      .eq("title", r.title)
+      .eq("recurrence", r.recurrence)
+      .eq("status", "pending");
+
+    if (error) {
+      toast.error("Erro ao cancelar série");
+      return;
+    }
+
+    toast.success(`Série "${r.title}" cancelada — não vai mais receber esse lembrete.`);
+    load();
+  };
+
   const handleRetry = async (id: string, currentStatus?: string) => {
     const retryAt = new Date(Date.now() + 60 * 1000).toISOString();
     const { error } = await supabase.from("reminders").update({ status: "pending", send_at: retryAt }).eq("id", id);
@@ -640,10 +678,19 @@ export default function Lembretes() {
                 <RefreshCw className="h-4 w-4" />
               </button>
             )}
+            {isRecurringPending && (
+              <button
+                onClick={() => handleCancelSeries(r)}
+                title="Cancelar série inteira (todas as ocorrências futuras)"
+                className="text-muted-foreground hover:text-orange-400 transition-colors"
+              >
+                <Ban className="h-4 w-4" />
+              </button>
+            )}
             <button onClick={() => openEdit(r)} title="Editar" className="text-muted-foreground hover:text-primary transition-colors">
               <Pencil className="h-4 w-4" />
             </button>
-            <button onClick={() => handleDelete(r.id)} title="Excluir" className="text-muted-foreground hover:text-destructive transition-colors">
+            <button onClick={() => handleDelete(r.id)} title={isRecurringPending ? "Excluir só esta ocorrência" : "Excluir"} className="text-muted-foreground hover:text-destructive transition-colors">
               <Trash2 className="h-4 w-4" />
             </button>
           </div>
