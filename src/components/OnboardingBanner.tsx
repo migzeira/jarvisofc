@@ -1,9 +1,11 @@
 import { useAccountStatus } from "@/hooks/useAccountStatus";
 import { AlertCircle, Clock, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useDashboardBasePath } from "@/hooks/useDashboardBasePath";
 
 export function OnboardingBanner() {
   const { status, loading } = useAccountStatus();
+  const basePath = useDashboardBasePath();
 
   if (loading || status === "active") return null;
 
@@ -13,7 +15,7 @@ export function OnboardingBanner() {
         <Clock className="h-4 w-4 text-yellow-400 shrink-0" />
         <span className="text-yellow-200">
           <strong>Sua conta não tem um plano ativo.</strong> Ative um plano e registre seu número de WhatsApp em{" "}
-          <Link to="/dashboard/configuracoes" className="underline underline-offset-2 font-semibold">
+          <Link to={`${basePath}/configuracoes`} className="underline underline-offset-2 font-semibold">
             Configurações
           </Link>{" "}
           para utilizar o Jarvis.

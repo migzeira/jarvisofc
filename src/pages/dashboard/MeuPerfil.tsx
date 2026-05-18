@@ -374,13 +374,21 @@ export default function MeuPerfil({ hideTitle = false }: { hideTitle?: boolean }
   // Locked: already set a number AND exhausted change allowance
   const isPhoneLocked = storedPhone !== null && changesCount >= MAX_PHONE_CHANGES;
 
-  // Plan gate: só pode cadastrar/editar WhatsApp se tiver plano ativo
-  // Verifica account_status E access_until (se tiver data, precisa estar no futuro).
-  // Sem essa segunda checagem, um user expirado com status ainda 'active' no banco
-  // (antes do cron rodar) conseguia cadastrar WhatsApp e depois o Jarvis bloqueava no webhook.
+  // Plan gate: só pode cadastrar/editar WhatsApp se tiver plano ativo OU trial vigente.
+  //
+  // BUG REPORTADO 18/05: usuario em trial (status='trial', dentro do periodo gratuito)
+  // via no painel "Assine um plano pra cadastrar WhatsApp" — confuso porque ele JA
+  // estava usando o Jarvis no trial. Causa: hasActivePlan exigia status==='active',
+  // tratando 'trial' como sem-plano.
+  //
+  // Fix: aceita 'active' (com access_until valido) OU 'trial' (com trial_ends_at valido).
+  // Ambos sao estados em que o user pode operar o Jarvis no WhatsApp.
+  const nowTs = Date.now();
+  const accessUntilOk = !profile?.access_until || new Date(profile.access_until).getTime() > nowTs;
+  const trialEndsOk = !profile?.trial_ends_at || new Date(profile.trial_ends_at).getTime() > nowTs;
   const hasActivePlan =
-    profile?.account_status === "active" &&
-    (!profile?.access_until || new Date(profile.access_until) > new Date());
+    (profile?.account_status === "active" && accessUntilOk) ||
+    (profile?.account_status === "trial" && trialEndsOk);
   const isPhoneBlockedByPlan = !hasActivePlan;
 
   // ── Save ──

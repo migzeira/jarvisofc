@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
+import { useDashboardBasePath } from "@/hooks/useDashboardBasePath";
 import {
   Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2,
   TrendingDown, TrendingUp, Bell, BellRing, Plus, ChevronRight,
@@ -23,12 +24,14 @@ import { ptBR } from "date-fns/locale";
 // ─────────────────────────────────────────────
 // Quick actions
 // ─────────────────────────────────────────────
+// Paths sao RELATIVOS — DashboardHome prefixa com basePath dinamico
+// (/dashboard ou /admin/view-as/<id>) via useDashboardBasePath()
 const QUICK_ACTIONS = [
   {
     icon: Wallet,
     label: "Finanças",
     desc: "Ver gastos e receitas",
-    to: "/dashboard/financas",
+    path: "/financas",
     color: "text-emerald-400",
     bg: "bg-emerald-500/10",
     border: "border-emerald-500/20",
@@ -37,7 +40,7 @@ const QUICK_ACTIONS = [
     icon: CalendarDays,
     label: "Agenda",
     desc: "Compromissos e eventos",
-    to: "/dashboard/agenda",
+    path: "/agenda",
     color: "text-blue-400",
     bg: "bg-blue-500/10",
     border: "border-blue-500/20",
@@ -46,7 +49,7 @@ const QUICK_ACTIONS = [
     icon: StickyNote,
     label: "Anotações",
     desc: "Ideias e informações",
-    to: "/dashboard/anotacoes",
+    path: "/anotacoes",
     color: "text-amber-400",
     bg: "bg-amber-500/10",
     border: "border-amber-500/20",
@@ -55,7 +58,7 @@ const QUICK_ACTIONS = [
     icon: Zap,
     label: "Habitos",
     desc: "Rastrear sua rotina",
-    to: "/dashboard/habitos",
+    path: "/habitos",
     color: "text-rose-400",
     bg: "bg-rose-500/10",
     border: "border-rose-500/20",
@@ -64,7 +67,7 @@ const QUICK_ACTIONS = [
     icon: Settings,
     label: "Configurar Agente",
     desc: "Personalizar o Jarvis",
-    to: "/dashboard/agente",
+    path: "/configuracoes?tab=agente",
     color: "text-violet-400",
     bg: "bg-violet-500/10",
     border: "border-violet-500/20",
@@ -103,6 +106,7 @@ function activityColor(type: string) {
 export default function DashboardHome() {
   const supabase = useSupabase();
   const { user } = useAuth();
+  const basePath = useDashboardBasePath();
   const [profile, setProfile] = useState<any>(null);
   const [agentConfig, setAgentConfig] = useState<any>(null);
   const [stats, setStats] = useState({ expenses: 0, incomes: 0, events: 0, notes: 0, reminders: 0 });
@@ -525,7 +529,7 @@ export default function DashboardHome() {
                   title: "Cadastre seu WhatsApp",
                   hint: phoneSet ? null : (
                     <>Vá em{" "}
-                      <Link to="/dashboard/configuracoes" className="text-violet-400 underline">Configurações</Link>
+                      <Link to={`${basePath}/configuracoes`} className="text-violet-400 underline">Configurações</Link>
                       {" "}e salve seu número com DDD</>
                   ),
                 },
@@ -583,7 +587,7 @@ export default function DashboardHome() {
                 </span>
               </div>
             ) : (
-              <Link to="/dashboard/perfil" className="flex items-center gap-1.5 text-primary hover:text-primary/80 transition-colors group">
+              <Link to={`${basePath}/configuracoes?tab=perfil`} className="flex items-center gap-1.5 text-primary hover:text-primary/80 transition-colors group">
                 <Smartphone className="h-3 w-3 shrink-0" />
                 <span className="text-xs font-medium group-hover:underline">Clique aqui para ativar o Jarvis</span>
               </Link>
@@ -731,7 +735,7 @@ export default function DashboardHome() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center justify-between">
               <span className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-blue-400" /> Próximos</span>
-              <Link to="/dashboard/agenda" className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+              <Link to={`${basePath}/agenda`} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
                 Ver todos <ChevronRight className="h-3 w-3" />
               </Link>
             </CardTitle>
@@ -775,7 +779,7 @@ export default function DashboardHome() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center justify-between">
               <span className="flex items-center gap-2"><Bell className="h-4 w-4 text-violet-400" /> Lembretes</span>
-              <Link to="/dashboard/lembretes" className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+              <Link to={`${basePath}/lembretes`} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
                 Ver todos <ChevronRight className="h-3 w-3" />
               </Link>
             </CardTitle>
@@ -825,7 +829,7 @@ export default function DashboardHome() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center justify-between">
               <span className="flex items-center gap-2"><StickyNote className="h-4 w-4 text-amber-400" /> Anotações</span>
-              <Link to="/dashboard/anotacoes" className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+              <Link to={`${basePath}/anotacoes`} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
                 Ver todas <ChevronRight className="h-3 w-3" />
               </Link>
             </CardTitle>

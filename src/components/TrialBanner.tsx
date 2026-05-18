@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Sparkles, X, ArrowRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { useUserAccessStatus } from "@/hooks/useUserAccessStatus";
+import { useDashboardBasePath, useIsViewAs } from "@/hooks/useDashboardBasePath";
 
 const DISMISS_STORAGE_KEY = "heyjarvis_trial_banner_dismissed_at";
 const DISMISS_DURATION_MS = 6 * 60 * 60 * 1000; // 6 horas — depois reaparece
@@ -22,6 +22,8 @@ const DISMISS_DURATION_MS = 6 * 60 * 60 * 1000; // 6 horas — depois reaparece
  */
 export function TrialBanner() {
   const { status, trialDaysRemaining, needsToPay, loading } = useUserAccessStatus();
+  const basePath = useDashboardBasePath();
+  const isViewAs = useIsViewAs();
   const [dismissed, setDismissed] = useState(() => {
     if (typeof window === "undefined") return false;
     const raw = localStorage.getItem(DISMISS_STORAGE_KEY);
@@ -69,19 +71,10 @@ export function TrialBanner() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <Link to="/dashboard/configuracoes?tab=perfil">
-              <Button
-                size="sm"
-                variant="ghost"
-                className={
-                  isUrgent
-                    ? "h-7 text-xs gap-1 text-amber-200 hover:bg-amber-500/15"
-                    : "h-7 text-xs gap-1 text-emerald-200 hover:bg-emerald-500/15"
-                }
-              >
-                Ver planos <ArrowRight className="h-3 w-3" />
-              </Button>
-            </Link>
+            {/* Botão 'Ver planos' removido 18/05/2026:
+                1. Em modo view-as ele jogava o admin pro proprio /dashboard/configuracoes (sai do view-as)
+                2. Visualmente poluido — usuario ja sabe que tem plano clicando em Configuracoes
+                Mantém apenas o X pra dispensar. */}
             <button
               onClick={handleDismiss}
               aria-label="Dispensar aviso"
@@ -95,29 +88,40 @@ export function TrialBanner() {
     );
   }
 
-  // ── Variante EXPIRADO / PENDING — banner informativo, sem botão ──
-  // (botão removido pq o paywall já aparece quando user tenta entrar nas
-  //  páginas restritas, ou em Configurações > Perfil & Plano)
+  // ── Variante EXPIRADO / PENDING — banner informativo ──
+  // Em modo view-as, banner NÃO clica em lugar nenhum (admin não vai pagar
+  // o plano do user-alvo). Em modo normal, leva pra configuracoes.
   if (needsToPay) {
-    return (
-      <Link
-        to="/dashboard/configuracoes?tab=perfil"
-        className="block hover:opacity-90 transition-opacity"
-      >
-        <div className="bg-gradient-to-r from-red-500/15 via-rose-500/15 to-red-500/15 border-b border-red-500/30">
-          <div className="px-4 py-2.5 flex items-center gap-3">
-            <Sparkles className="h-4 w-4 text-red-400 shrink-0" />
-            <div className="text-sm min-w-0 flex-1">
-              <span className="font-semibold text-red-200">
-                {status === "expired" ? "Seu período de teste expirou" : "Sem plano ativo"}
-              </span>
+    const innerContent = (
+      <div className="bg-gradient-to-r from-red-500/15 via-rose-500/15 to-red-500/15 border-b border-red-500/30">
+        <div className="px-4 py-2.5 flex items-center gap-3">
+          <Sparkles className="h-4 w-4 text-red-400 shrink-0" />
+          <div className="text-sm min-w-0 flex-1">
+            <span className="font-semibold text-red-200">
+              {status === "expired" ? "Período de teste expirou" : "Sem plano ativo"}
+            </span>
+            {!isViewAs && (
               <span className="hidden sm:inline text-muted-foreground ml-2">
                 — clique aqui pra ver os planos e renovar
               </span>
-            </div>
-            <ArrowRight className="h-4 w-4 text-red-300 shrink-0" />
+            )}
           </div>
+          {!isViewAs && <ArrowRight className="h-4 w-4 text-red-300 shrink-0" />}
         </div>
+      </div>
+    );
+
+    if (isViewAs) {
+      // Em view-as, banner é só informativo (sem link). Evita admin clicar
+      // e ser redirecionado pra fora do view-as.
+      return innerContent;
+    }
+    return (
+      <Link
+        to={`${basePath}/configuracoes?tab=perfil`}
+        className="block hover:opacity-90 transition-opacity"
+      >
+        {innerContent}
       </Link>
     );
   }
