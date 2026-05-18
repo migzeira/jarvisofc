@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -177,6 +177,7 @@ function SavingsRing({ pct }: { pct: number }) {
 // ─────────────────────────────────────────────
 
 export default function Financas() {
+  const supabase = useSupabase();
   const { user } = useAuth();
 
   // ── Data state ──
@@ -306,7 +307,7 @@ export default function Financas() {
   const { triggerLive, isLive } = useRealtimeBadge();
   useRealtimeSync(["transactions", "budgets"], user?.id, () => { loadData(); triggerLive(); });
 
-  useEffect(() => { if (user) loadData(); }, [user]);
+  useEffect(() => { if (user) loadData(); }, [user, supabase]);
 
   // ─────────────────────────────────────────────
   // Data loading

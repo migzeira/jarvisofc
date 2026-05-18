@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { User, Settings, Heart } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { isCouplePlan } from "@/lib/plan";
 import MeuPerfil from "./MeuPerfil";
 import ConfigAgente from "./ConfigAgente";
@@ -20,6 +20,7 @@ import ConfigCasal from "./ConfigCasal";
  * a UI fica idêntica à versão pré-casal.
  */
 export default function Configuracoes() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const [hasCouplePlan, setHasCouplePlan] = useState(false);
@@ -36,7 +37,7 @@ export default function Configuracoes() {
       .then(({ data }) => {
         setHasCouplePlan(isCouplePlan((data?.plan as string) ?? null));
       });
-  }, [user]);
+  }, [user, supabase]);
 
   const requestedTab = params.get("tab");
   const tab =

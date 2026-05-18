@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -373,6 +373,7 @@ function HourGrid({
 // ---------------------------------------------------------------------------
 
 export default function Agenda() {
+  const supabase = useSupabase();
   const { user, session } = useAuth();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [googleEvents, setGoogleEvents] = useState<CalendarEvent[]>([]);
@@ -441,7 +442,7 @@ export default function Agenda() {
     }
     setEvents((data as unknown as CalendarEvent[]) ?? []);
     setLoading(false);
-  }, [user]);
+  }, [user, supabase]);
 
   // Fetch Google Calendar events
   const loadGoogleEvents = useCallback(async () => {

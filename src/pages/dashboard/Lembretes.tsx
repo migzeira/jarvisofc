@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -142,6 +142,7 @@ type MessageSub = "all" | "pending" | "sent";
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function Lembretes() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -203,7 +204,7 @@ export default function Lembretes() {
   // Plano casal: quem está enviando? (assina mensagem com nome do remetente)
   const [msgTarget, setMsgTarget] = useState<SenderSelectorValue>("me");
 
-  useEffect(() => { if (user) load(); }, [user]);
+  useEffect(() => { if (user) load(); }, [user, supabase]);
 
   const { triggerLive, isLive } = useRealtimeBadge();
   useRealtimeSync(["reminders"], user?.id, () => { load(); triggerLive(); });

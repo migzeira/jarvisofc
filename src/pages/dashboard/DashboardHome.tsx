@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -101,6 +101,7 @@ function activityColor(type: string) {
 // Component
 // ─────────────────────────────────────────────
 export default function DashboardHome() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [agentConfig, setAgentConfig] = useState<any>(null);
@@ -135,14 +136,15 @@ export default function DashboardHome() {
   useEffect(() => {
     if (!user) return;
     loadData();
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, supabase]);
 
   // Gráfico de gastos — refetch quando o período muda (7/15/30 dias)
   useEffect(() => {
     if (!user) return;
     loadChart();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, chartPeriod]);
+  }, [user, chartPeriod, supabase]);
 
   const loadChart = async () => {
     const now = new Date();
