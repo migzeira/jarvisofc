@@ -83,3 +83,11 @@ jobs:
         run: supabase functions deploy process-recurring --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      # admin-impersonate-token gera tokens de sessao pra feature 'Ver painel do cliente'.
+      # Valida JWT do admin internamente (não dá pra usar verify_jwt do gateway porque
+      # precisa diferenciar admin de user comum via lookup em profiles.is_admin).
+      - name: Deploy admin-impersonate-token
+        run: supabase functions deploy admin-impersonate-token --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
