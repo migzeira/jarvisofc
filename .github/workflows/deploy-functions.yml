@@ -91,3 +91,11 @@ jobs:
         run: supabase functions deploy admin-impersonate-token --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      # whatsapp-link-init: cria pending_whatsapp_link + envia mensagem de boas-vindas.
+      # Chamado pelo signup (auto) e MeuPerfil (botao 'Reenviar mensagem').
+      # Sem ele no CI, mudanças nunca chegavam em prod. Bug descoberto 18/05.
+      - name: Deploy whatsapp-link-init
+        run: supabase functions deploy whatsapp-link-init --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

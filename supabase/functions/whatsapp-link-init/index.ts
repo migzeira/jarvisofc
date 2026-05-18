@@ -62,17 +62,34 @@ serve(async (req) => {
   // Carrega profile
   const { data: profile, error: profErr } = await supabase
     .from("profiles")
-    .select("id, display_name, phone_number, account_status, whatsapp_lid, access_until")
+    .select("id, display_name, phone_number, account_status, whatsapp_lid, access_until, trial_ends_at")
     .eq("id", userId)
     .maybeSingle();
 
   if (profErr || !profile) return json({ error: "profile_not_found" }, 404);
 
-  // Valida plano ativo
-  if (profile.account_status !== "active") {
+  // Valida plano ativo OU trial dentro do prazo.
+  //
+  // BUG REPORTADO 18/05: amiga do Miguel cadastrou via signup, recebeu
+  // account_status='trial' (3 dias gratis), mas whatsapp-link-init bloqueava
+  // pq exigia 'active'. Resultado: LID nao vinculava, pending_link nao
+  // criava, e quando ela mandou 'Oi' no WhatsApp -> webhook nao achou
+  // profile -> 'unknown_number' silent -> Jarvis NUNCA respondeu.
+  //
+  // Fix: aceitar trial tambem. Pra Multi-Device WhatsApp (que manda @lid),
+  // pending_link e critico — sem isso, todos os trial users ficam sem
+  // resposta ate pagarem. Bug de retencao critico.
+  const nowTs = Date.now();
+  const trialValid = profile.account_status === "trial"
+    && profile.trial_ends_at
+    && new Date(profile.trial_ends_at).getTime() > nowTs;
+  const accessValid = profile.account_status === "active"
+    && (!profile.access_until || new Date(profile.access_until).getTime() > nowTs);
+
+  if (!trialValid && !accessValid) {
     return json({
       error: "no_active_plan",
-      message: "Sua conta precisa de um plano ativo pra vincular o WhatsApp."
+      message: "Sua conta precisa estar em trial ou plano ativo pra vincular o WhatsApp."
     }, 403);
   }
 

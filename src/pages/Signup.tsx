@@ -68,7 +68,7 @@ export default function Signup() {
     // Monta phone completo: DDI + número local (só dígitos)
     const fullPhone = buildFullPhone(ddi, localPhone);
 
-    const { error } = await supabase.auth.signUp({
+    const { data: signupData, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -90,6 +90,34 @@ export default function Signup() {
         toast.error(error.message);
       }
     } else {
+      // ── Auto-vincula WhatsApp em background ──
+      //
+      // BUG REPORTADO 18/05: amiga do Miguel cadastrou no signup, mandou
+      // 'Oi' no WhatsApp e Jarvis nao respondeu. Causa: signup salva phone
+      // em profiles, mas NAO chama whatsapp-link-init pra criar
+      // pending_whatsapp_link. Quando ela mandou msg via Multi-Device
+      // (chega como @lid sem phone), webhook nao achou profile e ficou em
+      // 'unknown_number' silent.
+      //
+      // Fix: chamar whatsapp-link-init logo apos signup. Background, nao
+      // bloqueia o navigate. Se falhar, MeuPerfil tem botao 'Reenviar
+      // mensagem' como fallback.
+      const accessToken = signupData?.session?.access_token;
+      if (accessToken) {
+        const linkInitUrl = `${(import.meta as any).env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co"}/functions/v1/whatsapp-link-init`;
+        fetch(linkInitUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        }).catch((e) => {
+          // Falha silenciosa — usuario ainda pode acionar manualmente em MeuPerfil
+          console.warn("[signup] whatsapp-link-init falhou:", e);
+        });
+      }
+
       toast.success("Conta criada! Verifique seu email para confirmar.");
       navigate("/dashboard");
     }
