@@ -29,16 +29,18 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 
+// Itens do menu — os paths são RELATIVOS (sem prefixo). Sidebar prefixa
+// dinamicamente com /dashboard OU /admin/view-as/<userId> dependendo do contexto.
 const menuItems = [
-  { title: "Início", url: "/dashboard", icon: Home },
-  { title: "Finanças", url: "/dashboard/financas", icon: Wallet },
-  { title: "Agenda", url: "/dashboard/agenda", icon: CalendarDays },
-  { title: "Lembretes", url: "/dashboard/lembretes", icon: Bell },
-  { title: "Anotações", url: "/dashboard/anotacoes", icon: StickyNote },
-  { title: "Hábitos", url: "/dashboard/habitos", icon: Zap },
-  { title: "Contatos", url: "/dashboard/contatos", icon: BookUser },
-  { title: "Google Calendar", url: "/dashboard/integracoes", icon: CalendarDays },
-  { title: "Configurações", url: "/dashboard/configuracoes", icon: Settings },
+  { title: "Início",         path: "",              icon: Home },
+  { title: "Finanças",       path: "/financas",     icon: Wallet },
+  { title: "Agenda",         path: "/agenda",       icon: CalendarDays },
+  { title: "Lembretes",      path: "/lembretes",    icon: Bell },
+  { title: "Anotações",      path: "/anotacoes",    icon: StickyNote },
+  { title: "Hábitos",        path: "/habitos",      icon: Zap },
+  { title: "Contatos",       path: "/contatos",     icon: BookUser },
+  { title: "Google Calendar",path: "/integracoes",  icon: CalendarDays },
+  { title: "Configurações",  path: "/configuracoes",icon: Settings },
 ];
 
 export function AppSidebar() {
@@ -48,6 +50,15 @@ export function AppSidebar() {
   const { signOut, isAdmin } = useAuth();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+
+  // Detecta modo view-as via pathname (em vez de useParams pra não acoplar
+  // com a estrutura de rotas e funcionar em qualquer ponto da árvore).
+  // /admin/view-as/<userId>/<rest> → split[3] = userId
+  const isViewAs = location.pathname.startsWith("/admin/view-as/");
+  const viewAsUserId = isViewAs ? location.pathname.split("/")[3] : null;
+  const baseUrl = isViewAs && viewAsUserId
+    ? `/admin/view-as/${viewAsUserId}`
+    : "/dashboard";
 
   const handleLogout = async () => {
     if (isMobile) setOpenMobile(false);
@@ -91,34 +102,62 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
-                    <NavLink
-                      to={item.url}
-                      end={item.url === "/dashboard"}
-                      className="hover:bg-accent/50 transition-colors"
-                      activeClassName="bg-accent text-primary font-medium"
-                      onClick={handleNavClick}
-                    >
-                      <item.icon className="h-4 w-4 mr-2 flex-shrink-0" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {menuItems.map((item) => {
+                const fullUrl = `${baseUrl}${item.path}`;
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild>
+                      <NavLink
+                        to={fullUrl}
+                        end={item.path === ""}
+                        className="hover:bg-accent/50 transition-colors"
+                        activeClassName="bg-accent text-primary font-medium"
+                        onClick={handleNavClick}
+                      >
+                        <item.icon className="h-4 w-4 mr-2 flex-shrink-0" />
+                        {!collapsed && <span>{item.title}</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="p-4 border-t border-border space-y-1">
-        {isAdmin && (
+        {/*
+         * Em modo view-as, esconde:
+         *  - Botão "Painel Admin" (já tem o banner sticky pra sair)
+         *  - Dropdown "Ajuda & Conta" (cujas ações como "Sair" deslogariam a
+         *    sessão de impersonation, comportamento confuso pro admin)
+         *
+         * Em vez disso, mostra um aviso/atalho visual leve indicando que
+         * está em modo view-as. O sair acontece pelo banner do AdminViewAs.
+         */}
+        {isAdmin && !isViewAs && (
           <Button variant="ghost" className="w-full justify-start text-purple-400 hover:text-purple-300 hover:bg-purple-500/10" onClick={handleAdminClick}>
             <Shield className="h-4 w-4 mr-2 flex-shrink-0" />
             {!collapsed && <span>Painel Admin</span>}
           </Button>
         )}
-        {/* Botão único "Ajuda & Conta" — agrupa: Como usar, Frases, Reportar bug, Sair */}
+        {isViewAs && (
+          <Button
+            variant="ghost"
+            className="w-full justify-start text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
+            onClick={() => {
+              if (isMobile) setOpenMobile(false);
+              navigate("/admin");
+            }}
+          >
+            <Shield className="h-4 w-4 mr-2 flex-shrink-0" />
+            {!collapsed && <span>Voltar ao Admin</span>}
+          </Button>
+        )}
+        {/* Botão único "Ajuda & Conta" — agrupa: Como usar, Frases, Reportar bug, Sair.
+            Esconde em modo view-as: "Sair" deslogaria a sessão de impersonation
+            (inútil/confuso) e os outros itens são pra UX do user final, não admin. */}
+        {!isViewAs && (
         <DropdownMenu open={helpMenuOpen} onOpenChange={setHelpMenuOpen}>
           <DropdownMenuTrigger asChild>
             <Button
@@ -164,6 +203,7 @@ export function AppSidebar() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
       </SidebarFooter>
 
       <OnboardingModal open={onboardingOpen} onClose={() => setOnboardingOpen(false)} />

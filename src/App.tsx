@@ -106,8 +106,23 @@ const App = () => (
               <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
               {/* Admin view-as: renderiza o dashboard inteiro do user-alvo dentro
                   de um SupabaseProvider secundário (impersonationClient).
-                  Admin mantém sua própria sessão — não é logout. */}
-              <Route path="/admin/view-as/:userId" element={<ProtectedRoute><AdminViewAs /></ProtectedRoute>} />
+                  Admin mantém sua própria sessão — não é logout.
+
+                  Rotas filhas espelham a estrutura de /dashboard mas SEM
+                  RequireActivePlan — admin precisa ver tudo, inclusive contas
+                  com plano expirado/suspenso (exato caso de uso). */}
+              <Route path="/admin/view-as/:userId" element={<ProtectedRoute><AdminViewAs /></ProtectedRoute>}>
+                <Route index element={<DashboardHome />} />
+                <Route path="configuracoes" element={<Configuracoes />} />
+                <Route path="financas" element={<Financas />} />
+                <Route path="agenda" element={<Agenda />} />
+                <Route path="anotacoes" element={<Anotacoes />} />
+                <Route path="lembretes" element={<Lembretes />} />
+                <Route path="habitos" element={<Habitos />} />
+                <Route path="contatos" element={<Contatos />} />
+                <Route path="analytics" element={<Analytics />} />
+                <Route path="integracoes" element={<Integracoes />} />
+              </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
