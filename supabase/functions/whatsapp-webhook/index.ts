@@ -8241,25 +8241,52 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
-    // Último fallback mais agressivo: se existe EXATAMENTE 1 profile com phone
-    // cadastrado, conta ativa e SEM whatsapp_lid → linka automaticamente.
-    // Isso cobre o caso em que Evolution manda @lid e nem resolveLidToPhone nem
-    // pushName resolvem (comum em WhatsApp Multi-Device).
-    if (!profile && lid) {
-      const { data: orphans } = await supabase
-        .from("profiles")
-        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
-        .eq("account_status", "active")
-        .is("whatsapp_lid", null)
-        .not("phone_number", "is", null)
-        .limit(2);
-
-      if (orphans && orphans.length === 1) {
-        profile = orphans[0];
-        supabase.from("profiles").update({ whatsapp_lid: lid }).eq("id", orphans[0].id).then(() => {}).catch(() => {});
-        log.push(`lid_linked_by_orphan: ${orphans[0].id}`);
-      }
-    }
+    // ─── FALLBACK 'lid_linked_by_orphan' DESATIVADO ───
+    //
+    // ⚠️ BUG CRÍTICO REPORTADO 18/05/2026:
+    //
+    // Esse fallback vinculava o LID de QUALQUER usuário recém-cadastrado
+    // (que ainda não tinha LID salvo) à PRIMEIRA conta órfã ativa do banco.
+    // Resultado: amiga (Gabriela) mandou msg pra Jarvis, LID dela foi
+    // auto-vinculado ao perfil do Tavares (que era a única conta ativa
+    // sem LID naquele momento). Todas as respostas iam pro Tavares —
+    // Gabriela nunca recebeu nada, Tavares recebia mensagens que não pediu.
+    //
+    // O fallback estava sendo MUITO permissivo: zero garantia de que o
+    // "órfão único" era realmente o dono do LID. Era uma loteria.
+    //
+    // Substituído por: fim do fluxo. Se nem whatsapp_lid, nem phone,
+    // nem resolveLidToPhone, nem pending_whatsapp_links, nem pushName
+    // bateram — é melhor cair em 'unknown_number' silent que vincular
+    // errado.
+    //
+    // O fluxo correto pra novos users:
+    //   1. Signup chama whatsapp-link-init (commit 4132ff0)
+    //   2. pending_whatsapp_link criado com janela de 24h
+    //   3. User manda msg → fallback de pending_link encontra
+    //   4. LID vinculado corretamente
+    //
+    // O bug raiz era: trial users não conseguiam vincular WhatsApp
+    // (whatsapp-link-init exigia status='active'). Isso já foi
+    // corrigido no commit 4132ff0. Sem aquele bug, ninguém cairia
+    // nessa fallback errada.
+    //
+    // === código antigo (preservado em comentário pra contexto histórico) ===
+    // if (!profile && lid) {
+    //   const { data: orphans } = await supabase.from("profiles")
+    //     .select(...).eq("account_status", "active")
+    //     .is("whatsapp_lid", null).not("phone_number", "is", null).limit(2);
+    //   if (orphans && orphans.length === 1) {
+    //     profile = orphans[0];
+    //     supabase.from("profiles").update({ whatsapp_lid: lid }).eq("id", orphans[0].id);
+    //     log.push(`lid_linked_by_orphan: ${orphans[0].id}`);
+    //   }
+    // }
+    //
+    // Caso futuro precise de fallback agressivo, exija combinação:
+    //   - orphans.length === 1
+    //   - AND pushName matches display_name (não só prefix)
+    //   - AND profile criado há < 24h (sinal de "user novo testando")
 
     // ── ORDER SESSION CHECK — intercepta mensagens de estabelecimentos durante pedido ativo ──
     // Roda antes do relay e antes do fluxo normal.
