@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListChecks } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { toast } from "sonner";
 import { SenderSelector, resolveSenderTargets, type SenderSelectorValue } from "@/components/couple/SenderSelector";
 import { useCoupleContext } from "@/hooks/useCoupleContext";
@@ -17,6 +17,7 @@ interface Props {
 }
 
 export function CreateListDialog({ open, onOpenChange, onCreated }: Props) {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const couple = useCoupleContext();
   const [name, setName] = useState("");

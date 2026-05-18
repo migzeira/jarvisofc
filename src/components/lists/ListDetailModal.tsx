@@ -6,7 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Plus, Trash2, ListChecks, MessageCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -37,6 +37,7 @@ interface Props {
 }
 
 export function ListDetailModal({ open, onOpenChange, listId, listName, listSource, listSentByPhone, onChanged }: Props) {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [items, setItems] = useState<ListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,7 +56,7 @@ export function ListDetailModal({ open, onOpenChange, listId, listName, listSour
       .order("created_at", { ascending: true });
     if (!error) setItems((data as ListItem[]) ?? []);
     setLoading(false);
-  }, [listId, user]);
+  }, [listId, user, supabase]);
 
   useEffect(() => {
     if (open && listId) load();

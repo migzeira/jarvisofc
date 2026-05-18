@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Check, Trash2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { toast } from "sonner";
 
 /**
@@ -66,6 +66,7 @@ const EMOJI_PICKER: Array<{ section: string; emojis: string[] }> = [
 ];
 
 export function CategoryCreateModal({ open, onOpenChange, categoryToEdit, onSaved }: Props) {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const isEdit = !!categoryToEdit;
 

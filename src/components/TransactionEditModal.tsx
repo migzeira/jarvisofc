@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { toast } from "sonner";
 
 export interface Transaction {
@@ -43,6 +43,7 @@ interface Props {
  * histórico (continua mostrando o texto).
  */
 export function TransactionEditModal({ open, onOpenChange, transaction, categoryOptions, onSaved }: Props) {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");

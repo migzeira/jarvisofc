@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RefreshCw, Loader2 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { toast } from "sonner";
 import logoIcon from "@/assets/logo_icon.webp";
 
@@ -25,6 +25,7 @@ interface InsightResponse {
  *   (zero impacto no resto da página de Finanças)
  */
 export function FinancialInsightCard() {
+  const supabase = useSupabase();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [insight, setInsight] = useState<string | null>(null);
@@ -56,7 +57,7 @@ export function FinancialInsightCard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
     fetchInsight(false);

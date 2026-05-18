@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Sparkles, Check, Edit3, X } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { toast } from "sonner";
 
 interface PendingTx {
@@ -43,6 +43,7 @@ interface Props {
  * pra users cuja IA categoriza tudo certo de primeira).
  */
 export function PendingReviewCard({ transactions, categoryOptions, onUpdate }: Props) {
+  const supabase = useSupabase();
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const pending: PendingTx[] = transactions.filter((t) => t.needs_review === true);
