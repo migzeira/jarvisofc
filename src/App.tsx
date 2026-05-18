@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
+import { SupabaseProvider } from "@/contexts/SupabaseContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { RequireActivePlan } from "@/components/RequireActivePlan";
 import { lazy, Suspense } from "react";
@@ -56,6 +57,16 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        {/*
+         * SupabaseProvider envolve a árvore inteira fornecendo o cliente Supabase
+         * via Context. Em rotas normais usa o cliente default (admin/user). Em
+         * rotas /admin/view-as/* (Fase 3) será envelopado por um Provider que
+         * passa o impersonationClient — assim páginas migradas pra useSupabase()
+         * automaticamente fazem queries como se fossem o user-alvo.
+         *
+         * Fase 1: inerte. Components continuam usando import direto. Sem efeito.
+         */}
+        <SupabaseProvider>
         <AuthProvider>
           <Suspense fallback={<PageLoader />}>
             <Routes>
@@ -96,6 +107,7 @@ const App = () => (
             </Routes>
           </Suspense>
         </AuthProvider>
+        </SupabaseProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
