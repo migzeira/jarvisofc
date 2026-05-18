@@ -8,6 +8,43 @@ import logoEscrita from "@/assets/logo_escrita.webp";
 
 type Status = "loading" | "success" | "error";
 
+/**
+ * Helper: chama whatsapp-link-init em background depois que o user confirma email.
+ *
+ * BUG REPORTADO 18/05/2026: o fix anterior (commit 4132ff0) tentava chamar
+ * link-init logo após signup, mas se "Confirm email" está habilitado no
+ * Supabase, signupData.session vem null. Resultado: link-init nunca rodava
+ * automático, pending_whatsapp_link nunca era criado, e quando user mandava
+ * msg no WhatsApp Multi-Device → caía em 'unknown_number' → silent → bug.
+ *
+ * Fix: chamar link-init AQUI também, no momento que email é confirmado e a
+ * session vira válida pela primeira vez. Garante que o pending_link existe
+ * antes do user mandar 'oi' no WhatsApp.
+ *
+ * Falha é silenciosa — MeuPerfil tem botão "Reenviar mensagem" como fallback.
+ */
+async function triggerLinkInit() {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token) return;
+
+    const supabaseUrl =
+      (import.meta as any).env.VITE_SUPABASE_URL ||
+      "https://fnilyapvhhygfzcdxqjm.supabase.co";
+    await fetch(`${supabaseUrl}/functions/v1/whatsapp-link-init`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+  } catch (err) {
+    console.warn("[EmailConfirmed] whatsapp-link-init falhou:", err);
+  }
+}
+
 export default function EmailConfirmed() {
   const [status, setStatus] = useState<Status>("loading");
   const [errorMsg, setErrorMsg] = useState<string>("");
@@ -38,6 +75,8 @@ export default function EmailConfirmed() {
           setStatus("error");
           return;
         }
+        // Dispara link-init em background. Não bloqueia a tela de sucesso.
+        triggerLinkInit();
         setStatus("success");
         return;
       }
@@ -55,6 +94,8 @@ export default function EmailConfirmed() {
           setStatus("error");
           return;
         }
+        // Dispara link-init em background. Não bloqueia a tela de sucesso.
+        triggerLinkInit();
         setStatus("success");
         return;
       }
@@ -62,6 +103,9 @@ export default function EmailConfirmed() {
       // Sessão já ativa (usuário voltou pela URL depois de confirmado)
       const { data } = await supabase.auth.getSession();
       if (data.session) {
+        // Mesmo no caso "já confirmado", dispara link-init — idempotente
+        // (whatsapp-link-init faz UPSERT no pending, então rodar 2x é seguro).
+        triggerLinkInit();
         setStatus("success");
         return;
       }
