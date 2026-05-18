@@ -267,6 +267,75 @@ serve(async (_req) => {
 
   for (const reminder of reminders) {
     try {
+      // ─── SAFEGUARD #1: account_status check ─────────────────────────────
+      // Bug reportado 15/05: Jarvis enviou "Testando" pro mesmo número de hora
+      // em hora por 15+ horas. Causa raiz: nenhuma checagem de account_status
+      // antes de enviar. Se user cancela conta / vira expired, recorrências
+      // continuam rodando indefinidamente.
+      //
+      // Agora: se o profile não está em ('active', 'trial'), CANCELA o reminder
+      // (e por consequência a cadeia inteira de hourly/daily). Defensa em
+      // profundidade — frontend deveria cancelar via UI ao mudar status, mas
+      // garantimos no backend tb.
+      if (reminder.user_id) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("account_status")
+          .eq("id", reminder.user_id)
+          .maybeSingle();
+        const status = (profile?.account_status as string | undefined) ?? null;
+        if (status && !["active", "trial"].includes(status)) {
+          await supabase
+            .from("reminders")
+            .update({ status: "cancelled" } as any)
+            .eq("id", reminder.id);
+          console.log(
+            `[acct-skip] reminder=${reminder.id} user=${reminder.user_id} account_status=${status} — chain cancelled`
+          );
+          continue;
+        }
+      }
+
+      // ─── SAFEGUARD #2: spam loop detector ──────────────────────────────
+      // Se já enviamos pro mesmo número o mesmo title via recurrence hourly
+      // mais de 24 vezes nas últimas 36h, é spam — para a cadeia. Threshold
+      // alto pra não pegar legitimo (24/dia = a cada hora todo dia), mas
+      // protege contra "testando" abandonado.
+      //
+      // Hourly é especialmente perigoso porque é a recorrência mais frequente
+      // que existe. Daily/weekly não cabem nessa janela.
+      if (reminder.recurrence === "hourly" && reminder.whatsapp_number && reminder.title) {
+        const since = new Date(now.getTime() - 36 * 60 * 60 * 1000).toISOString();
+        const { count: recentSends } = await supabase
+          .from("reminders")
+          .select("id", { count: "exact", head: true })
+          .eq("whatsapp_number", reminder.whatsapp_number)
+          .eq("title", reminder.title)
+          .eq("recurrence", "hourly")
+          .eq("status", "sent")
+          .gte("sent_at", since) as any;
+
+        if ((recentSends ?? 0) >= 24) {
+          await supabase
+            .from("reminders")
+            .update({ status: "cancelled" } as any)
+            .eq("id", reminder.id);
+          // Também cancela TODAS as próximas pendentes da mesma cadeia
+          // (pra não criar nova ocorrência via passo "agenda próxima")
+          await supabase
+            .from("reminders")
+            .update({ status: "cancelled" } as any)
+            .eq("whatsapp_number", reminder.whatsapp_number)
+            .eq("title", reminder.title)
+            .eq("recurrence", "hourly")
+            .eq("status", "pending");
+          console.log(
+            `[spam-loop] reminder=${reminder.id} title="${reminder.title}" to=${reminder.whatsapp_number} sent_in_36h=${recentSends} — chain cancelled`
+          );
+          continue;
+        }
+      }
+
       // ─── Grace period: cancela reminders velhos demais (ex: internet voltou tarde) ──
       // Evita entregar bom dia de 8h às 10h, ou hábito atrasado 1h.
       // Reminders recorrentes ainda ganham próxima ocorrência (ciclo não quebra).
