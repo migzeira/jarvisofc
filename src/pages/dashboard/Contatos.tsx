@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +42,7 @@ const BUSINESS_CATEGORIES = [
 ];
 
 export default function Contatos() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const couple = useCoupleContext();
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -83,7 +84,7 @@ export default function Contatos() {
 
   useEffect(() => {
     if (user) load();
-  }, [user]);
+  }, [user, supabase]);
 
   // Realtime: aparece na tela imediatamente quando Jarvis salva pelo WhatsApp
   useEffect(() => {
@@ -119,7 +120,7 @@ export default function Contatos() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [user]);
+  }, [user, supabase]);
 
   // Auto-focus inline edit input
   useEffect(() => {

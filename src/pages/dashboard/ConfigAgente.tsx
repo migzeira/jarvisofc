@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { Plus, Trash2, Save, Clock } from "lucide-react";
 
 export default function ConfigAgente({ hideTitle = false }: { hideTitle?: boolean } = {}) {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [config, setConfig] = useState<any>(null);
   const [quickReplies, setQuickReplies] = useState<any[]>([]);
@@ -21,7 +22,7 @@ export default function ConfigAgente({ hideTitle = false }: { hideTitle?: boolea
   const [newTrigger, setNewTrigger] = useState("");
   const [newReply, setNewReply] = useState("");
 
-  useEffect(() => { if (user) loadData(); }, [user]);
+  useEffect(() => { if (user) loadData(); }, [user, supabase]);
   const loadData = async () => {
     // Busca config + quick_replies + display_name do profile (pra pré-preencher
     // o "Como você quer ser chamado?" com o primeiro nome do user).

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +76,7 @@ function formatPhone(raw: string): string {
 }
 
 export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean } = {}) {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -89,7 +90,8 @@ export default function ConfigCasal({ hideTitle = false }: { hideTitle?: boolean
 
   useEffect(() => {
     if (user) loadAll();
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, supabase]);
 
   const loadAll = async () => {
     if (!user) return;

@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -142,6 +142,7 @@ function NoteCard({
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function Anotacoes() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
@@ -171,7 +172,7 @@ export default function Anotacoes() {
   const [senderFilter, setSenderFilter] = useState<SenderFilterValue>("all");
   const [createSender, setCreateSender] = useState<SenderSelectorValue>("me");
 
-  useEffect(() => { if (user) loadData(); }, [user]);
+  useEffect(() => { if (user) loadData(); }, [user, supabase]);
 
   // Reload quando a aba volta ao foco (ex: nota criada pelo WhatsApp com página já aberta)
   useEffect(() => {

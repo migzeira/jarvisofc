@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
 import { LiveBadge } from "@/components/LiveBadge";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/contexts/SupabaseContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -475,6 +475,7 @@ function deriveTargetDays(cfg: HabitConfig): number[] {
 // ─────────────────────────────────────────────
 
 export default function Habitos() {
+  const supabase = useSupabase();
   const { user } = useAuth();
   const couple = useCoupleContext();
   const [habits, setHabits] = useState<Habit[]>([]);
@@ -525,7 +526,7 @@ export default function Habitos() {
       setUserPhone((pRes.data as any).phone_number ?? "");
     }
     setLoading(false);
-  }, [user]);
+  }, [user, supabase]);
 
   useEffect(() => { if (user) loadData(); }, [user, loadData]);
 
