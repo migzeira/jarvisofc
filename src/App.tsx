@@ -34,6 +34,7 @@ const Configuracoes = lazy(() => import("./pages/dashboard/Configuracoes"));
 const Analytics = lazy(() => import("./pages/dashboard/Analytics"));
 const Contatos = lazy(() => import("./pages/dashboard/Contatos"));
 const AdminPanel = lazy(() => import("./pages/admin/AdminPanel"));
+const AdminViewAs = lazy(() => import("./pages/admin/AdminViewAs"));
 
 // Loading com logo do Jarvis girando
 function PageLoader() {
@@ -103,6 +104,10 @@ const App = () => (
                 <Route path="perfil" element={<Navigate to="/dashboard/configuracoes?tab=perfil" replace />} />
               </Route>
               <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
+              {/* Admin view-as: renderiza o dashboard inteiro do user-alvo dentro
+                  de um SupabaseProvider secundário (impersonationClient).
+                  Admin mantém sua própria sessão — não é logout. */}
+              <Route path="/admin/view-as/:userId" element={<ProtectedRoute><AdminViewAs /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

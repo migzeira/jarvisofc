@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { User, Session } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
-import { useNavigate } from "react-router-dom";
+import { useSupabase } from "@/contexts/SupabaseContext";
 
 interface AuthContextType {
   user: User | null;
@@ -24,6 +23,7 @@ const AuthContext = createContext<AuthContextType>({
 const BOOTSTRAP_ADMIN_EMAILS = new Set(["migueldrops@gmail.com"]);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const supabase = useSupabase();
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,7 +46,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+    // supabase mudou (ex: troca pra impersonationClient em /admin/view-as)
+    // → re-subscribe pra observar o cliente correto.
+  }, [supabase]);
 
   // Quando user muda, carrega o flag is_admin do profile.
   // Em caso de erro/coluna ausente, silenciosamente cai no fallback por email.
@@ -69,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [user?.id]);
+  }, [user?.id, supabase]);
 
   // Admin se: flag no banco = true OU email está no bootstrap list
   // Bootstrap garante que o admin inicial sempre funciona mesmo se migration falhar

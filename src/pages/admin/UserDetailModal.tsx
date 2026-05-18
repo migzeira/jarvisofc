@@ -13,7 +13,8 @@ import { format, differenceInDays, addDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, MessageSquare, ArrowLeft, Bot, User, Heart, UserMinus } from "lucide-react";
+import { RefreshCw, MessageSquare, ArrowLeft, Bot, User, Heart, UserMinus, Eye } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
@@ -63,6 +64,7 @@ interface Props {
 }
 
 export default function UserDetailModal({ userId, userName, open, onClose, onProfileUpdate }: Props) {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<any>(null);
   const [conversations, setConversations] = useState<any[]>([]);
@@ -589,6 +591,26 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
             {/* Admin actions */}
             <div className="mb-4 p-3 rounded-lg border border-border bg-muted/30 space-y-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ações administrativas</p>
+
+              {/* Acesso direto ao painel do cliente — vê tudo como se fosse ele */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="h-9 text-xs bg-violet-600 hover:bg-violet-500 gap-2 w-full sm:w-auto"
+                  onClick={() => {
+                    onClose();
+                    navigate(`/admin/view-as/${userId}`);
+                  }}
+                  title="Abre o painel do cliente em modo visualização. Você vê e age como se fosse ele."
+                >
+                  <Eye className="h-4 w-4" />
+                  Ver painel do cliente
+                </Button>
+                <span className="text-[10px] text-muted-foreground hidden sm:inline">
+                  Acessa o dashboard do usuário no contexto dele (sem deslogar você)
+                </span>
+              </div>
 
               {/* Ativar plano Mensal / Anual — atalhos rápidos */}
               <div className="flex flex-wrap items-center gap-2">
