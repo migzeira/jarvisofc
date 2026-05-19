@@ -50,10 +50,17 @@ create trigger trg_system_announcements_touch
   for each row execute function public.system_announcements_touch_updated_at();
 
 -- ── RLS ─────────────────────────────────────────────────────────────────
+-- Idempotente: drop antes de criar pq Postgres nao tem CREATE POLICY IF NOT EXISTS.
+-- Permite rodar a migration multiplas vezes sem erro.
 alter table public.system_announcements enable row level security;
 
+drop policy if exists "Authenticated users can read active announcements" on public.system_announcements;
+drop policy if exists "Admins can read all announcements" on public.system_announcements;
+drop policy if exists "Admins can create announcements" on public.system_announcements;
+drop policy if exists "Admins can update announcements" on public.system_announcements;
+drop policy if exists "Admins can delete announcements" on public.system_announcements;
+
 -- SELECT: TODO usuario autenticado pode ler avisos ativos
--- (admin tb le os inativos pra gerenciar via segundo policy abaixo)
 create policy "Authenticated users can read active announcements"
   on public.system_announcements
   for select
@@ -122,9 +129,14 @@ create policy "Admins can delete announcements"
     )
   );
 
--- Realtime: habilita pub/sub pra banner aparecer instantaneo em todos os
--- dashboards quando admin publicar (sem refresh)
-alter publication supabase_realtime add table public.system_announcements;
+-- Realtime idempotente: ignora se ja foi adicionado a publicacao
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.system_announcements;
+  exception when duplicate_object then null;
+  end;
+end $$;
 
 comment on table public.system_announcements is
   'Avisos globais exibidos no topo do dashboard de todos os usuarios. Gerenciados pelo painel admin.';

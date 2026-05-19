@@ -90,8 +90,16 @@ left join (
 ) uja on uja.jarvis_number_id = jn.id;
 
 -- ── RLS ─────────────────────────────────────────────────────────────────
+-- Idempotente: drop antes de criar pq Postgres nao tem CREATE POLICY IF NOT EXISTS.
 alter table public.jarvis_numbers enable row level security;
 alter table public.user_jarvis_assignments enable row level security;
+
+drop policy if exists "Admins read jarvis_numbers" on public.jarvis_numbers;
+drop policy if exists "Admins insert jarvis_numbers" on public.jarvis_numbers;
+drop policy if exists "Admins update jarvis_numbers" on public.jarvis_numbers;
+drop policy if exists "Admins delete jarvis_numbers" on public.jarvis_numbers;
+drop policy if exists "Admins read assignments" on public.user_jarvis_assignments;
+drop policy if exists "Admins write assignments" on public.user_jarvis_assignments;
 
 -- jarvis_numbers: so admins manipulam via UI. Edge functions usam service_role.
 create policy "Admins read jarvis_numbers"
@@ -159,8 +167,14 @@ values ('jarvis', '5511936196103', 'Jarvis Principal', 'pending',
         'Numero original. Em analise no WhatsApp em 19/05/2026. Re-pareiar quando voltar.')
 on conflict (session_name) do nothing;
 
--- Realtime: habilita pra UI admin atualizar status sem refresh
-alter publication supabase_realtime add table public.jarvis_numbers;
+-- Realtime idempotente: ignora se ja foi adicionado a publicacao
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.jarvis_numbers;
+  exception when duplicate_object then null;
+  end;
+end $$;
 
 comment on table public.jarvis_numbers is
   'Catalogo de chips/sessoes WhatsApp usados pelo Jarvis. Gerenciado via painel admin.';
