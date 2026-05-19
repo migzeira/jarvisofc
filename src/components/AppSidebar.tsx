@@ -89,8 +89,17 @@ export function AppSidebar() {
     setTimeout(open, 50);
   };
 
+  // Em view-as, a sidebar (position:fixed inset-y-0 do shadcn) ficaria ATRÁS
+  // da tarja amarela (sticky top-0 z-60, h-12), cobrindo a logo + primeiros
+  // itens. A className aqui vai direto pro div fixed do primitivo (ver
+  // ui/sidebar.tsx linha 203 — className do prop é mesclada ao div fixed).
+  // Força top-12 (48px abaixo da banner) e altura reduzida.
+  const sidebarViewAsClass = isViewAs
+    ? "!top-12 !h-[calc(100svh-3rem)]"
+    : "";
+
   return (
-    <Sidebar collapsible="icon" className="border-r border-border bg-sidebar">
+    <Sidebar collapsible="icon" className={`border-r border-border bg-sidebar ${sidebarViewAsClass}`}>
       <div className="flex items-center justify-between px-4 h-16 border-b border-border">
         <img src={collapsed ? logoIcon : logoEscrita} alt="Hey Jarvis" className={`object-contain ${collapsed ? "h-8 w-8" : "h-8 w-auto"}`} />
         {isMobile && (
