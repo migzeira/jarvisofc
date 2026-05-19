@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { sendText, sendImage, sendButtons, extractPhone, downloadMediaBase64, resolveLidToPhone } from "../_shared/evolution.ts";
+import { sendText, sendImage, sendButtons, extractPhone, downloadMediaBase64, resolveLidToPhone } from "../_shared/whatsapp.ts";
 import { generateExpenseChartUrl } from "../_shared/chart.ts";
 import { syncGoogleCalendar, syncGoogleSheets, syncNotion, createCalendarEventWithMeet } from "../_shared/integrations.ts";
 import {
@@ -4050,6 +4050,157 @@ async function handleNotesSave(
 }
 
 // ─────────────────────────────────────────────
+// WEBHOOK PAYLOAD NORMALIZER
+// ─────────────────────────────────────────────
+
+/**
+ * Detecta provider e normaliza payload pra formato Evolution.
+ *
+ * Estrutura Evolution (usada pelo resto do webhook):
+ *   { event: "messages.upsert", data: { key:{remoteJid,fromMe,id}, message:{conversation},
+ *     pushName, messageType, ... } }
+ *   { event: "messages.update", data: [{ key:{id}, status: "DELIVERY_ACK"|3|4|5 }] }
+ *
+ * Estrutura WPPConnect:
+ *   { event: "onmessage", session: "jarvis", data: { id, from, to, body, type,
+ *     fromMe, isGroupMsg, sender:{id,pushname}, ... } }
+ *   { event: "onack", session: "jarvis", data: { id, ack: 1|2|3 } }
+ *
+ * Mapeamento WPPConnect → Evolution:
+ *   onmessage  → messages.upsert
+ *   onack      → messages.update
+ *   data.from  → data.key.remoteJid
+ *   data.fromMe → data.key.fromMe
+ *   data.id    → data.key.id  (e remove prefixo "true_"/"false_" se WPPConnect adicionar)
+ *   data.body  → data.message.conversation
+ *   data.sender.pushname → data.pushName
+ *   data.type ("chat"|"audio"|"image"|"ptt") → data.messageType
+ *   data.ack   → data.status (mapeado: 1=SERVER_ACK 2=DELIVERY_ACK 3=READ)
+ */
+function normalizeWebhookPayload(body: Record<string, unknown>): Record<string, unknown> {
+  const event = String(body.event ?? "");
+  const isWPPConnect =
+    !!body.session ||  // WPPConnect sempre inclui session no root
+    event.startsWith("on") ||  // onmessage, onack, etc
+    event === "message"; // algumas versões usam só "message"
+
+  if (!isWPPConnect) return body; // Evolution — já está no formato esperado
+
+  // Mapeia event WPPConnect → Evolution
+  const eventMap: Record<string, string> = {
+    onmessage: "messages.upsert",
+    "message": "messages.upsert",
+    "onmessageupsert": "messages.upsert",
+    "messages.upsert": "messages.upsert",
+    onack: "messages.update",
+    "onmessageack": "messages.update",
+    "onstatusfind": "connection.update",
+    "onpresencechanged": "presence.update",
+  };
+  const normalizedEvent = eventMap[event.toLowerCase()] ?? event;
+
+  const rawData = body.data;
+  const data = (Array.isArray(rawData) ? rawData[0] : rawData) as Record<string, unknown> | null;
+  if (!data) return { ...body, event: normalizedEvent };
+
+  // ── Normaliza messages.upsert (onmessage) ──
+  if (normalizedEvent === "messages.upsert") {
+    const from = String(data.from ?? data.author ?? "");
+    const fromMe = data.fromMe === true || data.fromMe === "true";
+    const rawId = String((data as any).id?._serialized ?? data.id ?? "");
+    // WPPConnect prefixa o messageId com "true_"/"false_" (= fromMe). Remove.
+    const msgId = rawId.replace(/^(true|false)_[^_]+_/, "");
+
+    // remoteJid: WPPConnect usa @c.us — converte pra @s.whatsapp.net que o
+    // webhook espera. LIDs (@lid) ficam como @lid.
+    const remoteJid = from.replace(/@c\.us$/, "@s.whatsapp.net");
+
+    const messageBody = data.body ?? data.content ?? "";
+    const type = String(data.type ?? "chat");
+    const sender = (data.sender ?? {}) as Record<string, unknown>;
+    const pushName = String(sender.pushname ?? sender.name ?? data.notifyName ?? "");
+
+    // Mapeia type WPPConnect → messageType Evolution
+    const typeMap: Record<string, string> = {
+      chat: "conversation",
+      ptt: "audioMessage",
+      audio: "audioMessage",
+      image: "imageMessage",
+      document: "documentMessage",
+      video: "videoMessage",
+      sticker: "stickerMessage",
+      location: "locationMessage",
+    };
+    const messageType = typeMap[type] ?? type;
+
+    // Estrutura "message" — varia conforme tipo da msg
+    let messageObj: Record<string, unknown> = {};
+    if (messageType === "conversation") {
+      messageObj = { conversation: messageBody };
+    } else if (messageType === "audioMessage") {
+      messageObj = {
+        audioMessage: {
+          ptt: type === "ptt",
+          mimetype: data.mimetype ?? "audio/ogg",
+          // WPPConnect já oferece url ou base64 baixável via downloadMedia
+          url: data.url ?? null,
+        },
+      };
+    } else if (messageType === "imageMessage") {
+      messageObj = {
+        imageMessage: {
+          caption: data.caption ?? "",
+          mimetype: data.mimetype ?? "image/jpeg",
+          url: data.url ?? null,
+        },
+      };
+    } else {
+      // Fallback genérico
+      messageObj = { [messageType]: data };
+    }
+
+    return {
+      event: "messages.upsert",
+      data: {
+        key: {
+          remoteJid,
+          fromMe,
+          id: msgId,
+        },
+        message: messageObj,
+        pushName,
+        messageType,
+        // Preserva raw data pra downloadMediaBase64 conseguir achar o messageId
+        _wppconnect_raw: data,
+      },
+    };
+  }
+
+  // ── Normaliza messages.update (onack) ──
+  if (normalizedEvent === "messages.update") {
+    const rawId = String((data as any).id?._serialized ?? data.id ?? "");
+    const msgId = rawId.replace(/^(true|false)_[^_]+_/, "");
+    const ack = Number(data.ack ?? 0);
+
+    // WPPConnect ack: 1=server, 2=device, 3=read
+    // Evolution status: 3=SERVER_ACK, 4=DELIVERY_ACK, 5=READ
+    // Mapeia: WPPConnect ack 1→3, 2→4, 3→5 (mesma semântica numérica + 2)
+    const evolutionStatus = ack + 2;
+
+    return {
+      event: "messages.update",
+      data: [{
+        key: { id: msgId },
+        status: evolutionStatus,
+      }],
+    };
+  }
+
+  // Eventos não mapeados — devolve com event normalizado
+  return { ...body, event: normalizedEvent };
+}
+
+// ─────────────────────────────────────────────
 // MAIN HANDLER
 // ─────────────────────────────────────────────
 
@@ -4058,13 +4209,26 @@ serve(async (req) => {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  // ── Validação de origem: Evolution API envia seu apikey no header ────────
+  // ── Validação de origem: aceita apikey de Evolution OU de WPPConnect ────
+  // Evolution API envia "apikey" no header. WPPConnect Server NÃO envia
+  // apikey por padrão — confia no fato do webhook URL ser secret. Pra
+  // mantermos compatibilidade durante migração, validação só roda se houver
+  // header E o env correspondente estiver setado.
   const incomingKey = req.headers.get("apikey") ?? "";
   const evolutionKey = Deno.env.get("EVOLUTION_API_KEY") ?? "";
-  if (evolutionKey && incomingKey && incomingKey !== evolutionKey) {
-    console.warn("[webhook] Rejected request with invalid apikey header");
-    return new Response("Unauthorized", { status: 401 });
+  const wpKey = Deno.env.get("WPPCONNECT_WEBHOOK_SECRET") ?? "";
+  if (incomingKey) {
+    // Se vier apikey, precisa bater com um dos secrets conhecidos
+    const isValid =
+      (evolutionKey && incomingKey === evolutionKey) ||
+      (wpKey && incomingKey === wpKey);
+    if (!isValid) {
+      console.warn("[webhook] Rejected request with invalid apikey header");
+      return new Response("Unauthorized", { status: 401 });
+    }
   }
+  // Sem apikey no header (WPPConnect default) → continua. Defesa é o
+  // próprio URL do webhook (não é público nem indexado).
 
   let body: Record<string, unknown>;
   try {
@@ -4072,6 +4236,22 @@ serve(async (req) => {
   } catch {
     return new Response("Invalid JSON", { status: 400 });
   }
+
+  // ─── NORMALIZAÇÃO DE PAYLOAD: WPPConnect → Evolution ─────────────────────
+  //
+  // O webhook foi escrito originalmente pra payload da Evolution API:
+  //   { event: "messages.upsert", data: { key: {...}, message: {...}, ... } }
+  //
+  // Em 19/05/2026 migramos pra WPPConnect que tem payload bem diferente:
+  //   { event: "onmessage", session: "jarvis", data: { id, from, body, ... } }
+  //
+  // Em vez de reescrever 8000+ linhas, normalizamos AQUI no início: detecta
+  // o formato e converte pra estrutura Evolution. Resto do código fica intacto.
+  //
+  // Detecção: WPPConnect manda `event` com prefixo "on" (onmessage, onack,
+  // onstatusfind, etc) e tem campo `session` no root. Evolution usa
+  // "messages.upsert" / "messages.update" e não tem `session`.
+  body = normalizeWebhookPayload(body);
 
   // ── MESSAGES_UPDATE: rastreio de entrega de mensagens enviadas pelo bot ───
   // Quando o WhatsApp confirma entrega/leitura de uma msg que NÓS enviamos,

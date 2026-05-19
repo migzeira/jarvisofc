@@ -7,7 +7,7 @@
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { sendText, sendButtons } from "../_shared/evolution.ts";
+import { sendText, sendButtons } from "../_shared/whatsapp.ts";
 
 // ─────────────────────────────────────────────────────────────
 // Conteúdo dinâmico para hábitos preset
