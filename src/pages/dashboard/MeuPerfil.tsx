@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSupabase } from "@/contexts/SupabaseContext";
+import { JARVIS_WHATSAPP, JARVIS_WHATSAPP_FORMATTED, JARVIS_WHATSAPP_LINK } from "@/lib/jarvis";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,12 +29,10 @@ import { Sparkles, Timer } from "lucide-react";
 const SUPPORT_WHATSAPP = "5511999999999"; // TODO: trocar pelo número real de suporte
 const MAX_PHONE_CHANGES = 2; // após isso, campo fica bloqueado
 
-// Número oficial do Jarvis (WhatsApp do bot). Single source of truth pra
-// botões "Conversar com Jarvis" e exibição do número aos usuários que
-// querem salvar manualmente nos contatos.
-const JARVIS_WHATSAPP = "5511936196103";
-const JARVIS_WHATSAPP_FORMATTED = "+55 11 93619-6103";
-const JARVIS_WHATSAPP_LINK = `https://wa.me/${JARVIS_WHATSAPP}?text=Oi%20Jarvis!`;
+// Constantes movidas pra src/lib/jarvis.ts em 19/05/2026 (single source of truth
+// usado por sidebar, dashboard, MeuPerfil). Re-imports abaixo. As referências
+// locais foram preservadas como aliases pra evitar tocar em ~50 linhas do
+// componente que usam esses identificadores.
 
 const COUNTRIES = [
   { ddi: "55",  code: "br", name: "Brasil",          placeholder: "11 99999-9999",  minLen: 10 },

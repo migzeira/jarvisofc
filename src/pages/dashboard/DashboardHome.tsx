@@ -17,6 +17,7 @@ import {
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { PlanCTAButtons } from "@/components/PlanCTAButtons";
 import { buildPlanLabel } from "@/lib/plan";
+import { JARVIS_WHATSAPP_LINK } from "@/lib/jarvis";
 import { toast } from "sonner";
 import { format, subDays, startOfMonth, endOfMonth, endOfWeek, isToday, isTomorrow, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -545,9 +546,21 @@ export default function DashboardHome() {
                 {
                   num: 2,
                   done: profile?.messages_used > 0,
+                  // Em vez de só texto, oferece botão verde direto pro WhatsApp
+                  // do Jarvis. Feedback da Gabriela (19/05): leiga não achava
+                  // o número, ficou perdida em onde mandar msg.
                   title: "Converse com o Jarvis no WhatsApp",
-                  hint: (profile?.messages_used === 0 && phoneSet)
-                    ? "Abra o WhatsApp e mande uma mensagem pro Jarvis — ele já está pronto pra responder!" : null,
+                  hint: (profile?.messages_used === 0 && phoneSet) ? (
+                    <a
+                      href={JARVIS_WHATSAPP_LINK}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 mt-1.5 px-3 py-1.5 rounded-md bg-green-500/15 hover:bg-green-500/25 border border-green-500/40 text-green-300 hover:text-green-200 text-xs font-medium transition-colors"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      Abrir WhatsApp do Jarvis
+                    </a>
+                  ) : null,
                 },
                 {
                   num: 3,
@@ -564,7 +577,8 @@ export default function DashboardHome() {
                     <p className={`text-sm font-medium ${item.done ? "text-green-400 line-through" : "text-foreground"}`}>
                       {item.title}
                     </p>
-                    {item.hint && <p className="text-xs text-muted-foreground mt-0.5">{item.hint}</p>}
+                    {/* div em vez de p — hint pode ser JSX com botão (<a>) */}
+                    {item.hint && <div className="text-xs text-muted-foreground mt-0.5">{item.hint}</div>}
                   </div>
                 </div>
               ))}

@@ -1,4 +1,5 @@
-import { Home, Wallet, CalendarDays, StickyNote, Settings, LogOut, Shield, Bell, X, Zap, BookUser, BookOpen, Sparkles, Bug, HelpCircle, ChevronDown } from "lucide-react";
+import { Home, Wallet, CalendarDays, StickyNote, Settings, LogOut, Shield, Bell, X, Zap, BookUser, BookOpen, Sparkles, Bug, HelpCircle, ChevronDown, MessageCircle } from "lucide-react";
+import { JARVIS_WHATSAPP_LINK } from "@/lib/jarvis";
 import { NavLink } from "@/components/NavLink";
 import logoEscrita from "@/assets/logo_escrita.webp";
 import logoIcon from "@/assets/logo_icon.webp";
@@ -121,6 +122,40 @@ export function AppSidebar() {
                   </SidebarMenuItem>
                 );
               })}
+
+              {/* ── Botão "Conversar com Jarvis" ─────────────────────────────
+                 Feedback Gabriela (19/05): usuária leiga ficou perdida sem
+                 saber onde achar o número do Jarvis pra mandar a 1ª msg.
+                 Botão verde destacado abaixo de Configurações abre wa.me
+                 direto com "Oi Jarvis!" pré-preenchido.
+
+                 Esconde em view-as: admin não precisa abrir WhatsApp no
+                 nome do user-alvo (e abriria pelo NÚMERO do admin, gerando
+                 confusão).
+               */}
+              {!isViewAs && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <a
+                      href={JARVIS_WHATSAPP_LINK}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={handleNavClick}
+                      className="
+                        bg-gradient-to-r from-green-500/15 to-emerald-500/15
+                        hover:from-green-500/25 hover:to-emerald-500/25
+                        border border-green-500/30 hover:border-green-500/50
+                        text-green-300 hover:text-green-200
+                        transition-all
+                        mt-2
+                      "
+                    >
+                      <MessageCircle className="h-4 w-4 mr-2 flex-shrink-0" />
+                      {!collapsed && <span className="font-medium">Conversar com Jarvis</span>}
+                    </a>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
