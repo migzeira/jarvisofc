@@ -558,7 +558,7 @@ export default function DashboardHome() {
                       className="inline-flex items-center gap-2 mt-1.5 px-3 py-1.5 rounded-md bg-green-500/15 hover:bg-green-500/25 border border-green-500/40 text-green-300 hover:text-green-200 text-xs font-medium transition-colors"
                     >
                       <MessageSquare className="h-3.5 w-3.5" />
-                      Abrir WhatsApp do Jarvis
+                      Clique aqui e converse com o Jarvis
                     </a>
                   ) : null,
                 },

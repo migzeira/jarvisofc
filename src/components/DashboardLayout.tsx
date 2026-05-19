@@ -7,13 +7,21 @@ import { Button } from "@/components/ui/button";
 import { Menu, X } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { CoupleContextProvider } from "@/hooks/useCoupleContext";
+import { useIsViewAs } from "@/hooks/useDashboardBasePath";
 
 function DashboardHeader() {
   const { toggleSidebar, openMobile } = useSidebar();
   const isMobile = useIsMobile();
+  const isViewAs = useIsViewAs();
+
+  // Em modo view-as, o ViewAsBanner (h-12 = 48px) fica sticky top-0 z-60.
+  // Sem ajuste, o DashboardHeader (sticky top-0 z-30) ficaria atrás da banner
+  // visualmente sobreposto. Fix: empurra o header pra top-12 (48px) em view-as,
+  // pra ficar exatamente abaixo da banner sem sobreposição.
+  const stickyTop = isViewAs ? "top-12" : "top-0";
 
   return (
-    <header className="h-14 flex items-center justify-between border-b border-border px-4 bg-background/80 backdrop-blur-sm sticky top-0 z-30">
+    <header className={`h-14 flex items-center justify-between border-b border-border px-4 bg-background/80 backdrop-blur-sm sticky ${stickyTop} z-30`}>
       {isMobile ? (
         <Button
           variant="ghost"

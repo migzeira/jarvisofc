@@ -123,39 +123,38 @@ export function AppSidebar() {
                 );
               })}
 
-              {/* ── Botão "Conversar com Jarvis" ─────────────────────────────
+              {/* ── Botão "Falar com o Jarvis" ─────────────────────────────
                  Feedback Gabriela (19/05): usuária leiga ficou perdida sem
                  saber onde achar o número do Jarvis pra mandar a 1ª msg.
                  Botão verde destacado abaixo de Configurações abre wa.me
                  direto com "Oi Jarvis!" pré-preenchido.
 
-                 Esconde em view-as: admin não precisa abrir WhatsApp no
-                 nome do user-alvo (e abriria pelo NÚMERO do admin, gerando
-                 confusão).
+                 Visível também em view-as: admin pode querer abrir o WhatsApp
+                 do Jarvis (vai pelo número do PRÓPRIO admin, não do user-alvo
+                 — é só um link wa.me externo, inofensivo). Útil pra testar
+                 que o Jarvis tá respondendo quando ajudando cliente.
                */}
-              {!isViewAs && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
-                    <a
-                      href={JARVIS_WHATSAPP_LINK}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={handleNavClick}
-                      className="
-                        bg-gradient-to-r from-green-500/15 to-emerald-500/15
-                        hover:from-green-500/25 hover:to-emerald-500/25
-                        border border-green-500/30 hover:border-green-500/50
-                        text-green-300 hover:text-green-200
-                        transition-all
-                        mt-2
-                      "
-                    >
-                      <MessageCircle className="h-4 w-4 mr-2 flex-shrink-0" />
-                      {!collapsed && <span className="font-medium">Conversar com Jarvis</span>}
-                    </a>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <a
+                    href={JARVIS_WHATSAPP_LINK}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={handleNavClick}
+                    className="
+                      bg-gradient-to-r from-green-500/15 to-emerald-500/15
+                      hover:from-green-500/25 hover:to-emerald-500/25
+                      border border-green-500/30 hover:border-green-500/50
+                      text-green-300 hover:text-green-200
+                      transition-all
+                      mt-2
+                    "
+                  >
+                    <MessageCircle className="h-4 w-4 mr-2 flex-shrink-0" />
+                    {!collapsed && <span className="font-medium">Falar com o Jarvis</span>}
+                  </a>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

@@ -51,9 +51,13 @@ function ViewAsBanner({ targetUser, onExit }: { targetUser: TargetUser; onExit: 
   // Banner com listras animadas + cor mais agressiva (laranja em vez de
   // violeta sutil) pra deixar OBVIO pro admin que ele NAO esta no proprio
   // painel. Risco: deletar/editar coisa do user-alvo achando que e o proprio.
+  //
+  // Altura fixa h-12 (48px) — o DashboardHeader detecta view-as via
+  // useIsViewAs() e usa top-12 pra ficar exatamente abaixo da banner em
+  // vez de sobrepor. Sem essa altura fixa, header empilhava sobre a banner.
   return (
     <div
-      className="sticky top-0 z-[60] backdrop-blur text-white px-4 py-2.5 shadow-lg border-b border-amber-400/40 flex items-center justify-between gap-3"
+      className="sticky top-0 z-[60] h-12 backdrop-blur text-white px-4 shadow-lg border-b border-amber-400/40 flex items-center justify-between gap-3"
       style={{
         backgroundImage:
           "repeating-linear-gradient(45deg, rgba(245, 158, 11, 0.95) 0 12px, rgba(217, 119, 6, 0.95) 12px 24px)",
