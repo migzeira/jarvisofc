@@ -16,8 +16,10 @@ import {
   Clock, CheckCircle, XCircle, RefreshCw, Download, CreditCard, AlertTriangle,
   TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Webhook, ChevronDown, ChevronUp, Link2, Link2Off,
   Activity, BarChart3, UserCheck, UserX, Send, Copy, UserSearch, Bug, Mail, Heart, Megaphone, Trash2,
+  Smartphone, QrCode, Power, PowerOff, Plus, Wifi, WifiOff,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { isCouplePlan, getPlanDisplayName } from "@/lib/plan";
 import { Textarea } from "@/components/ui/textarea";
 import { format, subDays } from "date-fns";
@@ -175,6 +177,19 @@ export default function AdminPanel() {
   const [annSeverity, setAnnSeverity] = useState<"info" | "warning" | "critical">("info");
   const [annDismissible, setAnnDismissible] = useState(true);
   const [annPublishing, setAnnPublishing] = useState(false);
+
+  // Jarvis Numbers (multi-WhatsApp)
+  const [jarvisNumbers, setJarvisNumbers] = useState<any[]>([]);
+  const [jarvisNumbersLoading, setJarvisNumbersLoading] = useState(false);
+  const [addNumberOpen, setAddNumberOpen] = useState(false);
+  const [newSessionName, setNewSessionName] = useState("");
+  const [newDisplayLabel, setNewDisplayLabel] = useState("");
+  const [creatingNumber, setCreatingNumber] = useState(false);
+  // QR modal — exibe QR de uma sessao em pareamento
+  const [qrModalNumberId, setQrModalNumberId] = useState<string | null>(null);
+  const [qrModalImage, setQrModalImage] = useState<string | null>(null);
+  const [qrModalStatus, setQrModalStatus] = useState<string>("loading");
+  const [qrModalLabel, setQrModalLabel] = useState<string>("");
 
   // Sparkline data
   const [dailyUsers, setDailyUsers] = useState<number[]>([]);
@@ -1063,6 +1078,167 @@ export default function AdminPanel() {
     await loadAnnouncements();
   };
 
+  // ── Jarvis Numbers (Multi-WhatsApp) ──────────────────────────────────
+  const callSessionManager = async (action: string, payload: Record<string, any> = {}) => {
+    const tok = session?.access_token;
+    if (!tok) throw new Error("no_session");
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-session-manager`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ action, ...payload }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `${action} failed`);
+    return data;
+  };
+
+  const loadJarvisNumbers = async () => {
+    setJarvisNumbersLoading(true);
+    try {
+      const data = await callSessionManager("list");
+      setJarvisNumbers(data.numbers || []);
+    } catch (e: any) {
+      console.error("[loadJarvisNumbers]", e);
+      toast.error(`Erro ao carregar números: ${e.message}`);
+      setJarvisNumbers([]);
+    } finally {
+      setJarvisNumbersLoading(false);
+    }
+  };
+
+  const createJarvisNumber = async () => {
+    const sessionName = newSessionName.trim().toLowerCase();
+    const label = newDisplayLabel.trim() || `Jarvis ${sessionName}`;
+    if (!sessionName) {
+      toast.error("Digite um nome de sessão (ex: jarvis2)");
+      return;
+    }
+    if (!/^[a-z0-9_-]+$/.test(sessionName)) {
+      toast.error("Nome deve ser alfanumérico (a-z, 0-9, _, -)");
+      return;
+    }
+    setCreatingNumber(true);
+    try {
+      const data = await callSessionManager("create", {
+        session_name: sessionName,
+        display_label: label,
+      });
+      toast.success("Número criado! Escaneie o QR pra parear.");
+      setNewSessionName("");
+      setNewDisplayLabel("");
+      setAddNumberOpen(false);
+      await loadJarvisNumbers();
+      // Abre QR modal automaticamente
+      openQrModal(data.number.id, data.number.display_label);
+    } catch (e: any) {
+      toast.error(`Erro: ${e.message}`);
+    } finally {
+      setCreatingNumber(false);
+    }
+  };
+
+  const openQrModal = async (id: string, label: string) => {
+    setQrModalNumberId(id);
+    setQrModalLabel(label);
+    setQrModalImage(null);
+    setQrModalStatus("loading");
+  };
+
+  const closeQrModal = () => {
+    setQrModalNumberId(null);
+    setQrModalImage(null);
+    setQrModalStatus("loading");
+    // Refresh lista pra mostrar status atualizado
+    loadJarvisNumbers();
+  };
+
+  // Polling do QR + status enquanto modal aberto
+  useEffect(() => {
+    if (!qrModalNumberId) return;
+    let cancelled = false;
+    let interval: number | null = null;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const statusRes = await callSessionManager("status", { id: qrModalNumberId });
+        if (cancelled) return;
+        setQrModalStatus(statusRes.status);
+        if (statusRes.status === "connected") {
+          toast.success("WhatsApp conectado!");
+          if (interval !== null) clearInterval(interval);
+          await loadJarvisNumbers();
+          // Mantém modal aberto 2s pra user ver o "conectado"
+          setTimeout(() => { if (!cancelled) closeQrModal(); }, 2000);
+          return;
+        }
+        if (statusRes.status === "qrcode") {
+          const qrRes = await callSessionManager("qr", { id: qrModalNumberId });
+          if (!cancelled && qrRes.qr) setQrModalImage(qrRes.qr);
+        }
+      } catch (e) {
+        console.warn("[qr-poll]", e);
+      }
+    };
+
+    tick(); // imediato
+    interval = window.setInterval(tick, 4000) as unknown as number;
+
+    return () => {
+      cancelled = true;
+      if (interval !== null) clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qrModalNumberId]);
+
+  const closeJarvisNumber = async (id: string) => {
+    try {
+      await callSessionManager("close", { id });
+      toast.success("Sessão fechada");
+      await loadJarvisNumbers();
+    } catch (e: any) {
+      toast.error(`Erro: ${e.message}`);
+    }
+  };
+
+  const logoutJarvisNumber = async (id: string) => {
+    if (!confirm("Desconectar completamente esse número? Vai precisar escanear QR de novo pra reconectar.")) return;
+    try {
+      await callSessionManager("logout", { id });
+      toast.success("Número desconectado");
+      await loadJarvisNumbers();
+    } catch (e: any) {
+      toast.error(`Erro: ${e.message}`);
+    }
+  };
+
+  const reconnectJarvisNumber = async (id: string, label: string) => {
+    // Reiniciar sessao = start novamente. Reusa actionCreate sem inserir row.
+    // Por ora chamamos status + qr direto pra forcar reabrir QR.
+    openQrModal(id, label);
+  };
+
+  const toggleJarvisNumberActive = async (id: string, makeActive: boolean) => {
+    try {
+      await callSessionManager("update", { id, is_active: makeActive });
+      toast.success(makeActive ? "Número ativado" : "Número desativado");
+      await loadJarvisNumbers();
+    } catch (e: any) {
+      toast.error(`Erro: ${e.message}`);
+    }
+  };
+
+  const deleteJarvisNumber = async (id: string, label: string) => {
+    if (!confirm(`Excluir "${label}" permanentemente? Só funciona se NÃO houver users atribuídos.`)) return;
+    try {
+      await callSessionManager("delete", { id });
+      toast.success("Número excluído");
+      await loadJarvisNumbers();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
   // Antes esse filtro rodava client-side sobre `profiles`, mas como `profiles`
   // é paginado em 25, a busca nunca encontrava usuários de outras páginas.
   // Agora o filtro é aplicado server-side no loadProfiles (ilike em nome e
@@ -1387,6 +1563,7 @@ export default function AdminPanel() {
               </TabsTrigger>
               <TabsTrigger value="settings" onClick={() => setKirvanoLiveRefresh(false)}><Settings className="h-4 w-4 mr-1" />Config</TabsTrigger>
               <TabsTrigger value="broadcast" onClick={() => { setKirvanoLiveRefresh(false); loadBroadcastUsers(); loadBroadcastHistory(); }}><Send className="h-4 w-4 mr-1" />Mensagem</TabsTrigger>
+              <TabsTrigger value="whatsapps" onClick={() => { setKirvanoLiveRefresh(false); loadJarvisNumbers(); }}><Smartphone className="h-4 w-4 mr-1" />WhatsApps</TabsTrigger>
               <TabsTrigger value="avisos" onClick={() => { setKirvanoLiveRefresh(false); loadAnnouncements(); }}><Megaphone className="h-4 w-4 mr-1" />Avisos</TabsTrigger>
               <TabsTrigger value="audit" onClick={() => { setKirvanoLiveRefresh(false); loadAuditLog(); }}><Shield className="h-4 w-4 mr-1" />Auditoria</TabsTrigger>
             </TabsList>
@@ -2503,6 +2680,147 @@ export default function AdminPanel() {
           </TabsContent>
 
           {/* AUDIT LOG — historico de acoes admin (impersonations, suspensoes, etc) */}
+          <TabsContent value="whatsapps">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-3">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Smartphone className="h-4 w-4" />
+                    WhatsApps do Jarvis
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Gerencie múltiplos números do Jarvis. Quando um cliente fala pela primeira vez, o sistema
+                    atribui automaticamente o número com menos carga e GRUDA — ele sempre vai conversar com o mesmo Jarvis.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={loadJarvisNumbers} disabled={jarvisNumbersLoading} className="gap-1.5">
+                    <RefreshCw className={`h-3.5 w-3.5 ${jarvisNumbersLoading ? "animate-spin" : ""}`} />
+                    Atualizar
+                  </Button>
+                  <Button size="sm" onClick={() => setAddNumberOpen(true)} className="gap-1.5">
+                    <Plus className="h-3.5 w-3.5" />
+                    Adicionar WhatsApp
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {jarvisNumbersLoading ? (
+                  <div className="space-y-2">
+                    {[...Array(2)].map((_, i) => <Skeleton key={i} className="h-32 w-full" />)}
+                  </div>
+                ) : jarvisNumbers.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Smartphone className="h-10 w-10 mx-auto text-muted-foreground opacity-40 mb-3" />
+                    <p className="text-sm text-muted-foreground">Nenhum WhatsApp configurado.</p>
+                    <Button size="sm" onClick={() => setAddNumberOpen(true)} className="mt-4 gap-1.5">
+                      <Plus className="h-3.5 w-3.5" />
+                      Adicionar o primeiro
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {jarvisNumbers.map((n: any) => {
+                      const isConnected = n.connection_status === "connected";
+                      const isQrCode = n.connection_status === "qrcode";
+                      const isClosed = n.connection_status === "closed" || n.connection_status === "pending";
+                      const statusColor = isConnected
+                        ? "border-emerald-500/40 bg-emerald-500/5"
+                        : isQrCode
+                        ? "border-amber-500/40 bg-amber-500/5"
+                        : "border-border bg-card";
+                      const statusBadge = isConnected
+                        ? { text: "Conectado", cls: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" }
+                        : isQrCode
+                        ? { text: "Aguardando QR", cls: "bg-amber-500/20 text-amber-300 border-amber-500/30" }
+                        : { text: n.connection_status === "banned" ? "Banido" : "Desconectado", cls: "bg-red-500/20 text-red-300 border-red-500/30" };
+                      return (
+                        <div key={n.id} className={`rounded-lg border-2 ${statusColor} p-4 flex flex-col gap-3`}>
+                          {/* Header */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                {isConnected ? <Wifi className="h-4 w-4 text-emerald-400" /> : <WifiOff className="h-4 w-4 text-muted-foreground" />}
+                                <h3 className="font-semibold text-sm truncate">{n.display_label}</h3>
+                              </div>
+                              <p className="text-xs text-muted-foreground font-mono">{n.phone_number || <em className="opacity-60">não conectado</em>}</p>
+                            </div>
+                            <Badge variant="outline" className={`text-[10px] ${statusBadge.cls} shrink-0`}>
+                              {statusBadge.text}
+                            </Badge>
+                          </div>
+
+                          {/* Stats */}
+                          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                            <div>
+                              <p className="font-semibold text-base">{n.user_count ?? 0}</p>
+                              <p className="text-muted-foreground text-[10px]">Usuários</p>
+                            </div>
+                            <div>
+                              <p className="font-semibold text-base">{n.daily_msg_count ?? 0}</p>
+                              <p className="text-muted-foreground text-[10px]">Msgs hoje</p>
+                            </div>
+                            <div>
+                              <p className="font-semibold text-base">{n.total_msg_count ?? 0}</p>
+                              <p className="text-muted-foreground text-[10px]">Total</p>
+                            </div>
+                          </div>
+
+                          {/* Session info */}
+                          <div className="text-[10px] text-muted-foreground space-y-0.5">
+                            <p>Sessão: <span className="font-mono">{n.session_name}</span></p>
+                            {n.last_connected_at && (
+                              <p>Última conexão: {format(new Date(n.last_connected_at), "dd/MM HH:mm", { locale: ptBR })}</p>
+                            )}
+                          </div>
+
+                          {/* Toggle ativo */}
+                          <div className="flex items-center justify-between rounded-md border border-border/50 px-2.5 py-1.5">
+                            <span className="text-xs">Ativo (recebe novos users)</span>
+                            <Switch
+                              checked={!!n.is_active}
+                              onCheckedChange={(v) => toggleJarvisNumberActive(n.id, v)}
+                            />
+                          </div>
+
+                          {/* Acoes */}
+                          <div className="flex gap-1.5 flex-wrap">
+                            {isClosed && (
+                              <Button size="sm" variant="default" onClick={() => reconnectJarvisNumber(n.id, n.display_label)} className="gap-1 h-7 text-xs flex-1 min-w-0">
+                                <QrCode className="h-3 w-3" />
+                                Conectar
+                              </Button>
+                            )}
+                            {isQrCode && (
+                              <Button size="sm" variant="default" onClick={() => openQrModal(n.id, n.display_label)} className="gap-1 h-7 text-xs flex-1 min-w-0">
+                                <QrCode className="h-3 w-3" />
+                                Ver QR
+                              </Button>
+                            )}
+                            {isConnected && (
+                              <Button size="sm" variant="outline" onClick={() => logoutJarvisNumber(n.id)} className="gap-1 h-7 text-xs flex-1 min-w-0">
+                                <PowerOff className="h-3 w-3" />
+                                Desconectar
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => deleteJarvisNumber(n.id, n.display_label)}
+                              className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="avisos">
             <div className="grid gap-4 md:grid-cols-2">
               {/* ── Painel de publicacao ── */}
@@ -2797,6 +3115,106 @@ export default function AdminPanel() {
           onProfileUpdate={() => { loadProfiles(); loadPendingProfiles(); }}
         />
       )}
+
+      {/* Modal: Adicionar novo WhatsApp */}
+      <Dialog open={addNumberOpen} onOpenChange={setAddNumberOpen}>
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="h-4 w-4" />
+              Adicionar novo WhatsApp
+            </DialogTitle>
+            <DialogDescription>
+              Cria uma sessão nova no WPPConnect Server. Depois você escaneia o QR Code pra parear o chip.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs mb-1.5 block">Nome técnico da sessão</Label>
+              <Input
+                value={newSessionName}
+                onChange={(e) => setNewSessionName(e.target.value.toLowerCase())}
+                placeholder="jarvis2"
+                maxLength={32}
+                className="font-mono text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Identificador único, alfanumérico (a-z, 0-9, _, -). Ex: <code>jarvis2</code>, <code>jarvis_backup</code>.
+              </p>
+            </div>
+            <div>
+              <Label className="text-xs mb-1.5 block">Nome visível</Label>
+              <Input
+                value={newDisplayLabel}
+                onChange={(e) => setNewDisplayLabel(e.target.value)}
+                placeholder="Jarvis Backup"
+                maxLength={64}
+                className="text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Como vai aparecer na lista. Ex: "Jarvis Principal", "Jarvis SP".
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddNumberOpen(false)} disabled={creatingNumber}>
+              Cancelar
+            </Button>
+            <Button onClick={createJarvisNumber} disabled={creatingNumber || !newSessionName.trim()}>
+              {creatingNumber ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Criando…</> : <>Criar e gerar QR</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: QR Code de pareamento */}
+      <Dialog open={!!qrModalNumberId} onOpenChange={(open) => { if (!open) closeQrModal(); }}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="h-4 w-4" />
+              Parear {qrModalLabel}
+            </DialogTitle>
+            <DialogDescription>
+              {qrModalStatus === "connected"
+                ? "✅ Conectado! Fechando…"
+                : qrModalStatus === "qrcode"
+                ? "Escaneie com o WhatsApp do chip que será o Jarvis"
+                : qrModalStatus === "connecting"
+                ? "Conectando…"
+                : "Gerando QR Code…"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center py-4">
+            {qrModalStatus === "connected" ? (
+              <div className="text-center py-6">
+                <Wifi className="h-16 w-16 mx-auto text-emerald-400 mb-3" />
+                <p className="text-emerald-400 font-semibold text-lg">Conectado com sucesso!</p>
+              </div>
+            ) : qrModalImage ? (
+              <div className="bg-white p-3 rounded-lg shadow-lg">
+                <img src={qrModalImage} alt="QR Code" className="w-72 h-72" />
+              </div>
+            ) : (
+              <div className="w-72 h-72 rounded-lg bg-muted flex items-center justify-center">
+                <RefreshCw className="h-10 w-10 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            <div className="mt-4 text-xs text-muted-foreground text-center max-w-sm space-y-1">
+              <p><strong>Passos no celular:</strong></p>
+              <p>1. WhatsApp → ⋮ Menu → <strong>Aparelhos conectados</strong></p>
+              <p>2. Toque em <strong>"Conectar um aparelho"</strong></p>
+              <p>3. Aponte a câmera pro QR acima</p>
+              <p className="pt-2 opacity-70">QR atualiza automaticamente. Fecha sozinho quando conectar.</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeQrModal}>
+              {qrModalStatus === "connected" ? "Fechar" : "Cancelar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
