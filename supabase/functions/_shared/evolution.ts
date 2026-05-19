@@ -194,7 +194,32 @@ export async function sendText(
   // ~800ms — só vale pra envios agendados, não pra resposta de chat ao vivo.
   // ATENÇÃO: Evolution v2 exige payload envelopado em "options" senão
   // retorna 400 ("instance requires property options").
-  if (options.warmUp) {
+  //
+  // AUTO-WARMUP (adicionado 19/05/2026):
+  // Mensagens longas ou com formatação rica (asteriscos pra bold, emojis em
+  // estrutura) precisam de sessão Signal estabelecida no destinatário pra
+  // não cair em "Aguardando mensagem". Sessões Signal são FRESCAS pra cada
+  // par remetente↔destinatário; ficam "esfriadas" após re-pareamento do
+  // Evolution OU se um lado ficou offline por horas.
+  //
+  // Bug reportado: depois do re-pareamento do Evolution (sessão Baileys
+  // zerada), confirmações de lembrete/transação ("⏰ Lembrete criado!\n📌
+  // Desligar TV\n📅 ...") ficavam "Aguardando mensagem" no destinatário,
+  // mas "oi" e respostas curtas funcionavam. Causa: overhead criptográfico
+  // X3DH na primeira mensagem complexa de cada sessão.
+  //
+  // Heurística: ativa warmUp automaticamente se:
+  //   - text > 200 chars (ex: lembrete/transação confirmados)
+  //   - contém formatação bold WhatsApp (*texto*)
+  //   - contém quebras de linha múltiplas (>2 \n consecutivos)
+  // O custo de 800ms é aceitável vs falha total de entrega.
+  const isLongOrFormatted =
+    text.length > 200 ||
+    /\*[^*]{2,}\*/.test(text) ||
+    /\n.*\n/.test(text);
+  const needsWarmup = options.warmUp || isLongOrFormatted;
+
+  if (needsWarmup) {
     try {
       await evolutionPost(`/chat/sendPresence/${INSTANCE}`, {
         number,
