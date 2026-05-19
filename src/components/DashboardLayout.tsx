@@ -3,6 +3,7 @@ import { SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { OnboardingBanner } from "@/components/OnboardingBanner";
 import { TrialBanner } from "@/components/TrialBanner";
+import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { Button } from "@/components/ui/button";
 import { Menu, X } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -63,6 +64,7 @@ export default function DashboardLayout() {
           <AppSidebar />
           <div className="flex-1 flex flex-col min-w-0">
             <DashboardHeader />
+            <AnnouncementBanner />
             <TrialBanner />
             <OnboardingBanner />
             <main className="flex-1 p-4 md:p-6 overflow-auto">

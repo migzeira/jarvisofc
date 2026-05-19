@@ -15,8 +15,9 @@ import {
   Users, MessageSquare, Settings, Shield, Search, Eye, MessageCircle,
   Clock, CheckCircle, XCircle, RefreshCw, Download, CreditCard, AlertTriangle,
   TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Webhook, ChevronDown, ChevronUp, Link2, Link2Off,
-  Activity, BarChart3, UserCheck, UserX, Send, Copy, UserSearch, Bug, Mail, Heart,
+  Activity, BarChart3, UserCheck, UserX, Send, Copy, UserSearch, Bug, Mail, Heart, Megaphone, Trash2,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { isCouplePlan, getPlanDisplayName } from "@/lib/plan";
 import { Textarea } from "@/components/ui/textarea";
 import { format, subDays } from "date-fns";
@@ -165,6 +166,15 @@ export default function AdminPanel() {
   // Audit log (admin_audit_log) — historico de impersonations e outras acoes admin
   const [auditLog, setAuditLog] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+
+  // System Announcements — banner global no topo do dashboard de todos os users
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [announcementsLoading, setAnnouncementsLoading] = useState(false);
+  const [annEmoji, setAnnEmoji] = useState("📢");
+  const [annMessage, setAnnMessage] = useState("");
+  const [annSeverity, setAnnSeverity] = useState<"info" | "warning" | "critical">("info");
+  const [annDismissible, setAnnDismissible] = useState(true);
+  const [annPublishing, setAnnPublishing] = useState(false);
 
   // Sparkline data
   const [dailyUsers, setDailyUsers] = useState<number[]>([]);
@@ -955,6 +965,104 @@ export default function AdminPanel() {
     }
   };
 
+  // ── System Announcements ─────────────────────────────────────────────
+  const loadAnnouncements = async () => {
+    setAnnouncementsLoading(true);
+    try {
+      const { data, error } = await (supabase.from("system_announcements" as any) as any)
+        .select("id, emoji, message, severity, is_active, dismissible, expires_at, created_at, created_by")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) {
+        console.error("[loadAnnouncements]", error);
+        toast.error("Erro ao carregar avisos");
+        setAnnouncements([]);
+        return;
+      }
+      setAnnouncements((data ?? []) as any[]);
+    } finally {
+      setAnnouncementsLoading(false);
+    }
+  };
+
+  const publishAnnouncement = async () => {
+    const message = annMessage.trim();
+    if (!message) {
+      toast.error("Digite a mensagem do aviso");
+      return;
+    }
+    if (message.length > 500) {
+      toast.error("Mensagem muito longa (máx 500 caracteres)");
+      return;
+    }
+    setAnnPublishing(true);
+    try {
+      // Desativa todos os outros avisos ativos antes de publicar o novo
+      // (so 1 aviso ativo por vez — evita banner em cima de banner)
+      await (supabase.from("system_announcements" as any) as any)
+        .update({ is_active: false })
+        .eq("is_active", true);
+
+      const { error } = await (supabase.from("system_announcements" as any) as any)
+        .insert({
+          emoji: annEmoji || "📢",
+          message,
+          severity: annSeverity,
+          is_active: true,
+          dismissible: annDismissible,
+          created_by: user?.id ?? null,
+        });
+      if (error) {
+        console.error("[publishAnnouncement]", error);
+        toast.error("Erro ao publicar aviso");
+        return;
+      }
+      toast.success("Aviso publicado! Já apareceu pra todos os usuários.");
+      setAnnMessage("");
+      setAnnEmoji("📢");
+      setAnnSeverity("info");
+      setAnnDismissible(true);
+      await loadAnnouncements();
+    } finally {
+      setAnnPublishing(false);
+    }
+  };
+
+  const toggleAnnouncement = async (id: string, makeActive: boolean) => {
+    try {
+      if (makeActive) {
+        // Antes de ativar, desativa todos os outros pra evitar banner duplo
+        await (supabase.from("system_announcements" as any) as any)
+          .update({ is_active: false })
+          .eq("is_active", true);
+      }
+      const { error } = await (supabase.from("system_announcements" as any) as any)
+        .update({ is_active: makeActive })
+        .eq("id", id);
+      if (error) {
+        toast.error(makeActive ? "Erro ao reativar" : "Erro ao desativar");
+        return;
+      }
+      toast.success(makeActive ? "Aviso reativado" : "Aviso desativado");
+      await loadAnnouncements();
+    } catch (e) {
+      console.error("[toggleAnnouncement]", e);
+    }
+  };
+
+  const deleteAnnouncement = async (id: string) => {
+    if (!confirm("Excluir esse aviso permanentemente? Não dá pra desfazer.")) return;
+    const { error } = await (supabase.from("system_announcements" as any) as any)
+      .delete()
+      .eq("id", id);
+    if (error) {
+      toast.error("Erro ao excluir");
+      return;
+    }
+    toast.success("Aviso excluído");
+    await loadAnnouncements();
+  };
+
   // Antes esse filtro rodava client-side sobre `profiles`, mas como `profiles`
   // é paginado em 25, a busca nunca encontrava usuários de outras páginas.
   // Agora o filtro é aplicado server-side no loadProfiles (ilike em nome e
@@ -1279,6 +1387,7 @@ export default function AdminPanel() {
               </TabsTrigger>
               <TabsTrigger value="settings" onClick={() => setKirvanoLiveRefresh(false)}><Settings className="h-4 w-4 mr-1" />Config</TabsTrigger>
               <TabsTrigger value="broadcast" onClick={() => { setKirvanoLiveRefresh(false); loadBroadcastUsers(); loadBroadcastHistory(); }}><Send className="h-4 w-4 mr-1" />Mensagem</TabsTrigger>
+              <TabsTrigger value="avisos" onClick={() => { setKirvanoLiveRefresh(false); loadAnnouncements(); }}><Megaphone className="h-4 w-4 mr-1" />Avisos</TabsTrigger>
               <TabsTrigger value="audit" onClick={() => { setKirvanoLiveRefresh(false); loadAuditLog(); }}><Shield className="h-4 w-4 mr-1" />Auditoria</TabsTrigger>
             </TabsList>
           </div>
@@ -2394,6 +2503,216 @@ export default function AdminPanel() {
           </TabsContent>
 
           {/* AUDIT LOG — historico de acoes admin (impersonations, suspensoes, etc) */}
+          <TabsContent value="avisos">
+            <div className="grid gap-4 md:grid-cols-2">
+              {/* ── Painel de publicacao ── */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Megaphone className="h-4 w-4" />
+                    Publicar novo aviso
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Aparece no topo do dashboard de TODOS os usuários em tempo real.
+                    So 1 aviso ativo por vez — publicar um novo desativa o anterior.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Preview */}
+                  <div className={
+                    annSeverity === "critical"
+                      ? "rounded-md border bg-gradient-to-r from-red-500/15 via-rose-500/15 to-red-500/15 border-red-500/30 px-3 py-2.5 flex items-center gap-3"
+                      : annSeverity === "warning"
+                      ? "rounded-md border bg-gradient-to-r from-amber-500/15 via-yellow-500/15 to-amber-500/15 border-amber-500/30 px-3 py-2.5 flex items-center gap-3"
+                      : "rounded-md border bg-gradient-to-r from-sky-500/15 via-blue-500/15 to-sky-500/15 border-sky-500/30 px-3 py-2.5 flex items-center gap-3"
+                  }>
+                    <span className="text-lg leading-none">{annEmoji || "📢"}</span>
+                    <div className={
+                      annSeverity === "critical" ? "text-sm text-red-200 flex-1 min-w-0"
+                      : annSeverity === "warning" ? "text-sm text-amber-200 flex-1 min-w-0"
+                      : "text-sm text-sky-200 flex-1 min-w-0"
+                    }>
+                      <span className="whitespace-pre-wrap break-words">
+                        {annMessage || <em className="opacity-50">Sua mensagem aparece aqui…</em>}
+                      </span>
+                    </div>
+                    {annDismissible && (
+                      <XCircle className="h-3.5 w-3.5 opacity-50 shrink-0" />
+                    )}
+                  </div>
+
+                  {/* Emoji picker */}
+                  <div>
+                    <Label className="text-xs mb-1.5 block">Emoji</Label>
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {["📢","⚠️","🚨","🛠️","🔧","⏰","🎉","✨","💚","💛","❤️","🚀","💡","🔥","🤖"].map(e => (
+                        <button
+                          key={e}
+                          type="button"
+                          onClick={() => setAnnEmoji(e)}
+                          className={
+                            annEmoji === e
+                              ? "text-xl w-9 h-9 rounded-md border-2 border-primary bg-primary/10 transition-colors"
+                              : "text-xl w-9 h-9 rounded-md border border-border hover:border-primary/50 hover:bg-accent transition-colors"
+                          }
+                          aria-label={`Selecionar emoji ${e}`}
+                        >
+                          {e}
+                        </button>
+                      ))}
+                    </div>
+                    <Input
+                      value={annEmoji}
+                      onChange={(e) => setAnnEmoji(e.target.value)}
+                      placeholder="Ou cola outro emoji aqui"
+                      maxLength={4}
+                      className="text-sm"
+                    />
+                  </div>
+
+                  {/* Mensagem */}
+                  <div>
+                    <Label className="text-xs mb-1.5 block">
+                      Mensagem <span className="text-muted-foreground">({annMessage.length}/500)</span>
+                    </Label>
+                    <Textarea
+                      value={annMessage}
+                      onChange={(e) => setAnnMessage(e.target.value)}
+                      placeholder="Ex: Estamos atualizando o servidor e o Jarvis vai ficar fora do ar por algumas horas. Voltamos em breve!"
+                      maxLength={500}
+                      rows={4}
+                      className="text-sm resize-none"
+                    />
+                  </div>
+
+                  {/* Severity */}
+                  <div>
+                    <Label className="text-xs mb-1.5 block">Tipo</Label>
+                    <Select value={annSeverity} onValueChange={(v) => setAnnSeverity(v as any)}>
+                      <SelectTrigger className="text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="info">💙 Info — comunicado geral (azul)</SelectItem>
+                        <SelectItem value="warning">💛 Aviso — manutenção / lentidão (amarelo)</SelectItem>
+                        <SelectItem value="critical">❤️ Crítico — sistema fora do ar (vermelho)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Dismissivel */}
+                  <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                    <div>
+                      <Label className="text-sm">Usuário pode fechar (X)</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Recomendado pra info/aviso. Desligue pra críticos.
+                      </p>
+                    </div>
+                    <Switch checked={annDismissible} onCheckedChange={setAnnDismissible} />
+                  </div>
+
+                  {/* Publish */}
+                  <Button
+                    onClick={publishAnnouncement}
+                    disabled={annPublishing || !annMessage.trim()}
+                    className="w-full"
+                  >
+                    {annPublishing ? (
+                      <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Publicando…</>
+                    ) : (
+                      <><Send className="h-4 w-4 mr-2" />Publicar agora</>
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* ── Lista de avisos anteriores ── */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-3">
+                  <div>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Clock className="h-4 w-4" />
+                      Histórico
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Últimos 50 avisos. Reative qualquer um quando precisar.
+                    </p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={loadAnnouncements} disabled={announcementsLoading} className="gap-1.5">
+                    <RefreshCw className={`h-3.5 w-3.5 ${announcementsLoading ? "animate-spin" : ""}`} />
+                    Atualizar
+                  </Button>
+                </CardHeader>
+                <CardContent>
+                  {announcementsLoading ? (
+                    <div className="space-y-2">
+                      {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+                    </div>
+                  ) : announcements.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-6">
+                      Nenhum aviso ainda. Publique o primeiro ao lado!
+                    </p>
+                  ) : (
+                    <div className="space-y-2 max-h-[560px] overflow-y-auto pr-1">
+                      {announcements.map((a) => (
+                        <div
+                          key={a.id}
+                          className={
+                            a.is_active
+                              ? "rounded-md border-2 border-primary/40 bg-primary/5 px-3 py-2.5"
+                              : "rounded-md border border-border bg-card px-3 py-2.5 opacity-70"
+                          }
+                        >
+                          <div className="flex items-start gap-2.5">
+                            <span className="text-lg leading-none shrink-0 mt-0.5">{a.emoji}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm whitespace-pre-wrap break-words">{a.message}</p>
+                              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    a.severity === "critical" ? "text-[10px] border-red-500/40 text-red-300"
+                                    : a.severity === "warning" ? "text-[10px] border-amber-500/40 text-amber-300"
+                                    : "text-[10px] border-sky-500/40 text-sky-300"
+                                  }
+                                >
+                                  {a.severity === "critical" ? "Crítico" : a.severity === "warning" ? "Aviso" : "Info"}
+                                </Badge>
+                                {a.is_active && <Badge className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">No ar</Badge>}
+                                {!a.dismissible && <Badge variant="outline" className="text-[10px]">Não fechável</Badge>}
+                                <span className="text-[10px] text-muted-foreground">
+                                  {format(new Date(a.created_at), "dd/MM HH:mm", { locale: ptBR })}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-1 shrink-0">
+                              <Button
+                                size="sm"
+                                variant={a.is_active ? "outline" : "default"}
+                                onClick={() => toggleAnnouncement(a.id, !a.is_active)}
+                                className="h-7 px-2 text-xs"
+                              >
+                                {a.is_active ? "Tirar do ar" : "Reativar"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => deleteAnnouncement(a.id)}
+                                className="h-7 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
           <TabsContent value="audit">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-3">
