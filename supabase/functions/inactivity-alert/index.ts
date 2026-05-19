@@ -75,7 +75,8 @@ serve(async (req) => {
       `É só me chamar! 😊`;
 
     try {
-      await sendText(u.phone_number.replace(/\D/g, ""), message);
+      // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+      await sendText(u.phone_number.replace(/\D/g, ""), message, { userId: u.id });
       // Atualiza last_inactivity_alert_at para evitar reenvio
       await supabase
         .from("profiles")

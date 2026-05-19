@@ -15,7 +15,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { sendText, resolvePhoneToLid } from "../_shared/whatsapp.ts";
+import { sendText, resolvePhoneToLid, resolveSessionForUser } from "../_shared/whatsapp.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -160,9 +160,22 @@ serve(async (req) => {
       `📝 Salvar anotações\n\n` +
       `Manda um *"oi"* pra começar ou já envia seu primeiro registro! 😊`;
 
+    // ─── MULTI-WHATSAPP (Fase 2) ──────────────────────────────────────────
+    // Atribui um numero do Jarvis ANTES do welcome — garante que o cliente
+    // sempre receba do mesmo numero a partir da primeira interacao (sticky).
+    // resolveSessionForUser cria o assignment via pick_best_jarvis_number().
+    // Se nao tem nenhum numero ativo+connected, retorna null e sendText cai
+    // no env default (WPPCONNECT_SESSION).
+    try {
+      await resolveSessionForUser(userId);
+    } catch (err) {
+      console.warn("[link-init] resolveSessionForUser falhou (segue com env default):", err);
+    }
+
     let sent = false;
     try {
-      await sendText(phone, welcomeMsg);
+      // userId passado → sendText resolve assignment automaticamente
+      await sendText(phone, welcomeMsg, { userId });
       sent = true;
     } catch (err) {
       console.warn("[link-init] welcome send failed:", err);
@@ -224,10 +237,17 @@ serve(async (req) => {
     `📝 Salvar anotações\n\n` +
     `Tudo direto por aqui pelo WhatsApp. ✨`;
 
+  // ─── MULTI-WHATSAPP (Fase 2) — atribui numero ANTES do welcome ─────────
+  try {
+    await resolveSessionForUser(userId);
+  } catch (err) {
+    console.warn("[link-init] resolveSessionForUser falhou (segue com env default):", err);
+  }
+
   let sent = false;
   let sendError: string | null = null;
   try {
-    await sendText(phone, msg);
+    await sendText(phone, msg, { userId });
     sent = true;
   } catch (err) {
     sendError = err instanceof Error ? err.message : String(err);

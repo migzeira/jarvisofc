@@ -489,7 +489,10 @@ serve(async (_req) => {
           [
             { id: "DELEGATE_JARVIS", text: "🤖 Jarvis envia" },
             { id: "DELEGATE_ME",   text: "✉️ Eu mesmo envio" },
-          ]
+          ],
+          "Jarvis",
+          // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+          { userId: reminder.user_id }
         );
         // Armazena na sessão para processar a resposta do botão
         await supabase.from("whatsapp_sessions").upsert(
@@ -510,7 +513,8 @@ serve(async (_req) => {
         // sem o warm-up, o WhatsApp pode entregar a msg em branco quando ele voltar.
         let mainSendOk = true;
         try {
-          mainMessageId = await sendText(reminder.whatsapp_number, finalMessage, { warmUp: true });
+          // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+          mainMessageId = await sendText(reminder.whatsapp_number, finalMessage, { warmUp: true, userId: reminder.user_id });
         } catch (sendErr) {
           console.error(`[send-reminder] main sendText failed for ${reminder.id}:`, sendErr);
           mainSendOk = false;
@@ -519,9 +523,11 @@ serve(async (_req) => {
         if (!mainSendOk && reminder.source === "scheduled_order" && reminder.user_id) {
           const oc = (reminder as any).order_context as Record<string, unknown> | null;
           if (oc?.user_phone && oc?.business_name) {
+            // Multi-WhatsApp Fase 2: userId resolve sticky assignment
             await sendText(
               oc.user_phone as string,
-              `⚠️ Não consegui entregar seu pedido agendado para *${oc.business_name}*. Tente fazer o pedido novamente.`
+              `⚠️ Não consegui entregar seu pedido agendado para *${oc.business_name}*. Tente fazer o pedido novamente.`,
+              { userId: reminder.user_id }
             ).catch((e) => console.error("[send-reminder] failure notify:", e));
           }
         }
@@ -557,9 +563,11 @@ serve(async (_req) => {
 
               // Confirma pro usuario que a mensagem agendada foi enviada
               const contactName = reminder.title?.replace(/^Mensagem para /i, "") || "o contato";
+              // Multi-WhatsApp Fase 2: userId resolve sticky assignment
               sendText(
                 fromPhone,
-                `✅ Mensagem enviada para *${contactName}*! 📨`
+                `✅ Mensagem enviada para *${contactName}*! 📨`,
+                { userId: reminder.user_id }
               ).catch((e) => console.error("[send-reminder] confirm sendText failed:", (e as Error).message));
             }
           } catch (relayErr) {
@@ -615,9 +623,11 @@ serve(async (_req) => {
 
               // 3. Notifica o usuario que o pedido foi enviado (sendText retorna Promise — .catch aqui é seguro)
               try {
+                // Multi-WhatsApp Fase 2: userId resolve sticky assignment
                 await sendText(
                   userPhone,
-                  `✅ Seu pedido agendado na *${bizName}* acabou de ser enviado! 🍕\n\nVou te avisar assim que eles responderem.`
+                  `✅ Seu pedido agendado na *${bizName}* acabou de ser enviado! 🍕\n\nVou te avisar assim que eles responderem.`,
+                  { userId }
                 );
               } catch (e) { console.error("[send-reminder] sendText user confirm exception:", e); }
             }

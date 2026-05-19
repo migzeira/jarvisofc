@@ -24,8 +24,29 @@
  */
 
 const WPPCONNECT_URL = (Deno.env.get("WPPCONNECT_URL") ?? "").replace(/\/$/, "");
-const WPPCONNECT_SESSION = Deno.env.get("WPPCONNECT_SESSION") ?? "jarvis";
-const WPPCONNECT_TOKEN = Deno.env.get("WPPCONNECT_TOKEN") ?? "";
+const WPPCONNECT_SESSION_DEFAULT = Deno.env.get("WPPCONNECT_SESSION") ?? "jarvis";
+const WPPCONNECT_TOKEN_DEFAULT = Deno.env.get("WPPCONNECT_TOKEN") ?? "";
+
+/**
+ * Contexto de sessao opcional. Caller pode passar { session, token } pra
+ * usar uma sessao especifica (multi-numero), OU omitir pra cair no env
+ * default (legado, 1 numero).
+ *
+ * Adicionado na Fase 2 do multi-WhatsApp. Mantem retrocompat: se nenhum
+ * caller passar ctx, usa env vars como antes.
+ */
+export interface WppCtx {
+  session?: string;
+  token?: string;
+}
+
+/** Resolve sessao/token efetivos: ctx > env default. */
+function resolveCtx(ctx?: WppCtx): { session: string; token: string } {
+  return {
+    session: ctx?.session || WPPCONNECT_SESSION_DEFAULT,
+    token: ctx?.token || WPPCONNECT_TOKEN_DEFAULT,
+  };
+}
 
 // ─────────────────────────────────────────────────────────────
 // HTTP helpers
@@ -35,18 +56,25 @@ interface WppFetchOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   timeoutMs?: number;
+  /** Override de auth — se nao passado, usa env default. */
+  token?: string;
 }
 
 /**
  * Wrapper unificado para chamadas REST ao WPPConnect Server.
  * Inclui timeout e tratamento padronizado de erros.
+ *
+ * `opts.token` permite override do Bearer (multi-sessao). Se omitido,
+ * usa WPPCONNECT_TOKEN do env.
  */
 async function wppFetch(path: string, opts: WppFetchOptions = {}): Promise<unknown> {
-  const { method = "POST", body, timeoutMs = 15_000 } = opts;
+  const { method = "POST", body, timeoutMs = 15_000, token } = opts;
 
-  if (!WPPCONNECT_URL || !WPPCONNECT_SESSION) {
-    throw new Error("WPPConnect env vars não configuradas (WPPCONNECT_URL / WPPCONNECT_SESSION)");
+  if (!WPPCONNECT_URL) {
+    throw new Error("WPPConnect env vars não configuradas (WPPCONNECT_URL)");
   }
+
+  const effectiveToken = token || WPPCONNECT_TOKEN_DEFAULT;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -56,7 +84,7 @@ async function wppFetch(path: string, opts: WppFetchOptions = {}): Promise<unkno
       method,
       headers: {
         "Content-Type": "application/json",
-        ...(WPPCONNECT_TOKEN ? { Authorization: `Bearer ${WPPCONNECT_TOKEN}` } : {}),
+        ...(effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
@@ -114,10 +142,12 @@ function normalizePhone(phone: string): string {
  *
  * Diferença vs Evolution: WPPConnect usa SÓ phone (dígitos), sem @suffix.
  * Pra LIDs, precisa resolver pra phone real primeiro.
+ *
+ * `ctx` propagado pra resolveLidToPhone usar a mesma sessao do caller.
  */
-async function resolvePhoneForSend(to: string): Promise<string> {
+async function resolvePhoneForSend(to: string, ctx?: WppCtx): Promise<string> {
   if (to.endsWith("@lid")) {
-    const resolved = await resolveLidToPhone(to);
+    const resolved = await resolveLidToPhone(to, ctx);
     if (resolved) return normalizePhone(resolved);
     // Fallback: tenta usar dígitos do LID (last resort)
     return to.replace(/@lid$/, "").replace(/\D/g, "");
@@ -144,14 +174,16 @@ async function resolvePhoneForSend(to: string): Promise<string> {
  *
  * Normalizamos pro mesmo formato que o webhook recebe (@s.whatsapp.net ou @lid).
  */
-export async function resolvePhoneToLid(phone: string): Promise<string | null> {
+export async function resolvePhoneToLid(phone: string, ctx?: WppCtx): Promise<string | null> {
   const normalized = normalizePhone(phone);
   if (!normalized || normalized.length < 12) return null;
+  const { session, token } = resolveCtx(ctx);
 
   try {
-    const res = await wppFetch(`/api/${WPPCONNECT_SESSION}/check-number-status`, {
+    const res = await wppFetch(`/api/${session}/check-number-status`, {
       method: "POST",
       body: { phone: normalized },
+      token,
     }) as any;
 
     // WPPConnect retorna { numberExists, id: { user, server, _serialized } }
@@ -180,13 +212,15 @@ export async function resolvePhoneToLid(phone: string): Promise<string | null> {
  *
  * Fallback: lista todos os contatos e busca match.
  */
-export async function resolveLidToPhone(lid: string): Promise<string | null> {
+export async function resolveLidToPhone(lid: string, ctx?: WppCtx): Promise<string | null> {
   const lidId = lid.replace(/@lid$/, "");
+  const { session, token } = resolveCtx(ctx);
 
   // Tentativa 1: endpoint direto de contato (WPPConnect aceita LID direto)
   try {
-    const res = await wppFetch(`/api/${WPPCONNECT_SESSION}/contact/${encodeURIComponent(lid)}`, {
+    const res = await wppFetch(`/api/${session}/contact/${encodeURIComponent(lid)}`, {
       method: "GET",
+      token,
     }) as any;
 
     // Response tem id._serialized com phone real se for LID resolvível
@@ -196,8 +230,9 @@ export async function resolveLidToPhone(lid: string): Promise<string | null> {
 
   // Tentativa 2: chat detalhes (alguns deployments expõem isso)
   try {
-    const res = await wppFetch(`/api/${WPPCONNECT_SESSION}/chat-by-id/${encodeURIComponent(lid)}`, {
+    const res = await wppFetch(`/api/${session}/chat-by-id/${encodeURIComponent(lid)}`, {
       method: "GET",
+      token,
     }) as any;
     const phone = extractPhoneFromContact(res);
     if (phone) return phone;
@@ -205,8 +240,9 @@ export async function resolveLidToPhone(lid: string): Promise<string | null> {
 
   // Tentativa 3: lista todos contatos e filtra (último recurso, caro)
   try {
-    const contacts = await wppFetch(`/api/${WPPCONNECT_SESSION}/all-contacts`, {
+    const contacts = await wppFetch(`/api/${session}/all-contacts`, {
       method: "GET",
+      token,
     }) as unknown;
 
     if (Array.isArray(contacts)) {
@@ -258,17 +294,20 @@ function extractPhoneFromContact(obj: any): string | null {
 export async function sendPresence(
   to: string,
   presence: "available" | "unavailable" | "composing" | "recording" | "paused" = "composing",
-  delayMs = 1500
+  delayMs = 1500,
+  ctx?: WppCtx
 ): Promise<void> {
-  const phone = await resolvePhoneForSend(to);
+  const { session, token } = resolveCtx(ctx);
+  const phone = await resolvePhoneForSend(to, ctx);
 
   // WPPConnect só suporta "typing" (composing) ou "recording" via /typing
   const isTyping = presence === "composing" || presence === "recording";
 
   try {
-    await wppFetch(`/api/${WPPCONNECT_SESSION}/typing`, {
+    await wppFetch(`/api/${session}/typing`, {
       method: "POST",
       body: { phone, value: isTyping },
+      token,
     });
 
     // Aguarda delay pra "rascunho" aparecer no destinatário
@@ -278,9 +317,10 @@ export async function sendPresence(
 
     // Para o typing
     if (isTyping) {
-      await wppFetch(`/api/${WPPCONNECT_SESSION}/typing`, {
+      await wppFetch(`/api/${session}/typing`, {
         method: "POST",
         body: { phone, value: false },
+        token,
       }).catch(() => { /* best-effort */ });
     }
   } catch (err) {
@@ -307,9 +347,10 @@ export async function sendPresence(
 export async function sendText(
   to: string,
   text: string,
-  options: { warmUp?: boolean } = {}
+  options: { warmUp?: boolean } & WppCtx = {}
 ): Promise<string | null> {
-  const phone = await resolvePhoneForSend(to);
+  const { session, token } = resolveCtx(options);
+  const phone = await resolvePhoneForSend(to, options);
 
   // Auto-warmup: mensagens complexas precisam de sessão Signal estabelecida
   const isLongOrFormatted =
@@ -320,9 +361,10 @@ export async function sendText(
 
   if (needsWarmup) {
     try {
-      await wppFetch(`/api/${WPPCONNECT_SESSION}/typing`, {
+      await wppFetch(`/api/${session}/typing`, {
         method: "POST",
         body: { phone, value: true },
+        token,
       });
       await new Promise((resolve) => setTimeout(resolve, 700));
     } catch (warmErr) {
@@ -333,9 +375,10 @@ export async function sendText(
     }
   }
 
-  const res = await wppFetch(`/api/${WPPCONNECT_SESSION}/send-message`, {
+  const res = await wppFetch(`/api/${session}/send-message`, {
     method: "POST",
     body: { phone, message: text, isGroup: false },
+    token,
   }) as any;
 
   // WPPConnect retorna array [{ id: "xxx", ack: 1, ... }] ou objeto único.
@@ -372,13 +415,15 @@ export async function sendButtons(
   title: string,
   description: string,
   buttons: Array<{ id: string; text: string }>,
-  footer = "Jarvis"
+  footer = "Jarvis",
+  ctx?: WppCtx
 ): Promise<void> {
-  const phone = await resolvePhoneForSend(to);
+  const { session, token } = resolveCtx(ctx);
+  const phone = await resolvePhoneForSend(to, ctx);
 
   // Tenta botões nativos primeiro (raramente funciona em WhatsApp pessoal)
   try {
-    await wppFetch(`/api/${WPPCONNECT_SESSION}/send-buttons`, {
+    await wppFetch(`/api/${session}/send-buttons`, {
       method: "POST",
       body: {
         phone,
@@ -391,6 +436,7 @@ export async function sendButtons(
           type: 1,
         })),
       },
+      token,
     });
     return; // sucesso
   } catch (err) {
@@ -405,9 +451,10 @@ export async function sendButtons(
   const fallbackText =
     `*${title}*\n\n${description}\n\n${opts}\n\n_Responda com o número ou a opção._`;
 
-  await wppFetch(`/api/${WPPCONNECT_SESSION}/send-message`, {
+  await wppFetch(`/api/${session}/send-message`, {
     method: "POST",
     body: { phone, message: fallbackText, isGroup: false },
+    token,
   });
 }
 
@@ -422,12 +469,14 @@ export async function sendImage(
   to: string,
   media: string,
   caption: string,
-  isUrl = false
+  isUrl = false,
+  ctx?: WppCtx
 ): Promise<void> {
-  const phone = await resolvePhoneForSend(to);
+  const { session, token } = resolveCtx(ctx);
+  const phone = await resolvePhoneForSend(to, ctx);
 
   if (isUrl) {
-    await wppFetch(`/api/${WPPCONNECT_SESSION}/send-image`, {
+    await wppFetch(`/api/${session}/send-image`, {
       method: "POST",
       body: {
         phone,
@@ -435,6 +484,7 @@ export async function sendImage(
         caption,
         path: media,
       },
+      token,
     });
   } else {
     // base64 com prefixo data:image/...;base64, se não tiver
@@ -442,7 +492,7 @@ export async function sendImage(
       ? media
       : `data:image/png;base64,${media}`;
 
-    await wppFetch(`/api/${WPPCONNECT_SESSION}/send-image-base64`, {
+    await wppFetch(`/api/${session}/send-image-base64`, {
       method: "POST",
       body: {
         phone,
@@ -450,6 +500,7 @@ export async function sendImage(
         caption,
         base64,
       },
+      token,
     });
   }
 }
@@ -464,8 +515,10 @@ export async function sendImage(
  * que o evolution.ts recebe — o whatsapp.ts wrapper garante compat).
  */
 export async function downloadMediaBase64(
-  messageData: Record<string, unknown>
+  messageData: Record<string, unknown>,
+  ctx?: WppCtx
 ): Promise<{ base64: string; mimetype: string } | null> {
+  const { session, token } = resolveCtx(ctx);
   // WPPConnect aceita o messageId como referência
   const messageId =
     (messageData as any)?.id?._serialized ??
@@ -480,9 +533,10 @@ export async function downloadMediaBase64(
 
   // Tentativa 1: get-media-by-message
   try {
-    const res = await wppFetch(`/api/${WPPCONNECT_SESSION}/get-media-by-message`, {
+    const res = await wppFetch(`/api/${session}/get-media-by-message`, {
       method: "POST",
       body: { messageId },
+      token,
     }) as any;
 
     if (res?.base64 && res?.mimetype) {
@@ -499,9 +553,10 @@ export async function downloadMediaBase64(
 
   // Tentativa 2: download-media
   try {
-    const res = await wppFetch(`/api/${WPPCONNECT_SESSION}/download-media`, {
+    const res = await wppFetch(`/api/${session}/download-media`, {
       method: "POST",
       body: { messageId },
+      token,
     }) as any;
 
     if (res?.base64 && res?.mimetype) {

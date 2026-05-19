@@ -70,7 +70,8 @@ async function sendReminder1(
     `_Seu acesso fica ativo por mais 24 horas enquanto aguardo sua renovação._`;
 
   try {
-    await sendText(phone, msg);
+    // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+    await sendText(phone, msg, { userId });
     await supabase.from("profiles")
       .update({ renewal_reminder_sent_at: new Date().toISOString() } as any)
       .eq("id", userId);
@@ -94,7 +95,8 @@ async function sendReminder2(
     `_Estou aqui quando você voltar. 🤝_`;
 
   try {
-    await sendText(phone, msg);
+    // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+    await sendText(phone, msg, { userId });
     await supabase.from("profiles")
       .update({ suspension_notice_sent_at: new Date().toISOString() } as any)
       .eq("id", userId);

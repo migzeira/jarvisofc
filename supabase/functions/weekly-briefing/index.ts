@@ -192,7 +192,8 @@ serve(async (req) => {
           notesCount, habitsCompleted, habitsTotal, periodLabel,
         });
         if (chartUrl) {
-          await sendImage(phone, chartUrl, "", true);
+          // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+          await sendImage(phone, chartUrl, "", true, { userId: user.id });
         }
       } catch (chartErr) {
         console.error(`[weekly-briefing] Chart error for ${user.id}:`, chartErr);
@@ -276,7 +277,8 @@ serve(async (req) => {
       lines.push(`Tenha uma otima semana, ${userName}! 💪`);
 
       const message = lines.join("\n");
-      await sendText(phone, message);
+      // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+      await sendText(phone, message, { userId: user.id });
 
       // Registra envio
       await supabase.from("reminders").insert({

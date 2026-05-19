@@ -60,7 +60,8 @@ serve(async (_req) => {
       const target = (p.phone_number ?? "").replace(/\D/g, "") || p.whatsapp_lid;
       if (!target) { skipped++; continue; }
       try {
-        await sendText(target, applyTemplate(bc.message, p));
+        // Multi-WhatsApp Fase 2: cada user recebe pelo seu numero atribuido
+        await sendText(target, applyTemplate(bc.message, p), { userId: p.id });
         sent++;
       } catch { failed++; }
       if (i < profiles!.length - 1) await sleep(250);

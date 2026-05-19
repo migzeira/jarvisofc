@@ -41,7 +41,8 @@ serve(async (req) => {
 
     try {
       if (msg.message_type === "text") {
-        await sendText(msg.phone, msg.content);
+        // Multi-WhatsApp Fase 2: passa user_id pra resolver sticky assignment
+        await sendText(msg.phone, msg.content, { userId: msg.user_id });
       }
       // image and buttons: stored as JSON — implement if needed.
       // For unsupported types we mark as sent so they don't block the queue.

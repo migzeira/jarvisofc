@@ -146,7 +146,8 @@ serve(async (req) => {
 
     try {
       const personalized = applyTemplate(message.trim(), profile);
-      await sendText(target, personalized);
+      // Multi-WhatsApp Fase 2: cada user recebe pelo seu numero atribuido
+      await sendText(target, personalized, { userId: profile.id });
       results.push({ user_id: profile.id, name: profile.display_name ?? "–", ok: true });
       sent++;
     } catch (err) {

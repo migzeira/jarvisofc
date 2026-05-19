@@ -238,7 +238,8 @@ async function advanceCycleAndReset(rec: RecurringRow): Promise<void> {
 async function askFirstTime(rec: RecurringRow, phone: string): Promise<void> {
   const nowIso = new Date().toISOString();
 
-  await sendText(phone, formatFirstQuestion(rec));
+  // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+  await sendText(phone, formatFirstQuestion(rec), { userId: rec.user_id });
 
   // Marca pending
   await supabase
@@ -268,7 +269,7 @@ async function askFirstTime(rec: RecurringRow, phone: string): Promise<void> {
 async function askAgain(rec: RecurringRow, phone: string): Promise<void> {
   const nowIso = new Date().toISOString();
 
-  await sendText(phone, formatReQuestion(rec));
+  await sendText(phone, formatReQuestion(rec), { userId: rec.user_id });
 
   await supabase
     .from("recurring_transactions")
@@ -296,7 +297,7 @@ async function expireRecurring(rec: RecurringRow): Promise<void> {
   const nextDate = calcNextDate(rec.next_date, rec.frequency, rec.day_of_month);
 
   if (phone) {
-    await sendText(phone, formatExpireMessage(rec, nextDate));
+    await sendText(phone, formatExpireMessage(rec, nextDate), { userId: rec.user_id });
   }
 
   await supabase

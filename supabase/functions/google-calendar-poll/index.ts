@@ -257,9 +257,11 @@ async function syncUser(integration: any): Promise<{
         if (phone && !isFirstSync && !isInSettleWindow) {
           const greet = nick ? `, ${nick}` : "";
           const dt = fmtDateTime(existing.event_date, existing.event_time?.slice(0, 5) ?? null, tz);
+          // Multi-WhatsApp Fase 2: userId resolve sticky assignment
           await sendText(
             phone,
             `❌ *Evento cancelado${greet}*\n\n📌 ${existing.title}\n📅 ${dt}\n\n_Removido do seu Google Calendar._`,
+            { userId: integration.user_id }
           ).catch((e) => console.error("[gcal-poll] sendText cancelled failed:", e));
           stats.notified++;
         }
@@ -300,9 +302,11 @@ async function syncUser(integration: any): Promise<{
         const locLine = row.location ? `\n📍 ${row.location}` : "";
         const meetLine = row.meeting_url ? `\n🔗 ${row.meeting_url}` : "";
         const descLine = row.description ? `\n📝 _${row.description.slice(0, 120)}${row.description.length > 120 ? "..." : ""}_` : "";
+        // Multi-WhatsApp Fase 2: userId resolve sticky assignment
         await sendText(
           phone,
           `🆕 *Novo evento na sua agenda${greet}*\n\n📌 ${row.title}\n📅 ${dt}${locLine}${meetLine}${descLine}\n\n_Criado direto no seu Google Calendar._`,
+          { userId: integration.user_id }
         ).catch((e) => console.error("[gcal-poll] sendText new failed:", e));
         stats.notified++;
       }
@@ -348,9 +352,11 @@ async function syncUser(integration: any): Promise<{
       const greet = nick ? `, ${nick}` : "";
       const dt = fmtDateTime(row.event_date, row.event_time, tz);
       const meetLine = row.meeting_url ? `\n🔗 ${row.meeting_url}` : "";
+      // Multi-WhatsApp Fase 2: userId resolve sticky assignment
       await sendText(
         phone,
         `✏️ *Evento atualizado${greet}*\n\n📌 ${row.title}\n📅 ${dt}${meetLine}\n\n*Mudanças:*\n• ${changes.join("\n• ")}\n\n_Atualizado no seu Google Calendar._`,
+        { userId: integration.user_id }
       ).catch((e) => console.error("[gcal-poll] sendText update failed:", e));
       stats.notified++;
     } else if (isInSettleWindow) {

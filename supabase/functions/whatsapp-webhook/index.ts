@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { sendText, sendImage, sendButtons, extractPhone, downloadMediaBase64, resolveLidToPhone } from "../_shared/whatsapp.ts";
+import { sendText, sendImage, sendButtons, extractPhone, downloadMediaBase64, resolveLidToPhone, enterWebhookCtx, type WebhookCtx } from "../_shared/whatsapp.ts";
 import { generateExpenseChartUrl } from "../_shared/chart.ts";
 import { syncGoogleCalendar, syncGoogleSheets, syncNotion, createCalendarEventWithMeet } from "../_shared/integrations.ts";
 import {
@@ -4086,6 +4086,10 @@ function normalizeWebhookPayload(body: Record<string, unknown>): Record<string, 
 
   if (!isWPPConnect) return body; // Evolution — já está no formato esperado
 
+  // Captura o session do WPPConnect — propagado pro handler poder responder
+  // pelo mesmo numero que recebeu (multi-WhatsApp Fase 2)
+  const incomingSession = typeof body.session === "string" ? body.session : null;
+
   // Mapeia event WPPConnect → Evolution
   const eventMap: Record<string, string> = {
     onmessage: "messages.upsert",
@@ -4161,6 +4165,9 @@ function normalizeWebhookPayload(body: Record<string, unknown>): Record<string, 
 
     return {
       event: "messages.upsert",
+      // Propagar session da WPPConnect pro top-level pro handler poder
+      // responder DO MESMO numero que recebeu (multi-WhatsApp Fase 2)
+      _wppconnect_session: incomingSession,
       data: {
         key: {
           remoteJid,
@@ -4252,6 +4259,19 @@ serve(async (req) => {
   // onstatusfind, etc) e tem campo `session` no root. Evolution usa
   // "messages.upsert" / "messages.update" e não tem `session`.
   body = normalizeWebhookPayload(body);
+
+  // ─── MULTI-WHATSAPP CTX (Fase 2) ─────────────────────────────────────────
+  // Captura o session que recebeu a mensagem e seta no AsyncLocalStorage
+  // pro resto do handler. Daqui pra frente, qualquer sendText/sendImage/
+  // sendButtons (mesmo dentro de helpers transitivos) herda automaticamente
+  // o session e responde DO MESMO numero que recebeu.
+  //
+  // O objeto webhookCtx e MUTAVEL — quando o profile do user for resolvido
+  // mais adiante, atualizamos webhookCtx.userId = profile.id pra ativar o
+  // assignment via user_jarvis_assignments (caso o sticky precise reassign
+  // pra outro numero).
+  const incomingSession = (body._wppconnect_session as string | null) || undefined;
+  const webhookCtx: WebhookCtx = enterWebhookCtx({ session: incomingSession });
 
   // ── MESSAGES_UPDATE: rastreio de entrega de mensagens enviadas pelo bot ───
   // Quando o WhatsApp confirma entrega/leitura de uma msg que NÓS enviamos,
@@ -8626,6 +8646,28 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       //   3. LID vinculado → futuras mensagens resolvem por whatsapp_lid direto
       log.push("unknown_number");
       return log;
+    }
+
+    // ─── MULTI-WHATSAPP CTX (Fase 2) ─────────────────────────────────────
+    // Profile resolvido → muta o webhookCtx in-place pra propagar userId
+    // a todos os sendText/sendImage/sendButtons transitivos via AsyncLocalStorage.
+    // Combinado com incomingSession (capturado no inicio), garante que:
+    //   1. Resposta sai DO MESMO numero que recebeu (session override)
+    //   2. Caso o numero esteja desconectado, fallback pro assignment
+    //      sticky via user_jarvis_assignments (userId)
+    try {
+      webhookCtx.userId = profile.id;
+      // Garante que existe assignment (cria via ensureAssignmentFromSession se nao tiver).
+      // Fire-and-forget — nao bloqueia o fluxo principal. Erros logados.
+      if (incomingSession) {
+        // Import dinamico pra evitar circular — ja exportado em _shared/whatsapp.ts
+        const { ensureAssignmentFromSession } = await import("../_shared/whatsapp.ts");
+        ensureAssignmentFromSession(profile.id, incomingSession).catch((err) =>
+          console.warn("[webhook] ensureAssignmentFromSession failed:", err)
+        );
+      }
+    } catch (ctxErr) {
+      console.warn("[webhook] webhookCtx update failed:", ctxErr);
     }
 
     // Usa o telefone do perfil para enviar respostas (LID não funciona no sendText)

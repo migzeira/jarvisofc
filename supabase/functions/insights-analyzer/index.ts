@@ -527,7 +527,8 @@ serve(async (req) => {
       lines.push(`_Quer detalhes sobre algum desses pontos? E so perguntar!_ 💡`);
 
       const message = lines.join("\n");
-      await sendText(phone, message);
+      // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+      await sendText(phone, message, { userId: user.id });
 
       // Registra envio (com tipo do primeiro insight para deduplicacao)
       for (const insight of topInsights) {

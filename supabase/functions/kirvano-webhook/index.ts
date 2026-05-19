@@ -209,7 +209,8 @@ async function notifyUser(userId: string, message: string): Promise<void> {
     const { data: prof } = await supabase
       .from("profiles").select("phone_number").eq("id", userId).maybeSingle();
     if (prof?.phone_number) {
-      await sendText(prof.phone_number.replace(/\D/g, ""), message);
+      // Multi-WhatsApp Fase 2: userId resolve sticky assignment
+      await sendText(prof.phone_number.replace(/\D/g, ""), message, { userId });
     }
   } catch (err) {
     console.error("[kirvano] notify error:", err);

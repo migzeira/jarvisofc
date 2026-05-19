@@ -304,7 +304,8 @@ serve(async (req) => {
       // o problema de mensagens em branco quando o user fica offline a noite
       // toda — o cipher session fica dessincronizado e a msg chega vazia
       // quando o WhatsApp finalmente entrega.
-      const briefingMessageId = await sendText(user.phone_number, message, { warmUp: true });
+      // Multi-WhatsApp Fase 2: userId resolve sticky assignment automaticamente
+      const briefingMessageId = await sendText(user.phone_number, message, { warmUp: true, userId: user.id });
 
       // Registra o briefing enviado (cria um registro na tabela reminders como tipo especial).
       // evolution_message_id permite que o webhook MESSAGES_UPDATE marque delivered_at depois,
