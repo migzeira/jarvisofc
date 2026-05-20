@@ -53,7 +53,13 @@ function json(data: unknown, status = 200, cors_: Record<string, string> = {}) {
 // WPPConnect API helpers
 // ─────────────────────────────────────────────────────────────────────────
 
-/** Gera token pra uma sessao no WPPConnect. Necessario antes de start-session. */
+/** Gera token pra uma sessao no WPPConnect. Necessario antes de start-session.
+ *
+ * IMPORTANTE: WPPConnect 2.9.0 rejeita o "full" token (formato "session:hash") no
+ * header Authorization. Aceita SO o `token` puro (hash $2b$10$...). Retornamos
+ * `token` aqui pra todas as chamadas subsequentes (start-session, status, qr,
+ * close, logout) usarem corretamente como `Authorization: Bearer <token>`.
+ */
 async function wppGenerateToken(session: string): Promise<{ token: string; full: string } | null> {
   if (!WPPCONNECT_URL || !WPPCONNECT_SECRET) return null;
   const url = `${WPPCONNECT_URL}/api/${encodeURIComponent(session)}/${encodeURIComponent(WPPCONNECT_SECRET)}/generate-token`;
@@ -217,17 +223,19 @@ async function ensureSessionToken(numberId: string, sessionName: string): Promis
 
   if (notesObj.token) return notesObj.token;
 
-  // Gera novo
+  // Gera novo. CRITICO: salvar `tok.token` (hash puro), NAO `tok.full`
+  // (que tem prefixo "session:"). WPPConnect 2.9.0 rejeita o full no
+  // header Authorization com 401.
   const tok = await wppGenerateToken(sessionName);
   if (!tok) return null;
 
-  notesObj.token = tok.full;
+  notesObj.token = tok.token;
   await supabaseAdmin
     .from("jarvis_numbers" as any)
     .update({ notes: JSON.stringify(notesObj) })
     .eq("id", numberId);
 
-  return tok.full;
+  return tok.token;
 }
 
 async function actionList() {
